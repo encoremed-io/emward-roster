@@ -1,0 +1,489 @@
+import pandas as pd
+from ortools.sat.python import cp_model
+from datetime import timedelta, date as dt_date
+
+
+def load_nurse_profiles(path='data/nurse_profiles.xlsx') -> pd.DataFrame:
+    df = pd.read_excel(path)
+    df['Name'] = df['Name'].str.strip().str.upper()
+    return df
+
+
+def load_shift_preferences(path='data/nurse_preferences.xlsx') -> pd.DataFrame:
+    df = pd.read_excel(path)
+    df.rename(columns={df.columns[0]: 'Name'}, inplace=True)
+    df.set_index('Name', inplace=True)
+    # parse date columns
+    cleaned = []
+    for col in df.columns:
+        # assume format contains YYYY-MM-DD
+        dt = pd.to_datetime(str(col).strip().split()[-1], format="%Y-%m-%d").date()
+        cleaned.append(dt)
+    df.columns = cleaned
+    df.index = df.index.str.strip().str.upper()
+    return df
+
+
+def validate_nurse_data(profiles_df: pd.DataFrame, preferences_df: pd.DataFrame):
+    profile_names = set(profiles_df['Name'].str.strip())
+    preference_names = set(preferences_df.index.str.strip())
+    missing = profile_names - preference_names
+    extra = preference_names - profile_names
+    if missing or extra:
+        raise ValueError(
+            f"Mismatch between nurse profiles and preferences:\n"
+            f"❌ Missing in preferences: {missing}\n"
+            f"❌ Extra in preferences: {extra}"
+        )
+    print("✅ Nurse profile and preference names match.")
+
+
+
+def build_schedule_model(profiles_df: pd.DataFrame,
+                         preferences_df: pd.DataFrame,
+                         start_date: pd.Timestamp | dt_date,
+                         num_days: int,
+                         rl_assignment=None) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Builds a nurse schedule satisfying hard constraints and optimizing soft preferences.
+    Returns a schedule DataFrame and a summary DataFrame.
+    """
+
+    # === Constants ===
+    # Shift info
+    SHIFT_LABELS = ['AM', 'PM', 'Night']
+    SHIFT_HOURS = [7, 7, 10]  # AM, PM = 7 hrs, Night = 10 hrs
+    AVG_HOURS = 7
+    DAYS_PER_WEEK = 7
+
+    # Hard constraint parameters
+    MIN_NURSES_PER_SHIFT = 4
+    MIN_SENIORS_PER_SHIFT = 1
+    MAX_WEEKLY_HOURS = 42
+    MAX_MC_DAYS_PER_WEEK = 2
+
+    # Soft constraint preferences
+    PREFERRED_WEEKLY_HOURS = 40
+    MIN_ACCEPTABLE_WEEKLY_HOURS = 30
+    PREF_HOURS_PENALTY = 1000
+    MIN_HOURS_PENALTY = 2000
+
+    AM_COVERAGE_MIN_PERCENT = 60  # Adjust this as needed
+    AM_COVERAGE_PENALTIES = [1000, 5000, 10000]  # Penalties for <60%, <50%, <40%
+
+    PREF_MISS_PENALTY = 10
+    FAIRNESS_GAP_PENALTY = 5
+
+    # === Model setup ===
+    print("📋 Building model...")
+    model = cp_model.CpModel()
+    nurses = profiles_df.to_dict(orient='records')
+    nurse_names = [n['Name'] for n in nurses]
+    senior_names = {n['Name'] for n in nurses if n['Title'] == 'Senior'}    # Assume senior nurses have ≥3 years experience
+    shift_str_to_idx = {label.upper(): i for i, label in enumerate(SHIFT_LABELS)}
+
+    if isinstance(start_date, pd.Timestamp):
+        date_start: dt_date = start_date.date()
+    else:
+        date_start = start_date
+
+    # === Preferences and MC days ===
+    shift_preferences = {}
+    mc_days = {}
+
+    for nurse, row in preferences_df.iterrows():
+        shift_preferences[nurse] = {}
+        mc_days[nurse] = set()
+        for label, val in row.items():
+            if isinstance(label, pd.Timestamp):
+                d = label.date()
+            elif isinstance(label, dt_date):
+                d = label
+            else:
+                d = pd.to_datetime(str(label)).date()
+
+            day_idx = (d - date_start).days
+            if not pd.notna(val) or not (0 <= day_idx < num_days):
+                continue
+            val = str(val).strip().upper()
+            if val == 'MC':
+                mc_days[nurse].add(day_idx)
+            elif val in shift_str_to_idx:
+                shift_preferences[nurse][day_idx] = shift_str_to_idx[val]
+
+    weekend_days = [
+        (i, i + 1) for i in range(num_days - 1)
+        if (date_start + timedelta(days=i)).weekday() == 5
+    ]
+
+    # === Variables ===
+    work = {
+        (n, d, s): model.NewBoolVar(f'work_{n}_{d}_{s}')
+        for n in nurse_names for d in range(num_days) for s in range(3)
+    }
+    satisfied = {}
+    total_satisfied = {}
+    high_priority_penalty = []
+    low_priority_penalty = []
+
+    min_sat = model.NewIntVar(0, num_days, "min_satisfaction")
+    max_sat = model.NewIntVar(0, num_days, "max_satisfaction")
+
+    # === Hard Constraints ===
+
+    # 1. Each nurse can work at most one shift per day
+    for n in nurse_names:
+        for d in range(num_days):
+            model.AddAtMostOne(work[n, d, s] for s in range(3))
+
+    # 2. Each nurse works <= 42 hours/week (hard), adjustable based on MC; ideally min 40 (soft), at least 30 (hard)
+    for n in nurse_names:
+        for w in range(2):
+            days = range(w * DAYS_PER_WEEK, min((w + 1) * DAYS_PER_WEEK, num_days))
+            weekly_hours = sum(work[n, d, s] * SHIFT_HOURS[s] for d in days for s in range(3))
+
+            mc_count = 0
+            if n in mc_days:
+              mc_count = sum(1 for d in days if d in mc_days[n])
+
+            adjustment = mc_count * AVG_HOURS                           # MC hours deducted from max/pref/min hours
+            eff_max_hours = max(0, MAX_WEEKLY_HOURS - adjustment)               # <= 42 - x
+            eff_pref_hours = max(0, PREFERRED_WEEKLY_HOURS - adjustment)        # >= 40 - x
+            eff_min_hours = max(0, MIN_ACCEPTABLE_WEEKLY_HOURS - adjustment)    # >= 30 - x
+
+            model.Add(weekly_hours <= eff_max_hours)
+            model.Add(weekly_hours >= eff_min_hours)
+
+            # Soft preferences on hours
+            if eff_pref_hours > eff_min_hours:
+                min_pref = model.NewBoolVar(f'pref_{n}_w{w}')
+                model.Add(weekly_hours >= eff_pref_hours).OnlyEnforceIf(min_pref)    # prefer 40 - x
+                model.Add(weekly_hours < eff_pref_hours).OnlyEnforceIf(min_pref.Not())
+
+                high_priority_penalty.append(min_pref.Not() * PREF_HOURS_PENALTY)
+
+    # 3. Each shift must have at least 4 nurses and at least 1 senior
+    for d in range(num_days):
+        for s in range(3):
+            model.Add(sum(work[n, d, s] for n in nurse_names) >= MIN_NURSES_PER_SHIFT)
+            model.Add(sum(work[n, d, s] for n in senior_names) >= MIN_SENIORS_PER_SHIFT)
+
+    # 4. Weekend work requires rest on the same day next weekend
+    for n in nurse_names:
+        for d1, d2 in weekend_days:
+            for day in (d1, d2):
+                if day + 7 < num_days:
+                    model.Add(sum(work[n, day, s] for s in range(3)) <=
+                              1 - sum(work[n, day + 7, s] for s in range(3)))
+
+    # 5. MC days: cannot assign any shift
+    for n in nurse_names:
+        for d in mc_days.get(n, []):
+            for s in range(3):
+                model.Add(work[n, d, s] == 0)
+
+    # 6. Max 2 MC days/week and no more than 2 consecutive MC days
+    for n in nurse_names:
+        mc_set = mc_days.get(n, set())
+
+        for w in range(2):
+            days = range(w * DAYS_PER_WEEK, min((w + 1) * DAYS_PER_WEEK, num_days))
+            mc_in_week = sum(1 for d in days if d in mc_set)
+            if mc_in_week > MAX_MC_DAYS_PER_WEEK:
+                raise ValueError(f"❌ Nurse {n} has more than {MAX_MC_DAYS_PER_WEEK} MCs in week {w+1}.")
+
+        sorted_mc = sorted(mc_set)
+        for i in range(len(sorted_mc) - 2):
+            if sorted_mc[i + 2] - sorted_mc[i] == 2:
+                raise ValueError(f"❌ Nurse {n} has more than 2 consecutive MC days: {sorted_mc[i]}, {sorted_mc[i+1]}, {sorted_mc[i+2]}.")
+
+    # === Soft Constraints ===
+
+    # 1. AM coverage per day should be >=60%, ideally
+    for d in range(num_days):
+        total_shifts = sum(work[n, d, s] for n in nurse_names for s in range(3))
+        am_shifts = sum(work[n, d, 0] for n in nurse_names)
+        am_seniors = sum(work[n, d, 0] for n in nurse_names if n in senior_names)
+
+        level1 = AM_COVERAGE_MIN_PERCENT          # typically 60
+        level2 = max(level1 - 10, 0)              # 50
+        level3 = max(level1 - 20, 0)              # 40
+
+        # Coverage level flags
+        level1_ok = model.NewBoolVar(f'day_{d}_am_level1')
+        level2_ok = model.NewBoolVar(f'day_{d}_am_level2')
+        level3_ok = model.NewBoolVar(f'day_{d}_am_level3')
+
+        # Soft targets
+        model.Add(am_shifts * 100 >= level1 * total_shifts).OnlyEnforceIf(level1_ok)
+        model.Add(am_shifts * 100 <  level1 * total_shifts).OnlyEnforceIf(level1_ok.Not())
+
+        model.Add(am_shifts * 100 >= level2 * total_shifts).OnlyEnforceIf([level1_ok.Not(), level2_ok])
+        model.Add(am_shifts * 100 <  level2 * total_shifts).OnlyEnforceIf([level1_ok.Not(), level2_ok.Not()])
+
+        model.Add(am_shifts * 100 >= level3 * total_shifts).OnlyEnforceIf([level1_ok.Not(), level2_ok.Not(), level3_ok])
+        model.Add(am_shifts * 100 <  level3 * total_shifts).OnlyEnforceIf([level1_ok.Not(), level2_ok.Not(), level3_ok.Not()])
+
+        # Hard fallback condition
+        all_levels_failed = model.NewBoolVar(f'day_{d}_all_levels_failed')
+        model.AddBoolAnd([level1_ok.Not(), level2_ok.Not(), level3_ok.Not()]).OnlyEnforceIf(all_levels_failed)
+        model.AddBoolOr([level1_ok, level2_ok, level3_ok]).OnlyEnforceIf(all_levels_failed.Not())
+
+        # Explicit PM and Night shift counts
+        pm_shift_nurses = sum(work[n, d, 1] for n in nurse_names)
+        pm_shift_seniors = sum(work[n, d, 1] for n in nurse_names if n in senior_names)
+
+        night_shift_nurses = sum(work[n, d, 2] for n in nurse_names)
+        night_shift_seniors = sum(work[n, d, 2] for n in nurse_names if n in senior_names)
+
+        # Enforce AM > PM and AM > Night if all levels fail (hard constraint)
+        model.Add(am_shifts > pm_shift_nurses).OnlyEnforceIf(all_levels_failed)
+        model.Add(am_shifts > night_shift_nurses).OnlyEnforceIf(all_levels_failed)
+        model.Add(am_seniors > pm_shift_seniors).OnlyEnforceIf(all_levels_failed)
+        model.Add(am_seniors > night_shift_seniors).OnlyEnforceIf(all_levels_failed)
+
+        # Penalties for failing soft levels
+        high_priority_penalty.append(level1_ok.Not() * AM_COVERAGE_PENALTIES[0])
+
+        level2_penalty_cond = model.NewBoolVar(f'day_{d}_level2_penalty')
+        model.AddBoolAnd([level1_ok.Not(), level2_ok.Not()]).OnlyEnforceIf(level2_penalty_cond)
+        high_priority_penalty.append(level2_penalty_cond * AM_COVERAGE_PENALTIES[1])
+
+        level3_penalty_cond = model.NewBoolVar(f'day_{d}_level3_penalty')
+        model.AddBoolAnd([level1_ok.Not(), level2_ok.Not(), level3_ok.Not()]).OnlyEnforceIf(level3_penalty_cond)
+        high_priority_penalty.append(level3_penalty_cond * AM_COVERAGE_PENALTIES[2])
+
+    # 2. Preference satisfaction
+    for n in nurse_names:
+        prefs = shift_preferences.get(n, {})
+        satisfied_list = []
+
+        for d in range(num_days):
+            if d in prefs:
+                s = prefs[d]
+                sat = model.NewBoolVar(f'sat_{n}_{d}')
+                model.Add(work[n, d, s] == 1).OnlyEnforceIf(sat)
+                model.Add(work[n, d, s] == 0).OnlyEnforceIf(sat.Not())
+                satisfied[(n, d)] = sat
+                satisfied_list.append(sat)
+                # Add penalty if preference not satisfied
+                low_priority_penalty.append(sat.Not() * PREF_MISS_PENALTY)
+            else:
+                satisfied_const = model.NewConstant(0)
+                satisfied[(n, d)] = satisfied_const
+                satisfied_list.append(satisfied_const)
+
+        total_satisfied[n] = model.NewIntVar(0, num_days, f'total_sat_{n}')
+        model.Add(total_satisfied[n] == sum(satisfied_list))
+
+    # 3. Fairness constraint on preference satisfaction gap
+    pref_count = {
+        n: len(shift_preferences.get(n, {}))
+        for n in nurse_names
+    }
+
+    pct_sat = {}
+    for n, count in pref_count.items():
+      if count > 0:
+        p = model.NewIntVar(0, 100, f"pct_sat_{n}")
+        pct_sat[n] = p
+        model.Add(p * count == total_satisfied[n] * 100)
+
+      else:
+        pct_sat[n] = None
+
+    valid_pcts = [p for p in pct_sat.values() if p is not None]
+    if valid_pcts:
+        min_pct = model.NewIntVar(0, 100, "min_pct")
+        max_pct = model.NewIntVar(0, 100, "max_pct")
+        model.AddMinEquality(min_pct, valid_pcts)
+        model.AddMaxEquality(max_pct, valid_pcts)
+
+        gap_pct = model.NewIntVar(0, 100, "gap_pct")
+        model.Add(gap_pct == max_pct - min_pct)
+        low_priority_penalty.append(gap_pct * FAIRNESS_GAP_PENALTY)
+
+    # === Objective ===
+    # === Phase 1: minimize total penalties ===
+    print("🚀 Phase 1: minimizing penalties…")
+    # 1. Tell the model to minimize penalty sum
+    model.Minimize(sum(high_priority_penalty))
+    solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = 120.0  # tunable
+    solver.parameters.random_seed = 42
+    solver.parameters.relative_gap_limit = 0.01
+
+    status1 = solver.Solve(model)
+    print(f"⏱ Solve time: {solver.WallTime():.2f} seconds")
+    print(f"High Priority Penalty Phase 1: {solver.ObjectiveValue()}")
+    print(f"Low Priority Penalty Phase 1: {solver.Value(sum(low_priority_penalty))}")
+    if status1 not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        raise RuntimeError("❌ No feasible solution even for penalties‐only!")
+
+    # save "best" solution found
+    cached_values = {}
+    for n in nurse_names:
+        for d in range(num_days):
+            for s in range(3):
+                cached_values[(n, d, s)] = solver.Value(work[n, d, s])
+
+    cached_total_prefs_met = 0
+    for n in nurse_names:
+        for d in range(num_days):
+            assigned = next((s for s in range(3) if cached_values[(n, d, s)]), None)
+            pref = shift_preferences.get(n, {}).get(d)
+            if pref is not None and assigned == pref:
+                cached_total_prefs_met += 1
+
+    cached_gap = solver.Value(gap_pct) if valid_pcts else "N/A"
+    high1 = solver.ObjectiveValue()
+    best_penalty = solver.ObjectiveValue() + solver.Value(sum(low_priority_penalty))
+    print(f"▶️ Phase 1 complete: best total penalty = {best_penalty}; best fairness gap = {cached_gap}")
+
+    # === Phase 2: maximize preferences under that penalty bound ===
+    # only run phase 2 if shift preferences exist
+    if any(shift_preferences.values()):
+        print("🚀 Phase 2: maximizing preferences…")
+        # 2. Freeze the penalty sum at its optimum
+        model.Add(sum(high_priority_penalty) <= int(high1))
+        if valid_pcts:
+          model.Add(gap_pct <= cached_gap)
+
+        # 3. Switch objective to preferences
+        # preference_obj = sum(total_satisfied[n] for n in nurse_names)
+        # model.Maximize(preference_obj)
+        model.Minimize(sum(low_priority_penalty))
+
+        # 4. Re-solve (you can reset your time budget)
+        solver = cp_model.CpSolver()
+        solver.parameters.max_time_in_seconds = 120.0
+        solver.parameters.random_seed = 42
+        solver.parameters.relative_gap_limit = 0.01
+        status2 = solver.Solve(model)
+        print(f"⏱ Solve time: {solver.WallTime():.2f} seconds")
+        print(f"High Priority Penalty Phase 2: {solver.Value(sum(low_priority_penalty))}")
+        print(f"Low Priority Penalty Phase 2: {solver.ObjectiveValue()}")
+        use_fallback = status2 not in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+        if use_fallback:
+            print("⚠️ Phase 2 failed: using fallback Phase 1 solution.")
+            print(f"Solver Phase 2 status: {solver.StatusName(status2)}")
+        else:
+            print(f"▶️ Phase 2 complete")
+            best_penalty = solver.Value(sum(high_priority_penalty)) + solver.Value(sum(low_priority_penalty))
+            new_total_prefs_met = 0
+            for n in nurse_names:
+                for d in range(num_days):
+                    assigned = next((s for s in range(3) if solver.Value(work[n, d, s])), None)
+                    pref = shift_preferences.get(n, {}).get(d)
+                    if pref is not None and assigned == pref:
+                        new_total_prefs_met += 1
+
+    else:
+        print("⏭️ Skipping Phase 2: No shift preferences provided.")
+        use_fallback = True
+    # use_fallback = True
+
+    # === Extract & report ===
+    print("✅ Done!")
+    print(f"📊 Total penalties = {best_penalty}")
+    print(f"🔍 Total preferences met = {cached_total_prefs_met if use_fallback else new_total_prefs_met}")
+    if 'gap_pct' in locals():
+        print(f"📈 Preference gap (max - min) = {cached_gap if use_fallback else solver.Value(gap_pct)}")
+    else:
+        print("📈 Preference gap (max - min) = N/A")
+
+    # === Extract Results ===
+    dates = [date_start + timedelta(days=i) for i in range(num_days)]
+    headers = [d.strftime('%a %Y-%m-%d') for d in dates]
+    schedule = {}
+    summary = []
+    violations = {"Low_AM_Days": [], "Low_Hours_Nurses": [], "Preference_Unmet": [], "Fairness_Gap": cached_gap if use_fallback or 'gap_pct' not in locals() else solver.Value(gap_pct)}
+
+    for n in nurse_names:
+        row = []
+        hours_w1 = hours_w2 = 0
+        counts = [0, 0, 0]
+        prefs_met = 0
+        prefs_unmet = []
+
+        for d in range(num_days):
+            assigned = None
+            if d in mc_days.get(n, set()):
+                shift = "MC"
+            else:
+                if use_fallback:
+                    assigned = next((s for s in range(3) if cached_values[(n, d, s)]), None)
+                else:
+                    assigned = next((s for s in range(3) if solver.Value(work[n, d, s])), None)
+                shift = SHIFT_LABELS[assigned] if assigned is not None else "Rest"
+            row.append(shift)
+
+            if assigned is not None:
+                hours = SHIFT_HOURS[assigned]
+                if d < 7:
+                    hours_w1 += hours
+                else:
+                    hours_w2 += hours
+                counts[assigned] += 1
+
+            pref = shift_preferences.get(n, {}).get(d)
+            if pref is not None:
+                if assigned == pref:
+                    prefs_met += 1
+                else:
+                    prefs_unmet.append(f"{dates[d].strftime('%a %Y-%m-%d')} (wanted {SHIFT_LABELS[pref]})")
+
+        for w, (begin, end) in enumerate([(0, 7), (7, num_days)], 1):
+            days = range(begin, end)
+            hours_worked = hours_w1 if w == 1 else hours_w2
+            mc_count_week = mc_days.get(n, set()).intersection(days)
+            eff_pref_hours = max(0, PREFERRED_WEEKLY_HOURS - (len(mc_count_week) * AVG_HOURS))
+
+            if hours_worked < eff_pref_hours:
+                violations["Low_Hours_Nurses"].append(f"{n} Week {w}: {hours_worked}h; pref {eff_pref_hours}")
+
+        if prefs_unmet:
+            violations["Preference_Unmet"].append(f"{n}: {'; '.join(prefs_unmet)}")
+
+        schedule[n] = row
+        summary.append({
+            'Nurse': n,
+            'Hours_Week1': hours_w1,
+            'Hours_Week2': hours_w2,
+            'AM': counts[0],
+            'PM': counts[1],
+            'Night': counts[2],
+            'Rest': row.count("Rest"),
+            'MC_Days': len(mc_days.get(n, [])),
+            'Prefs_Met': prefs_met,
+            'Prefs_Unmet': len(prefs_unmet),
+            'Unmet_Details': "; ".join(prefs_unmet)
+        })
+
+    for d in range(num_days):
+        if use_fallback:
+            am = sum(cached_values[(n, d, 0)] for n in nurse_names)
+            total = sum(cached_values[(n, d, s)] for n in nurse_names for s in range(3))
+        else:
+            am = sum(solver.Value(work[n, d, 0]) for n in nurse_names)
+            total = sum(solver.Value(work[n, d, s]) for n in nurse_names for s in range(3))
+
+        if total and am / total < 0.6:
+            violations["Low_AM_Days"].append(f"{dates[d].strftime('%a %Y-%m-%d')} ({am/total:.0%})")
+
+    print("\n⚠️ Soft Constraint Violations Summary:")
+    for key, items in violations.items():
+        match key:
+            case "Preference_Unmet":
+                total_unmet = sum(s["Prefs_Unmet"] for s in summary)
+                print(f"🔸 {key}: {total_unmet} unmet preferences across {len(items)} nurses")
+            case "Fairness_Gap":
+                print(f"🔸 {key}: {len(items) if isinstance(items, list) else items} %")
+            case _:
+                print(f"🔸 {key}: {len(items) if isinstance(items, list) else items} cases")
+        if isinstance(items, list):
+            for item in items:
+                print(f"   - {item}")
+
+    print("📁 Schedule and summary generated.")
+    return pd.DataFrame.from_dict(schedule, orient='index', columns=headers), pd.DataFrame(summary)

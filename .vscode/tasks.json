@@ -1,0 +1,17 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Lint with flake8",
+      "type": "shell",
+      "command": ".venv/bin/flake8 .",
+      "group": "build"
+    },
+    {
+      "label": "Format with autopep8",
+      "type": "shell",
+      "command": ".venv/bin/autopep8 --in-place --recursive .",
+      "problemMatcher": []
+    }
+  ]
+}

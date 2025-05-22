@@ -1,0 +1,29 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run FastAPI (uvicorn)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": [
+        "app:app",
+        "--reload",
+        "--port", "8000"
+      ],
+      "jinja": true
+    },
+    {
+      "name": "Debug train_rl.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/train_rl.py"
+    },
+    {
+      "name": "Debug agent.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/agent.py"
+    }
+  ]
+}

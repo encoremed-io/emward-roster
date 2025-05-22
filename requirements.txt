@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+pandas
+ortools
+numpy
+gymnasium
+stable-baselines3
+langchain
+openai
+openpyxl
+requests
+streamlit
