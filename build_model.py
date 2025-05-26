@@ -1,7 +1,7 @@
 import pandas as pd
 from ortools.sat.python import cp_model
 from datetime import timedelta, date as dt_date
-
+import logging
 
 def load_nurse_profiles(path='data/nurse_profiles.xlsx') -> pd.DataFrame:
     df = pd.read_excel(path)
@@ -302,6 +302,65 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         gap_pct = model.NewIntVar(0, 100, "gap_pct")
         model.Add(gap_pct == max_pct - min_pct)
         low_priority_penalty.append(gap_pct * FAIRNESS_GAP_PENALTY)
+
+    # === Add RL assignment hints (warm start) ===
+    if rl_assignment is not None:
+        N = len(nurse_names)
+        D = num_days
+        ND = N * D
+        NDS = ND * 3       # 3 types of shift (AM, PM, Night)
+
+        # container for all the (n,d,s) triples we want to turn on
+        hinted_ones: set[tuple[str,int,int]] = set()
+        hints: list[tuple[tuple[str,int],int]]   = []
+
+        # Case A: dict of (n,d) -> s
+        if isinstance(rl_assignment, dict):
+            hints = list(rl_assignment.items())
+
+        # Case B: flat list of shift‐indices length ND
+        elif isinstance(rl_assignment, list) and len(rl_assignment) == ND:
+            for idx, s in enumerate(rl_assignment):
+                n_idx, d = divmod(idx, D)
+                n = nurse_names[n_idx]
+                hints.append(((n, d), s))
+
+        # Case C: flat list of 0/1 per (n,d,s), length NDS
+        elif isinstance(rl_assignment, list) and len(rl_assignment) == NDS:
+            for idx, bit in enumerate(rl_assignment):
+                if bit:
+                    n_idx = idx // (D * 3)
+                    rem   = idx %  (D * 3)
+                    d     = rem // 3
+                    s     = rem %  3
+                    n     = nurse_names[n_idx]
+                    hinted_ones.add((n, d, s))
+            # build hints list from the ones
+            hints = [(((n, d), s)) for (n, d, s) in hinted_ones]
+
+        else:
+            raise ValueError(
+                f"rl_assignment must be either:\n"
+                f" • dict[(n,d)->s]\n"
+                f" • list of length {ND} (one shift index per nurse/day)\n"
+                f" • list of length {NDS} (one 0/1 per nurse/day/shift)\n"
+                f"Got {type(rl_assignment)} of length "
+                f"{len(rl_assignment) if isinstance(rl_assignment, list) else 'N/A'}"
+            )
+
+        # now apply the “1” hints:
+        for (n, d), s in hints:
+            # hint that work[n,d,s] should be 1
+            model.AddHint(work[n, d, s], 1)
+            hinted_ones.add((n, d, s))
+
+        # and apply explicit “0” hints on everything else
+        # for n in nurse_names:
+        #     for d in range(num_days):
+        #         for s in range(3):
+        #             if (n, d, s) not in hinted_ones:
+        #                 model.AddHint(work[n, d, s], 0)
+
 
     # === Objective ===
     # === Phase 1: minimize total penalties ===

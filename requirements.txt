@@ -6,7 +6,13 @@ numpy
 gymnasium
 stable-baselines3
 langchain
+langchain-community
+langchain-openai
 openai
 openpyxl
 requests
 streamlit
+tensorboard
+torch
+invoke
+xlsxwriter

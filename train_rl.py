@@ -1,6 +1,5 @@
-# train_rl.py
-
 import pandas as pd
+import os
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv
@@ -13,8 +12,13 @@ def make_env():
     Factory to create a fresh NurseRosteringEnv wrapped in a Monitor.
     """
     # 1) Load data
-    profiles_df    = load_nurse_profiles("nurse_profiles.xlsx")
-    preferences_df = load_shift_preferences("nurse_preferences.xlsx")
+    profiles_df    = load_nurse_profiles("data/nurse_profiles.xlsx")
+    preferences_df = load_shift_preferences("data/nurse_preferences.xlsx")
+
+    if profiles_df.empty:
+        raise ValueError("No nurse profiles loaded during warm start")
+    if preferences_df.empty:
+        raise ValueError("No shift preferences loaded during warm start")
     
     # 2) Pull out scheduling window
     start_date = preferences_df.columns[0]
@@ -27,7 +31,7 @@ def make_env():
         start_date=pd.to_datetime(start_date),
         num_days=num_days
     )
-    return Monitor(env)  # records rewards/lengths for SB3
+    return Monitor(env, filename=None)  # records rewards/lengths for SB3
 
 if __name__ == "__main__":
     # Create a vectorized env (even a single copy is fine for PPO)
@@ -43,8 +47,9 @@ if __name__ == "__main__":
     )
     
     # Train for 200k timesteps
-    model.learn(total_timesteps=200_000)
+    model.learn(total_timesteps=200_000, tb_log_name="PPO_nurse")
     
     # Save the trained policy
-    model.save("ppo_nurse_roster")
+    os.makedirs("models", exist_ok=True)
+    model.save("models/ppo_nurse_roster")
     print("✅ Saved RL policy to ppo_nurse_roster.zip")

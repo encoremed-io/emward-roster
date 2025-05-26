@@ -110,6 +110,84 @@ def compute_total_penalty(assignment: np.ndarray,
     return int(total_penalty)
 
 
+def compute_penalty_per_day(assignment: np.ndarray,
+                            profiles_df: pd.DataFrame,
+                            preferences_df: pd.DataFrame,
+                            start_date: pd.Timestamp | dt_date,
+                            day_idx: int) -> int:
+    """
+    Compute penalty only for the given day_idx.
+    Includes:
+    - AM coverage penalty for that day
+    - Preference miss penalty for that day
+    Note: Weekly hours and fairness gap penalties require weekly or full schedule info,
+    so they are omitted here (or can be added with some approximation).
+    """
+
+    # Constants (same as full function)
+    SHIFT_HOURS = [7, 7, 10]
+    AVG_HOURS = 7
+    DAYS_PER_WEEK = 7
+
+    PREF_MISS_PENALTY = 10
+    AM_COVERAGE_MIN_PERCENT = 60
+    AM_COVERAGE_PENALTIES = [1000, 5000, 10000]
+
+    if isinstance(start_date, pd.Timestamp):
+        date_start : dt_date = start_date.date()
+    else:
+        date_start = start_date
+
+    nurse_names = [str(n).strip().upper() for n in profiles_df['Name']]
+    shift_str_to_idx = {'AM': 0, 'PM': 1, 'NIGHT': 2}
+
+    N, D, S = assignment.shape
+    if day_idx < 0 or day_idx >= D:
+        raise ValueError("day_idx out of range")
+
+    # Build preferences for nurses for this day only
+    shift_prefs = {n: {} for n in nurse_names}
+    for nurse, row in preferences_df.iterrows():
+        nm = str(nurse).strip().upper()
+        for label, val in row.items():
+            if isinstance(label, pd.Timestamp):
+                d = label.date()
+            elif isinstance(label, dt_date):
+                d = label
+            else:
+                d = pd.to_datetime(str(label)).date()
+            d = (d - date_start).days
+            if d == day_idx and pd.notna(val):
+                v = str(val).strip().upper()
+                if v in shift_str_to_idx:
+                    shift_prefs[nm][d] = shift_str_to_idx[v]
+
+    total_penalty = 0
+
+    # 1) AM coverage penalty for this day only
+    total_shifts = assignment[:, day_idx, :].sum()
+    if total_shifts > 0:
+        am_count = assignment[:, day_idx, 0].sum()
+        pct = 100 * am_count / total_shifts
+        if pct < AM_COVERAGE_MIN_PERCENT - 20:
+            total_penalty += AM_COVERAGE_PENALTIES[2]
+        elif pct < AM_COVERAGE_MIN_PERCENT - 10:
+            total_penalty += AM_COVERAGE_PENALTIES[1]
+        elif pct < AM_COVERAGE_MIN_PERCENT:
+            total_penalty += AM_COVERAGE_PENALTIES[0]
+
+    # 2) Preference-miss penalty for this day only
+    for i, nurse in enumerate(nurse_names):
+        prefs = shift_prefs[nurse]
+        # prefs only for this day (day_idx), so check if nurse has preference this day
+        if day_idx in prefs:
+            preferred_shift = prefs[day_idx]
+            if assignment[i, day_idx, preferred_shift] != 1:
+                total_penalty += PREF_MISS_PENALTY
+
+    return int(total_penalty)
+
+
 class NurseRosteringEnv(Env):
     """Gym environment for nurse rostering."""
     metadata = {'render.modes': []}
@@ -119,7 +197,14 @@ class NurseRosteringEnv(Env):
                  preferences_df: pd.DataFrame,
                  start_date: pd.Timestamp,
                  num_days: int):
+        
         super().__init__()
+
+        if len(profiles_df) == 0:
+            raise ValueError("profiles_df cannot be empty")
+        if len(preferences_df.columns) == 0:
+            raise ValueError("preferences_df must contain at least one day")
+        
         self.profiles_df = profiles_df
         self.preferences_df = preferences_df
         self.start_date = start_date
@@ -133,17 +218,32 @@ class NurseRosteringEnv(Env):
         # One-hot assignment tensor: shape (N, D, S)
         self.observation_space = spaces.Box(
             low=0, high=1,
-            shape=(self.N, self.D, self.S),
+            shape=(self.N * self.D * self.S,),
             dtype=np.int8
         )
         self.action_space = spaces.Discrete(self.N * self.D * self.S)
 
         self.reset()
 
-    def reset(self):
+    def reset(self, *, seed=None, options=None):
+        super().reset(seed=seed)
+
+        if seed is not None:
+            np.random.seed(seed)
+        
+        # Re-initialize environment state
         self.assignment = np.zeros((self.N, self.D, self.S), dtype=np.int8)
         self.step_count = 0
-        return self.assignment.copy()
+        self.total_reward = 0
+        self.done = False
+
+        obs = self.assignment.flatten()
+
+        if obs.ndim == 0:
+            obs = np.array([], dtype=np.int8)
+    
+        return obs, {}  # observation and empty info dict
+
 
     def step(self, action: int):
         n = action // (self.D * self.S)
@@ -151,27 +251,53 @@ class NurseRosteringEnv(Env):
         d = rem // self.S
         s = rem % self.S
 
+        info = {}
+        done = False
+
         # If nurse already has a shift that day, big penalty
         if self.assignment[n, d].any():
             reward = -10_000
         else:
-            self.assignment[n, d, s] = 1
-            reward = 0
+            # === 1. Compute old penalty for this day ===
+            old_penalty = compute_penalty_per_day(
+                self.assignment,
+                self.profiles_df,
+                self.preferences_df,
+                self.start_date,
+                d
+            )
 
+            # === 2. Apply action ===
+            self.assignment[n, d, s] = 1
+
+            # === 3. Compute new penalty ===
+            new_penalty = compute_penalty_per_day(
+                self.assignment,
+                self.profiles_df,
+                self.preferences_df,
+                self.start_date,
+                d
+            )
+
+            # === 4. Reward is negative change in penalty ===
+            reward = old_penalty - new_penalty
+
+        # === 5. Check termination ===
         self.step_count += 1
         done = (self.step_count >= self.N * self.D)
 
         if done:
-            # subtract the total penalty as our final reward
-            penalty = compute_total_penalty(
+            # Use full penalty at the end to reflect long-term constraints
+            final_penalty = compute_total_penalty(
                 self.assignment,
                 self.profiles_df,
                 self.preferences_df,
                 self.start_date
             )
-            reward -= penalty
+            reward -= final_penalty  # subtract final penalty from reward
 
-        return self.assignment.copy(), reward, done, {}
+        return self.assignment.flatten(), reward, done, False, {}
+
 
     def render(self, mode='human'):
         # you can implement a simple print-out here if you like
