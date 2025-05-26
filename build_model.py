@@ -30,13 +30,8 @@ def validate_nurse_data(profiles_df: pd.DataFrame, preferences_df: pd.DataFrame)
     missing = profile_names - preference_names
     extra = preference_names - profile_names
     if missing or extra:
-        raise ValueError(
-            f"Mismatch between nurse profiles and preferences:\n"
-            f"❌ Missing in preferences: {missing}\n"
-            f"❌ Extra in preferences: {extra}"
-        )
-    print("✅ Nurse profile and preference names match.")
-
+        return missing, extra
+    return None, None  # valid
 
 
 def build_schedule_model(profiles_df: pd.DataFrame,

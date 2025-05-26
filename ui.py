@@ -97,7 +97,15 @@ if st.sidebar.button("Generate Schedule"):
                 df_prefs = load_shift_preferences(prefs_file)
 
             # Validate
-            validate_nurse_data(df_profiles, df_prefs)
+            missing, extra = validate_nurse_data(df_profiles, df_prefs)
+            if missing or extra:
+                message = "⚠️ Mismatch between nurse profiles and preferences:\n"
+                if missing:
+                    message += f"❌ Missing in preferences: {sorted(missing)}\n"
+                if extra:
+                    message += f"❌ Extra in preferences: {sorted(extra)}"
+                st.error(message)
+                st.stop()
 
             # === Generate RL warm‐start if requested ===
             rl_assignment = None
