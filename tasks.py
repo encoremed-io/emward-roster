@@ -11,7 +11,7 @@ def install(c):
 
 @task
 def back(c):
-    c.run("uvicorn app:app --reload --host 127.0.0.1 --port 8001", env={"PYTHONUTF8": "1"})
+    c.run("uvicorn app:app --reload --host 127.0.0.1 --port 8001")
 
 @task
 def front(c):

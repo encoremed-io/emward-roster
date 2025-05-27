@@ -16,9 +16,15 @@ from st_aggrid import GridOptionsBuilder, AgGrid, GridUpdateMode
 from nurse_env import NurseRosteringEnv
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
+import json
 import numpy as np
 import traceback
 import logging
+
+with open('config/constants.json', 'r') as f:
+    constants = json.load(f)
+
+SHIFT_LABELS = constants["SHIFT_LABELS"]
 
 logging.basicConfig(filename="ui_error.log", level=logging.ERROR)
 
@@ -67,14 +73,16 @@ def show_editable_schedule():
     edited = pd.DataFrame(grid["data"]).set_index("Nurse")
 
     # Collect new EL overrides
-    new_fixed = {}
+    new_overrides = {}
     for nurse in edited.index:
         for col in edited.columns:
-            if edited.at[nurse, col] == "EL" and sched_df.at[nurse, col] != "EL":
-                idx = (pd.to_datetime(col) - pd.to_datetime(st.session_state.start_date)).days
-                new_fixed[(nurse, idx)] = "EL"
-    st.session_state.fixed.update(new_fixed)
-    st.sidebar.write(f"Current EL overrides: {len(st.session_state.fixed)}")
+            if edited.at[nurse, col] == "EL" and st.session_state.sched_df.at[nurse, col] != "EL":
+                day_idx = (pd.to_datetime(col).date() 
+                           - st.session_state.start_date.date()).days
+                new_overrides[(nurse, day_idx)] = "EL"
+
+    st.session_state.pending_overrides = new_overrides
+    st.sidebar.write(f"Pending EL overrides: {len(new_overrides)}")
 
 # Sidebar inputs
 st.sidebar.header("Inputs")
@@ -162,6 +170,7 @@ if st.sidebar.button("Generate Schedule"):
         )
         st.session_state.sched_df = sched
         st.session_state.summary_df = summ
+        st.session_state.original_sched_df = sched.copy()
 
     except Exception as e:
         tb = traceback.format_exc()
@@ -187,16 +196,50 @@ if st.session_state.sched_df is not None:
         show_editable_schedule()
 
     if st.button("🔁 Regenerate with Emergency Leave"):
-        sched, summ = build_schedule_model(
+        orig = st.session_state.original_sched_df
+        overrides = st.session_state.pending_overrides or {}
+        if not overrides:
+            st.warning("No EL overrides to apply.")
+            st.stop()
+
+        # find earliest EL day across all overrides
+        w0 = min(day_idx for (_, day_idx) in overrides.keys())
+
+        # build a full fixed_assignments dict
+        fixed = {}
+        orig = st.session_state.original_sched_df
+
+        # 1) freeze days < w0, but only valid single shifts / EL / MC
+        for nurse, row in orig.iterrows():
+            for i, col in enumerate(orig.columns):
+                if i >= w0:
+                    break
+                val = str(row[col]).strip()
+                # only freeze true shifts or EL; skip "MC", "Rest", "AM/PM*", etc.
+                if val in SHIFT_LABELS or val.upper() == "EL":
+                    fixed[(nurse, i)] = val
+                # skip "Rest" or "AM/PM*" etc.
+
+        # 2) add all of your pending EL overrides
+        fixed.update(overrides)
+
+        # store it back so next time you keep on growing it
+        st.session_state.fixed = fixed
+
+        # now re-solve only the tail
+        sched2, summ2 = build_schedule_model(
             st.session_state.df_profiles,
             st.session_state.df_prefs,
             st.session_state.start_date,
             st.session_state.num_days,
             rl_assignment=st.session_state.rl_assignment,
-            fixed_assignments=st.session_state.fixed
+            fixed_assignments=fixed
         )
-        st.session_state.sched_df = sched
-        st.session_state.summary_df = summ
+        st.session_state.sched_df   = sched2
+        st.session_state.summary_df = summ2
+
+        st.success(f"Re-solved from day {w0} onward.")
+        st.session_state.show_schedule_expanded = False
         st.rerun()
 
     st.subheader("📅 Final Schedule")
@@ -208,5 +251,3 @@ if st.session_state.sched_df is not None:
     st.markdown("**Download results:**")
     download_excel(st.session_state.sched_df, "nurse_schedule.xlsx")
     download_excel(st.session_state.summary_df, "nurse_summary.xlsx")
-
-

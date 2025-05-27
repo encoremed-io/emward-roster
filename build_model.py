@@ -3,8 +3,26 @@ from ortools.sat.python import cp_model
 from datetime import timedelta, date as dt_date
 from typing import Optional, Dict, Tuple, Set
 from collections import defaultdict
+from pathlib import Path
 import logging
 import json
+
+LOG_PATH = Path(__file__).parent / "schedule_run.log"
+
+# grab our module’s logger
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Only add the handler once
+if not any(isinstance(h, logging.FileHandler) for h in logger.handlers):
+    fh = logging.FileHandler(LOG_PATH, mode="w", encoding="utf-8")
+    fh.setLevel(logging.INFO)
+    fmt = logging.Formatter(
+        "%(asctime)s  %(levelname)-8s  %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    fh.setFormatter(fmt)
+    logger.addHandler(fh)
 
 with open('config/constants.json', 'r') as f:
     constants = json.load(f)
@@ -23,6 +41,8 @@ PREFERRED_WEEKLY_HOURS = constants["PREFERRED_WEEKLY_HOURS"]
 MIN_ACCEPTABLE_WEEKLY_HOURS = constants["MIN_ACCEPTABLE_WEEKLY_HOURS"]
 PREF_HOURS_PENALTY = constants["PREF_HOURS_PENALTY"]
 MIN_HOURS_PENALTY = constants["MIN_HOURS_PENALTY"]
+
+DOUBLE_SHIFT_PENALTY = constants["DOUBLE_SHIFT_PENALTY"]
 
 AM_COVERAGE_MIN_PERCENT = constants["AM_COVERAGE_MIN_PERCENT"]
 AM_COVERAGE_PENALTIES = constants["AM_COVERAGE_PENALTIES"]
@@ -74,7 +94,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     """
 
     # === Model setup ===
-    print("📋 Building model...")
+    logger.info("📋 Building model...")
     model = cp_model.CpModel()
     nurses = profiles_df.to_dict(orient='records')
     nurse_names = [n['Name'] for n in nurses]
@@ -186,6 +206,9 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                 model.Add(sum(work[n, d, s] for s in range(3)) <= 1).OnlyEnforceIf(ts.Not())
                 # If ts==True  → sum_s work == 2
                 model.Add(sum(work[n, d, s] for s in range(3)) == 2).OnlyEnforceIf(ts)
+
+                # If double shift, apply penalty
+                high_priority_penalty.append(ts * DOUBLE_SHIFT_PENALTY)
 
     # 2. Each nurse works <= 42 hours/week (hard), adjustable based on MC; ideally min 40 (soft), at least 30 (hard)
     for n in nurse_names:
@@ -414,7 +437,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
     # === Objective ===
     # === Phase 1: minimize total penalties ===
-    print("🚀 Phase 1: minimizing penalties…")
+    logger.info("🚀 Phase 1: minimizing penalties…")
     # 1. Tell the model to minimize penalty sum
     model.Minimize(sum(high_priority_penalty))
     solver = cp_model.CpSolver()
@@ -423,9 +446,9 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     solver.parameters.relative_gap_limit = 0.01
 
     status1 = solver.Solve(model)
-    print(f"⏱ Solve time: {solver.WallTime():.2f} seconds")
-    print(f"High Priority Penalty Phase 1: {solver.ObjectiveValue()}")
-    print(f"Low Priority Penalty Phase 1: {solver.Value(sum(low_priority_penalty))}")
+    logger.info(f"⏱ Solve time: {solver.WallTime():.2f} seconds")
+    logger.info(f"High Priority Penalty Phase 1: {solver.ObjectiveValue()}")
+    logger.info(f"Low Priority Penalty Phase 1: {solver.Value(sum(low_priority_penalty))}")
     if status1 not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         raise RuntimeError("❌ No feasible solution even for penalties‐only!")
 
@@ -447,12 +470,12 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     cached_gap = solver.Value(gap_pct) if valid_pcts else "N/A"
     high1 = solver.ObjectiveValue()
     best_penalty = solver.ObjectiveValue() + solver.Value(sum(low_priority_penalty))
-    print(f"▶️ Phase 1 complete: best total penalty = {best_penalty}; best fairness gap = {cached_gap}")
+    logger.info(f"▶️ Phase 1 complete: best total penalty = {best_penalty}; best fairness gap = {cached_gap}")
 
     # === Phase 2: maximize preferences under that penalty bound ===
     # only run phase 2 if shift preferences exist
     if any(shift_preferences.values()):
-        print("🚀 Phase 2: maximizing preferences…")
+        logger.info("🚀 Phase 2: maximizing preferences…")
         # 2. Freeze the penalty sum at its optimum
         model.Add(sum(high_priority_penalty) <= int(high1))
         if valid_pcts:
@@ -469,16 +492,16 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         solver.parameters.random_seed = 42
         solver.parameters.relative_gap_limit = 0.01
         status2 = solver.Solve(model)
-        print(f"⏱ Solve time: {solver.WallTime():.2f} seconds")
-        print(f"High Priority Penalty Phase 2: {solver.Value(sum(low_priority_penalty))}")
-        print(f"Low Priority Penalty Phase 2: {solver.ObjectiveValue()}")
+        logger.info(f"⏱ Solve time: {solver.WallTime():.2f} seconds")
+        logger.info(f"High Priority Penalty Phase 2: {solver.Value(sum(high_priority_penalty))}")
+        logger.info(f"Low Priority Penalty Phase 2: {solver.ObjectiveValue()}")
         use_fallback = status2 not in (cp_model.OPTIMAL, cp_model.FEASIBLE)
         if use_fallback:
-            print("⚠️ Phase 2 failed: using fallback Phase 1 solution.")
-            print(f"Solver Phase 2 status: {solver.StatusName(status2)}")
+            logger.info("⚠️ Phase 2 failed: using fallback Phase 1 solution.")
+            logger.info(f"Solver Phase 2 status: {solver.StatusName(status2)}")
         else:
-            print(f"▶️ Phase 2 complete")
-            best_penalty = solver.Value(sum(high_priority_penalty)) + solver.Value(sum(low_priority_penalty))
+            logger.info(f"▶️ Phase 2 complete")
+            best_penalty = solver.Value(sum(high_priority_penalty)) + solver.ObjectiveValue()
             new_total_prefs_met = 0
             for n in nurse_names:
                 for d in range(num_days):
@@ -488,18 +511,18 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                         new_total_prefs_met += 1
 
     else:
-        print("⏭️ Skipping Phase 2: No shift preferences provided.")
+        logger.info("⏭️ Skipping Phase 2: No shift preferences provided.")
         use_fallback = True
     # use_fallback = True
 
     # === Extract & report ===
-    print("✅ Done!")
-    print(f"📊 Total penalties = {best_penalty}")
-    print(f"🔍 Total preferences met = {cached_total_prefs_met if use_fallback else new_total_prefs_met}")
+    logger.info("✅ Done!")
+    logger.info(f"📊 Total penalties = {best_penalty}")
+    logger.info(f"🔍 Total preferences met = {cached_total_prefs_met if use_fallback else new_total_prefs_met}")
     if 'gap_pct' in locals():
-        print(f"📈 Preference gap (max - min) = {cached_gap if use_fallback else solver.Value(gap_pct)}")
+        logger.info(f"📈 Preference gap (max - min) = {cached_gap if use_fallback else solver.Value(gap_pct)}")
     else:
-        print("📈 Preference gap (max - min) = N/A")
+        logger.info("📈 Preference gap (max - min) = N/A")
 
     # === Extract Results ===
     dates = [date_start + timedelta(days=i) for i in range(num_days)]
@@ -590,19 +613,19 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         if total and am / total < 0.6:
             violations["Low_AM_Days"].append(f"{dates[d].strftime('%a %Y-%m-%d')} ({am/total:.0%})")
 
-    print("\n⚠️ Soft Constraint Violations Summary:")
+    logger.info("\n⚠️ Soft Constraint Violations Summary:")
     for key, items in violations.items():
         match key:
             case "Preference_Unmet":
                 total_unmet = sum(s["Prefs_Unmet"] for s in summary)
-                print(f"🔸 {key}: {total_unmet} unmet preferences across {len(items)} nurses")
+                logger.info(f"🔸 {key}: {total_unmet} unmet preferences across {len(items)} nurses")
             case "Fairness_Gap":
-                print(f"🔸 {key}: {len(items) if isinstance(items, list) else items} %")
+                logger.info(f"🔸 {key}: {len(items) if isinstance(items, list) else items} %")
             case _:
-                print(f"🔸 {key}: {len(items) if isinstance(items, list) else items} cases")
+                logger.info(f"🔸 {key}: {len(items) if isinstance(items, list) else items} cases")
         if isinstance(items, list):
             for item in items:
-                print(f"   - {item}")
+                logger.info(f"   - {item}")
 
-    print("📁 Schedule and summary generated.")
+    logger.info("📁 Schedule and summary generated.")
     return pd.DataFrame.from_dict(schedule, orient='index', columns=headers), pd.DataFrame(summary)
