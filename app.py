@@ -16,6 +16,12 @@ from nurse_env import compute_total_penalty
 app = FastAPI(title="Nurse Roster Scheduler API")
 
 
+class Override(BaseModel):
+    nurse:      str = Field(..., description="Name of the nurse (must match profiles)")
+    el_date:    date = Field(..., description="Which day to override (YYYY-MM-DD)")
+    type:       str = Field(..., description="'EL' for emergency leave or one of SHIFT_LABELS")
+
+
 class ScheduleRequest(BaseModel):
     profiles_path: str = Field(default=..., description="Path to nurse_profiles.xlsx")
     prefs_path:    str = Field(default=..., description="Path to nurse_preferences.xlsx")
@@ -26,6 +32,11 @@ class ScheduleRequest(BaseModel):
         description="Optional RL warm-start: N×D×3 array of 0/1"
     )
 
+    overrides: Optional[List[Override]] = Field(
+        default=None,
+        description="Optional list of per-nurse, per-day overrides (e.g. EL)"
+    )
+
     class Config:
         schema_extra = {
             "example": {
@@ -33,7 +44,10 @@ class ScheduleRequest(BaseModel):
                 "prefs_path":    "data/nurse_preferences.xlsx",
                 "start_date":    "2025-06-01",
                 "num_days":      14,
-                "rl_assignment": []
+                "rl_assignment": [],
+                "overrides": [
+                    {"nurse":"S01","el_date":"2025-06-03","type":"EL"}
+                ]
             }
         }
 
@@ -65,12 +79,26 @@ def make_schedule(req: ScheduleRequest):
         print("🔨 No warm start — CP-SAT only.")
 
     try:
+        fixed: dict[tuple[str,int], str] = {}
+        for ov in req.overrides or []:
+            name = ov.nurse.strip().upper()
+            if name not in profiles['Name'].str.upper().tolist():
+                raise HTTPException(400, f"Unknown nurse in overrides: {ov.nurse}")
+            day_idx = (ov.el_date - req.start_date).days
+            if not (0 <= day_idx < req.num_days):
+                raise HTTPException(400, f"Override date {ov.el_date} out of scheduling window")
+            typ = ov.type.strip().upper()
+            if typ != "EL":
+                raise HTTPException(400, "Overrides currently only support type='EL'")
+            fixed[(name, day_idx)] = "EL"
+
         sched_df, summ_df = build_schedule_model(
             profiles,
             prefs,
             pd.to_datetime(req.start_date),
             req.num_days,
-            rl_assignment=rl_arr
+            rl_assignment=rl_arr,
+            fixed_assignments=fixed,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Scheduling failed: {e}")

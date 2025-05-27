@@ -1,7 +1,34 @@
 import pandas as pd
 from ortools.sat.python import cp_model
 from datetime import timedelta, date as dt_date
+from typing import Optional, Dict, Tuple, Set
+from collections import defaultdict
 import logging
+import json
+
+with open('config/constants.json', 'r') as f:
+    constants = json.load(f)
+
+SHIFT_LABELS = constants["SHIFT_LABELS"]
+SHIFT_HOURS = constants["SHIFT_HOURS"]
+AVG_HOURS = constants["AVG_HOURS"]
+DAYS_PER_WEEK = constants["DAYS_PER_WEEK"]
+
+MIN_NURSES_PER_SHIFT = constants["MIN_NURSES_PER_SHIFT"]
+MIN_SENIORS_PER_SHIFT = constants["MIN_SENIORS_PER_SHIFT"]
+MAX_WEEKLY_HOURS = constants["MAX_WEEKLY_HOURS"]
+MAX_MC_DAYS_PER_WEEK = constants["MAX_MC_DAYS_PER_WEEK"]
+
+PREFERRED_WEEKLY_HOURS = constants["PREFERRED_WEEKLY_HOURS"]
+MIN_ACCEPTABLE_WEEKLY_HOURS = constants["MIN_ACCEPTABLE_WEEKLY_HOURS"]
+PREF_HOURS_PENALTY = constants["PREF_HOURS_PENALTY"]
+MIN_HOURS_PENALTY = constants["MIN_HOURS_PENALTY"]
+
+AM_COVERAGE_MIN_PERCENT = constants["AM_COVERAGE_MIN_PERCENT"]
+AM_COVERAGE_PENALTIES = constants["AM_COVERAGE_PENALTIES"]
+
+PREF_MISS_PENALTY = constants["PREF_MISS_PENALTY"]
+FAIRNESS_GAP_PENALTY = constants["FAIRNESS_GAP_PENALTY"]
 
 def load_nurse_profiles(path='data/nurse_profiles.xlsx') -> pd.DataFrame:
     df = pd.read_excel(path)
@@ -38,36 +65,13 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                          preferences_df: pd.DataFrame,
                          start_date: pd.Timestamp | dt_date,
                          num_days: int,
-                         rl_assignment=None) -> tuple[pd.DataFrame, pd.DataFrame]:
+                         rl_assignment=None,
+                         fixed_assignments: Optional[Dict[Tuple[str,int], str]] = None
+                         ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Builds a nurse schedule satisfying hard constraints and optimizing soft preferences.
     Returns a schedule DataFrame and a summary DataFrame.
     """
-
-    # === Constants ===
-    # Shift info
-    SHIFT_LABELS = ['AM', 'PM', 'Night']
-    SHIFT_HOURS = [7, 7, 10]  # AM, PM = 7 hrs, Night = 10 hrs
-    AVG_HOURS = 7
-    DAYS_PER_WEEK = 7
-
-    # Hard constraint parameters
-    MIN_NURSES_PER_SHIFT = 4
-    MIN_SENIORS_PER_SHIFT = 1
-    MAX_WEEKLY_HOURS = 42
-    MAX_MC_DAYS_PER_WEEK = 2
-
-    # Soft constraint preferences
-    PREFERRED_WEEKLY_HOURS = 40
-    MIN_ACCEPTABLE_WEEKLY_HOURS = 30
-    PREF_HOURS_PENALTY = 1000
-    MIN_HOURS_PENALTY = 2000
-
-    AM_COVERAGE_MIN_PERCENT = 60  # Adjust this as needed
-    AM_COVERAGE_PENALTIES = [1000, 5000, 10000]  # Penalties for <60%, <50%, <40%
-
-    PREF_MISS_PENALTY = 10
-    FAIRNESS_GAP_PENALTY = 5
 
     # === Model setup ===
     print("📋 Building model...")
@@ -81,6 +85,21 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         date_start: dt_date = start_date.date()
     else:
         date_start = start_date
+
+    # === Normalise EL days ===
+    if fixed_assignments is None:
+        fixed_assignments = {}
+    else:
+        # ensure keys are uppercase names and valid indices
+        cleaned = {}
+        for (nurse, day_idx), shift in fixed_assignments.items():
+            name = nurse.strip().upper()
+            if name not in nurse_names:
+                raise ValueError(f"Unknown nurse in fixed_assignments: {nurse}")
+            if not (0 <= day_idx < num_days):
+                raise ValueError(f"Day index out of range for {nurse}: {day_idx}")
+            cleaned[(name, day_idx)] = shift.strip().upper()
+        fixed_assignments = cleaned
 
     # === Preferences and MC days ===
     shift_preferences = {}
@@ -126,10 +145,47 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
     # === Hard Constraints ===
 
-    # 1. Each nurse can work at most one shift per day
+    # === Fix EL as no work ===
+    el_days: Set[int] = set()
+    el_days_per_nurse: Dict[str, Set[int]] = defaultdict(set)
+
+    for (nurse, day_idx), shift_label in fixed_assignments.items():
+        label = shift_label.upper()
+        if label == "EL":
+            # Block all shifts
+            for s in range(3):
+                model.Add(work[nurse, day_idx, s] == 0)
+            # Record EL
+            el_days.add(day_idx)
+            el_days_per_nurse[nurse].add(day_idx)
+        else:
+            # Force that one shift and turn off the others
+            if label not in shift_str_to_idx:
+                raise ValueError(f"Unknown shift '{label}' for {nurse}")
+            s = shift_str_to_idx[label]
+            model.Add(work[nurse, day_idx, s] == 1)
+            for other_s in (set(range(3)) - {s}):
+                model.Add(work[nurse, day_idx, other_s] == 0)
+
+    # 1. Number of shift per nurse per day
+    # If no EL, each nurse can work at most one shift per day
+    # If EL, allow 2 shifts per nurse if cannot satisfy other hard constraints for that day
+    two_shifts = {}  
+
     for n in nurse_names:
         for d in range(num_days):
-            model.AddAtMostOne(work[n, d, s] for s in range(3))
+            if d not in el_days:
+            # no EL here: enforce original rule
+                model.AddAtMostOne(work[n, d, s] for s in range(3))
+            else:
+            # EL day: allow either 1 or 2 shifts
+                ts = model.NewBoolVar(f"two_shifts_{n}_{d}")
+                two_shifts[(n, d)] = ts
+
+                # If ts==False → sum_s work ≤ 1
+                model.Add(sum(work[n, d, s] for s in range(3)) <= 1).OnlyEnforceIf(ts.Not())
+                # If ts==True  → sum_s work == 2
+                model.Add(sum(work[n, d, s] for s in range(3)) == 2).OnlyEnforceIf(ts)
 
     # 2. Each nurse works <= 42 hours/week (hard), adjustable based on MC; ideally min 40 (soft), at least 30 (hard)
     for n in nurse_names:
@@ -137,11 +193,10 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             days = range(w * DAYS_PER_WEEK, min((w + 1) * DAYS_PER_WEEK, num_days))
             weekly_hours = sum(work[n, d, s] * SHIFT_HOURS[s] for d in days for s in range(3))
 
-            mc_count = 0
-            if n in mc_days:
-              mc_count = sum(1 for d in days if d in mc_days[n])
+            mc_count = sum(1 for d in days if d in mc_days.get(n, set()))
+            el_count = sum(1 for d in days if d in el_days_per_nurse.get(n, set()))
 
-            adjustment = mc_count * AVG_HOURS                           # MC hours deducted from max/pref/min hours
+            adjustment = (mc_count + el_count) * AVG_HOURS                      # MC & EL hours deducted from max/pref/min hours
             eff_max_hours = max(0, MAX_WEEKLY_HOURS - adjustment)               # <= 42 - x
             eff_pref_hours = max(0, PREFERRED_WEEKLY_HOURS - adjustment)        # >= 40 - x
             eff_min_hours = max(0, MIN_ACCEPTABLE_WEEKLY_HOURS - adjustment)    # >= 30 - x
@@ -384,9 +439,9 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     cached_total_prefs_met = 0
     for n in nurse_names:
         for d in range(num_days):
-            assigned = next((s for s in range(3) if cached_values[(n, d, s)]), None)
+            picked = [s for s in range(3) if cached_values[(n, d, s)]]
             pref = shift_preferences.get(n, {}).get(d)
-            if pref is not None and assigned == pref:
+            if pref is not None and len(picked) == 1 and pref in picked:
                 cached_total_prefs_met += 1
 
     cached_gap = solver.Value(gap_pct) if valid_pcts else "N/A"
@@ -427,9 +482,9 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             new_total_prefs_met = 0
             for n in nurse_names:
                 for d in range(num_days):
-                    assigned = next((s for s in range(3) if solver.Value(work[n, d, s])), None)
+                    picked = [s for s in range(3) if solver.Value(work[n, d, s])]
                     pref = shift_preferences.get(n, {}).get(d)
-                    if pref is not None and assigned == pref:
+                    if pref is not None and len(picked) == 1 and pref in picked:
                         new_total_prefs_met += 1
 
     else:
@@ -461,28 +516,38 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         prefs_unmet = []
 
         for d in range(num_days):
-            assigned = None
+            picked = []
+            
             if d in mc_days.get(n, set()):
                 shift = "MC"
+            elif (n, d) in fixed_assignments and fixed_assignments[(n, d)].upper() == "EL":
+                shift = "EL"
             else:
                 if use_fallback:
-                    assigned = next((s for s in range(3) if cached_values[(n, d, s)]), None)
+                    picked = [s for s in range(3) if cached_values[(n, d, s)]]
                 else:
-                    assigned = next((s for s in range(3) if solver.Value(work[n, d, s])), None)
-                shift = SHIFT_LABELS[assigned] if assigned is not None else "Rest"
+                    picked = [s for s in range(3) if solver.Value(work[n, d, s])]
+                
+                match(len(picked)):
+                    case 0:
+                        shift = "Rest"
+                    case 1:
+                        shift = SHIFT_LABELS[picked[0]]
+                    case 2:
+                        shift = f"{SHIFT_LABELS[picked[0]]}/{SHIFT_LABELS[picked[1]]}*"
             row.append(shift)
 
-            if assigned is not None:
-                hours = SHIFT_HOURS[assigned]
-                if d < 7:
+            for p in picked:
+                hours = SHIFT_HOURS[p]
+                if d < DAYS_PER_WEEK:
                     hours_w1 += hours
                 else:
                     hours_w2 += hours
-                counts[assigned] += 1
+                counts[p] += 1
 
             pref = shift_preferences.get(n, {}).get(d)
             if pref is not None:
-                if assigned == pref:
+                if len(picked) == 1 and picked[0] == pref:
                     prefs_met += 1
                 else:
                     prefs_unmet.append(f"{dates[d].strftime('%a %Y-%m-%d')} (wanted {SHIFT_LABELS[pref]})")

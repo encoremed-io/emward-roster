@@ -12,6 +12,7 @@ openai
 openpyxl
 requests
 streamlit
+streamlit-aggrid
 tensorboard
 torch
 invoke

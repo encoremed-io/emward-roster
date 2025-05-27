@@ -3,8 +3,25 @@
 import gymnasium as gym
 import numpy as np
 import pandas as pd
+import json
 from gymnasium import spaces, Env
+from gymnasium.utils import seeding
 from datetime import date as dt_date
+
+with open('config/constants.json', 'r') as f:
+    constants = json.load(f)
+
+SHIFT_LABELS = constants["SHIFT_LABELS"]
+SHIFT_HOURS = constants["SHIFT_HOURS"]
+AVG_HOURS = constants["AVG_HOURS"]
+DAYS_PER_WEEK = constants["DAYS_PER_WEEK"]
+MIN_ACCEPTABLE_WEEKLY_HOURS = constants["MIN_ACCEPTABLE_WEEKLY_HOURS"]
+PREFERRED_WEEKLY_HOURS = constants["PREFERRED_WEEKLY_HOURS"]
+PREF_HOURS_PENALTY = constants["PREF_HOURS_PENALTY"]
+AM_COVERAGE_MIN_PERCENT = constants["AM_COVERAGE_MIN_PERCENT"]
+AM_COVERAGE_PENALTIES = constants["AM_COVERAGE_PENALTIES"]
+PREF_MISS_PENALTY = constants["PREF_MISS_PENALTY"]
+FAIRNESS_GAP_PENALTY = constants["FAIRNESS_GAP_PENALTY"]
 
 def compute_total_penalty(assignment: np.ndarray,
                           profiles_df: pd.DataFrame,
@@ -14,20 +31,6 @@ def compute_total_penalty(assignment: np.ndarray,
     Compute the total penalty for a given assignment.
     (Same logic as in your standalone function.)
     """
-    # === Constants ===
-    SHIFT_HOURS = [7, 7, 10]
-    AVG_HOURS = 7
-    DAYS_PER_WEEK = 7
-
-    MIN_ACCEPTABLE_WEEKLY_HOURS = 30
-    PREFERRED_WEEKLY_HOURS = 40
-    PREF_HOURS_PENALTY = 1000
-
-    AM_COVERAGE_MIN_PERCENT = 60
-    AM_COVERAGE_PENALTIES = [1000, 5000, 10000]
-
-    PREF_MISS_PENALTY = 10
-    FAIRNESS_GAP_PENALTY = 5
 
     if isinstance(start_date, pd.Timestamp):
         date_start : dt_date = start_date.date()
@@ -124,15 +127,6 @@ def compute_penalty_per_day(assignment: np.ndarray,
     so they are omitted here (or can be added with some approximation).
     """
 
-    # Constants (same as full function)
-    SHIFT_HOURS = [7, 7, 10]
-    AVG_HOURS = 7
-    DAYS_PER_WEEK = 7
-
-    PREF_MISS_PENALTY = 10
-    AM_COVERAGE_MIN_PERCENT = 60
-    AM_COVERAGE_PENALTIES = [1000, 5000, 10000]
-
     if isinstance(start_date, pd.Timestamp):
         date_start : dt_date = start_date.date()
     else:
@@ -209,6 +203,7 @@ class NurseRosteringEnv(Env):
         self.preferences_df = preferences_df
         self.start_date = start_date
         self.num_days = num_days
+        self.np_random, _ = seeding.np_random(None)
 
         self.nurse_names = [str(n).strip().upper() for n in profiles_df['Name']]
         self.N = len(self.nurse_names)
@@ -226,10 +221,8 @@ class NurseRosteringEnv(Env):
         self.reset()
 
     def reset(self, *, seed=None, options=None):
+        self.np_random, seed = seeding.np_random(seed)
         super().reset(seed=seed)
-
-        if seed is not None:
-            np.random.seed(seed)
         
         # Re-initialize environment state
         self.assignment = np.zeros((self.N, self.D, self.S), dtype=np.int8)
@@ -251,14 +244,17 @@ class NurseRosteringEnv(Env):
         d = rem // self.S
         s = rem % self.S
 
+        # Default info and done flag
         info = {}
-        done = False
+        self.step_count += 1
+        done = (self.step_count >= self.N * self.D)
 
-        # If nurse already has a shift that day, big penalty
+        # 1) Illegal move mask: if nurse already has a shift that day, zero reward and skip
         if self.assignment[n, d].any():
-            reward = -10_000
+            # no change to assignment, small zero reward instead of huge negative
+            reward = 0
         else:
-            # === 1. Compute old penalty for this day ===
+            # 2) Compute old penalty for this day
             old_penalty = compute_penalty_per_day(
                 self.assignment,
                 self.profiles_df,
@@ -267,10 +263,10 @@ class NurseRosteringEnv(Env):
                 d
             )
 
-            # === 2. Apply action ===
+            # 3) Apply the action
             self.assignment[n, d, s] = 1
 
-            # === 3. Compute new penalty ===
+            # 4) Compute new penalty for this day
             new_penalty = compute_penalty_per_day(
                 self.assignment,
                 self.profiles_df,
@@ -279,26 +275,48 @@ class NurseRosteringEnv(Env):
                 d
             )
 
-            # === 4. Reward is negative change in penalty ===
+            # 5) Base reward = reduction in per-day penalty
             reward = old_penalty - new_penalty
 
-        # === 5. Check termination ===
-        self.step_count += 1
-        done = (self.step_count >= self.N * self.D)
+            # ── REWARD SHAPING ──
+            # +1 for any valid assignment
+            reward += 1
 
+            # +5 if this assignment matches the nurse’s preference for that day
+            # (assumes SHIFT_LABELS = ['AM','PM','Night'] is defined at class scope)
+            nurse_name = self.nurse_names[n]
+            day_date = (self.start_date + pd.to_timedelta(d, unit="D")).date()
+            pref_val = self.preferences_df.at[nurse_name, day_date]
+            if isinstance(pref_val, str) and pref_val.strip().upper() == SHIFT_LABELS[s].upper():
+                reward += 5
+
+        # 6) End-of-episode final penalty
         if done:
-            # Use full penalty at the end to reflect long-term constraints
             final_penalty = compute_total_penalty(
                 self.assignment,
                 self.profiles_df,
                 self.preferences_df,
                 self.start_date
             )
-            reward -= final_penalty  # subtract final penalty from reward
+            info['final_penalty'] = final_penalty
+            # subtract the long-term penalty once at the end
+            reward -= final_penalty
+        
+        # 7) Clip per‐step reward to [-10, +10]
+        reward = max(-10, min(10, reward))
 
-        return self.assignment.flatten(), reward, done, False, {}
+        # 8) Return flattened observation, shaped reward, done flag, and info
+        return self.assignment.flatten(), reward, done, False, info
 
 
     def render(self, mode='human'):
-        # you can implement a simple print-out here if you like
-        pass
+        # Print a simple readable schedule: nurses x days, with shift labels or '-'
+        for n, nurse in enumerate(self.nurse_names):
+            line = f"{nurse:10s}: "
+            for d in range(self.D):
+                assigned_shift = np.where(self.assignment[n, d, :] == 1)[0]
+                if len(assigned_shift) == 1:
+                    line += SHIFT_LABELS[assigned_shift[0]][0] + " "
+                else:
+                    line += "- "
+            print(line)

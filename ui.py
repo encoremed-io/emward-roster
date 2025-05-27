@@ -12,6 +12,7 @@ from build_model import (
     validate_nurse_data,
     build_schedule_model,
 )
+from st_aggrid import GridOptionsBuilder, AgGrid, GridUpdateMode
 from nurse_env import NurseRosteringEnv
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
@@ -19,9 +20,20 @@ import numpy as np
 import traceback
 import logging
 
+logging.basicConfig(filename="ui_error.log", level=logging.ERROR)
+
+st.set_page_config(page_title="Nurse Roster Scheduler", layout="wide")
+st.title("🩺 Nurse Roster Scheduler")
+st.markdown("""
+Upload your nurse profiles and preferences, choose a start date and horizon,
+then generate a roster. This uses CP-SAT under the hood (with optional RL warm-start).
+""")
+
 def download_excel(df, filename):
     buffer = BytesIO()
-    df.to_excel(buffer, index=not df.index.equals(pd.RangeIndex(len(df))), engine="xlsxwriter")
+    df.to_excel(buffer,
+                index=not df.index.equals(pd.RangeIndex(len(df))),
+                engine="xlsxwriter")
     buffer.seek(0)
     st.download_button(
         label=f"Download {filename}",
@@ -30,148 +42,171 @@ def download_excel(df, filename):
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
+def show_editable_schedule():
+    st.subheader("📅 Schedule (mark ‘EL’ for emergency leave)")
+    sched_df = st.session_state.sched_df
+    if sched_df is None or sched_df.empty:
+        st.write("No schedule data to show.")
+        return
+    
+    disp = sched_df.reset_index().rename(columns={'index': 'Nurse'})
+    # st.write("disp preview:", disp.head())
+    gb = GridOptionsBuilder.from_dataframe(disp)
+    for c in disp.columns:
+        if c != "Nurse":
+            gb.configure_column(c, editable=True)
+    grid = AgGrid(
+        disp,
+        gridOptions=gb.build(),
+        update_mode=GridUpdateMode.VALUE_CHANGED,
+        fit_columns_on_grid_load=True,
+        height=300,
+        
+        key="editable_schedule_grid"
+    )
+    edited = pd.DataFrame(grid["data"]).set_index("Nurse")
 
-logging.basicConfig(filename="ui_error.log", level=logging.ERROR)
-st.set_page_config(page_title="Nurse Roster Scheduler", layout="wide")
-st.title("🩺 Nurse Roster Scheduler")
+    # Collect new EL overrides
+    new_fixed = {}
+    for nurse in edited.index:
+        for col in edited.columns:
+            if edited.at[nurse, col] == "EL" and sched_df.at[nurse, col] != "EL":
+                idx = (pd.to_datetime(col) - pd.to_datetime(st.session_state.start_date)).days
+                new_fixed[(nurse, idx)] = "EL"
+    st.session_state.fixed.update(new_fixed)
+    st.sidebar.write(f"Current EL overrides: {len(st.session_state.fixed)}")
 
-st.markdown(
-    """
-    Upload your nurse profiles and preferences, choose a start date and horizon,
-    then generate a roster. This uses CP-SAT under the hood (with optional RL warm-start).
-    """
-)
-
-# ---- Sidebar inputs ----
+# Sidebar inputs
 st.sidebar.header("Inputs")
+profiles_file = st.sidebar.file_uploader("Upload nurse_profiles.xlsx", type=["xlsx"])
+prefs_file = st.sidebar.file_uploader("Upload nurse_preferences.xlsx", type=["xlsx"])
+start_date = st.sidebar.date_input("Schedule start date", value=date.today())
+num_days = st.sidebar.slider("Number of days", 7, 28, 14)
+use_rl = st.sidebar.checkbox("Warm-start with RL policy", value=True)
 
-profiles_file = st.sidebar.file_uploader(
-    "Upload nurse_profiles.xlsx", type=["xlsx"], accept_multiple_files=False
-)
-prefs_file = st.sidebar.file_uploader(
-    "Upload nurse_preferences.xlsx", type=["xlsx"], accept_multiple_files=False
-)
+# Store core state
+for key, default in {
+    "fixed": {},
+    "rl_assignment": None,
+    "sched_df": None,
+    "summary_df": None,
+    "df_profiles": None,
+    "df_prefs": None,
+    "start_date": pd.to_datetime(start_date),
+    "num_days": num_days,
+}.items():
+    if key not in st.session_state:
+        st.session_state[key] = default
 
-start_date = st.sidebar.date_input(
-    "Schedule start date", value=date.today()
-)
-num_days = st.sidebar.slider(
-    "Number of days", min_value=7, max_value=28, value=14
-)
-
-# === Step 3: Warm‐start toggle ===
-use_rl = st.sidebar.checkbox(
-    "Warm‐start with RL policy",
-    value=True,
-    help="If checked, will load your PPO model and generate a draft assignment to seed the CP solver."
-)
-
-# ---- Main ----
+# Generate Schedule
 if st.sidebar.button("Generate Schedule"):
+    st.session_state.fixed.clear()
+    st.session_state.rl_assignment = None
+    st.session_state.start_date = pd.to_datetime(start_date)
+    st.session_state.num_days = num_days
+
     if not profiles_file or not prefs_file:
         st.error("Please upload both the profiles and preferences Excel files.")
-    else:
-        try:
-            # Load profiles
-            # If it's an UploadedFile, read into a DataFrame directly,
-            # then apply the cleaning steps from load_nurse_profiles.
-            if isinstance(profiles_file, BytesIO) or hasattr(profiles_file, "read"):
-                df_profiles = pd.read_excel(profiles_file)
-                df_profiles['Name'] = df_profiles['Name'].str.strip().str.upper()
-            else:
-                df_profiles = load_nurse_profiles(profiles_file)
+        st.stop()
 
-            # Load preferences
-            if isinstance(prefs_file, BytesIO) or hasattr(prefs_file, "read"):
-                df_prefs = pd.read_excel(prefs_file)
-                # replicate load_shift_preferences logic
-                df_prefs.rename(columns={df_prefs.columns[0]: 'Name'}, inplace=True)
-                df_prefs.set_index('Name', inplace=True)
-                cleaned = []
-                for col in df_prefs.columns:
-                    dt = pd.to_datetime(str(col).strip().split()[-1], format="%Y-%m-%d").date()
-                    cleaned.append(dt)
-                df_prefs.columns = cleaned
-                df_prefs.index = df_prefs.index.str.strip().str.upper()
-            else:
-                df_prefs = load_shift_preferences(prefs_file)
+    try:
+        # Load profiles
+        df_profiles = pd.read_excel(profiles_file)
+        df_profiles['Name'] = df_profiles['Name'].str.strip().str.upper()
 
-            # Validate
-            missing, extra = validate_nurse_data(df_profiles, df_prefs)
-            if missing or extra:
-                message = "⚠️ Mismatch between nurse profiles and preferences:\n"
-                if missing:
-                    message += f"❌ Missing in preferences: {sorted(missing)}\n"
-                if extra:
-                    message += f"❌ Extra in preferences: {sorted(extra)}"
-                st.error(message)
-                st.stop()
+        # Load preferences
+        df_prefs = pd.read_excel(prefs_file)
+        df_prefs.rename(columns={df_prefs.columns[0]: 'Name'}, inplace=True)
+        df_prefs.set_index('Name', inplace=True)
+        df_prefs.columns = [
+            pd.to_datetime(str(c).strip().split()[-1], format="%Y-%m-%d").date()
+            for c in df_prefs.columns
+        ]
+        df_prefs.index = df_prefs.index.str.strip().str.upper()
 
-            # === Generate RL warm‐start if requested ===
-            rl_assignment = None
-            if use_rl:
-                try:
-                    env = NurseRosteringEnv(
-                        profiles_df=df_profiles,
-                        preferences_df=df_prefs,
-                        start_date=pd.to_datetime(start_date),
-                        num_days=num_days
-                    )
-                    vec_env = DummyVecEnv([lambda: env])
-                    model = PPO.load("models/ppo_nurse_roster", env=vec_env)
-                except (FileNotFoundError, OSError):
-                    st.warning(
-                        "⚠️ RL model file `ppo_nurse_roster.zip` not found. "
-                        "Falling back to pure CP scheduling."
-                    )
-                    model = None
+        missing, extra = validate_nurse_data(df_profiles, df_prefs)
+        if missing or extra:
+            msg = "⚠️ Mismatch:\n"
+            if missing: msg += f"Missing in prefs: {missing}\n"
+            if extra: msg += f"Extra in prefs: {extra}"
+            st.error(msg)
+            st.stop()
 
-                if model is not None:
-                    # roll out the policy to build a draft assignment
-                    env = NurseRosteringEnv(
-                        profiles_df=df_profiles,
-                        preferences_df=df_prefs,
-                        start_date=pd.to_datetime(start_date),
-                        num_days=num_days
-                    )
-                    obs, _ = env.reset()
-                    done = False
-                    while not done:
-                        action, _ = model.predict(obs, deterministic=True)
-                        if isinstance(action, np.ndarray):
-                            action = int(action)
-                        obs, _, done, _, _ = env.step(action)
-                    rl_assignment = obs.tolist()
-                    st.sidebar.success("🔁 Warm-start draft generated via RL")
+        st.session_state.df_profiles = df_profiles
+        st.session_state.df_prefs = df_prefs
 
-            # Build schedule
-            sched_df, summary_df = build_schedule_model(
-                df_profiles,
-                df_prefs,
-                pd.to_datetime(start_date),
-                num_days,
-                rl_assignment=rl_assignment
-            )
+        # RL warm start
+        if use_rl:
+            env = NurseRosteringEnv(df_profiles, df_prefs, pd.to_datetime(start_date), num_days)
+            vec = DummyVecEnv([lambda: env])
+            for h in (7, 14, 28):
+                if h >= num_days:
+                    try:
+                        model = PPO.load(f"models/ppo_nurse_{h}d.zip", env=vec)
+                        obs, _ = env.reset()
+                        done = False
+                        while not done:
+                            action, _ = model.predict(obs, deterministic=True)
+                            obs, _, done, _, _ = env.step(int(action))
+                        st.session_state.rl_assignment = obs.tolist()
+                        st.sidebar.success(f"🔁 Warm-start from {h}-day model")
+                    except:
+                        pass
+                    break
 
-            # Display results
-            st.subheader("📅 Generated Schedule")
-            st.dataframe(sched_df, use_container_width=True)
+        sched, summ = build_schedule_model(
+            df_profiles, df_prefs,
+            pd.to_datetime(start_date), num_days,
+            rl_assignment=st.session_state.rl_assignment,
+            fixed_assignments=st.session_state.fixed
+        )
+        st.session_state.sched_df = sched
+        st.session_state.summary_df = summ
 
-            st.subheader("📊 Summary Metrics")
-            st.dataframe(summary_df, use_container_width=True)
+    except Exception as e:
+        tb = traceback.format_exc()
+        st.error(f"Error: {e}")
+        st.text_area("Traceback", tb, height=200)
+        st.stop()
 
-            # Download buttons
-            st.markdown("**Download results:**")
-            download_excel(sched_df, "nurse_schedule.xlsx")
-            download_excel(summary_df, "nurse_summary.xlsx")
+if "show_schedule_expanded" not in st.session_state:
+    st.session_state.show_schedule_expanded = False
 
-        # except Exception as e:
-        #     st.error(f"Error: {e}")
-        
-        except Exception as e:
-            tb = traceback.format_exc()
-            st.error(f"Error: {e}")
-            st.text_area("Full Traceback", tb, height=300)
-            logging.error(tb)
-else:
-    st.info("Configure inputs in the sidebar and click Generate Schedule.")
+if st.session_state.sched_df is not None:
+    # Use a radio to simulate expander toggle
+    if st.session_state.sched_df is not None:
+        choice = st.radio(
+            "Editable Schedule",
+            options=["Hide", "Show"],
+            index=1 if st.session_state.show_schedule_expanded else 0,
+            horizontal=True
+        )
+        st.session_state.show_schedule_expanded = (choice == "Show")
+
+    if st.session_state.show_schedule_expanded:
+        show_editable_schedule()
+
+    if st.button("🔁 Regenerate with Emergency Leave"):
+        sched, summ = build_schedule_model(
+            st.session_state.df_profiles,
+            st.session_state.df_prefs,
+            st.session_state.start_date,
+            st.session_state.num_days,
+            rl_assignment=st.session_state.rl_assignment,
+            fixed_assignments=st.session_state.fixed
+        )
+        st.session_state.sched_df = sched
+        st.session_state.summary_df = summ
+        st.rerun()
+
+    st.subheader("📅 Final Schedule")
+    st.dataframe(st.session_state.sched_df, use_container_width=True)
+
+    st.subheader("📊 Final Summary Metrics")
+    st.dataframe(st.session_state.summary_df, use_container_width=True)
+
+    st.markdown("**Download results:**")
+    download_excel(st.session_state.sched_df, "nurse_schedule.xlsx")
+    download_excel(st.session_state.summary_df, "nurse_summary.xlsx")
+
+
