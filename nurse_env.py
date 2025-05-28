@@ -190,7 +190,8 @@ class NurseRosteringEnv(Env):
                  profiles_df: pd.DataFrame,
                  preferences_df: pd.DataFrame,
                  start_date: pd.Timestamp,
-                 num_days: int):
+                 max_days: int = 28,
+                 active_days: int = 0):
         
         super().__init__()
 
@@ -199,15 +200,29 @@ class NurseRosteringEnv(Env):
         if len(preferences_df.columns) == 0:
             raise ValueError("preferences_df must contain at least one day")
         
+        # Set days parameters
+        self.max_days = max_days
+        # If active_days not provided, use all columns in prefs
+        self.active_days = active_days or min(preferences_df.shape[1], max_days)
+
+        # Pad preferences_df up to max_days columns with zeros
+        prefs = preferences_df.copy()
+        if prefs.shape[1] < max_days:
+            last_date = pd.to_datetime(prefs.columns[-1])
+            for i in range(prefs.shape[1], max_days):
+                new_date = (last_date + pd.Timedelta(days=(i - prefs.shape[1] + 1))).date()
+                prefs[new_date] = 0  # neutral preference value
+        # If more cols than max, slice
+        prefs = prefs.iloc[:, :max_days]
+        
         self.profiles_df = profiles_df
         self.preferences_df = preferences_df
         self.start_date = start_date
-        self.num_days = num_days
         self.np_random, _ = seeding.np_random(None)
 
         self.nurse_names = [str(n).strip().upper() for n in profiles_df['Name']]
         self.N = len(self.nurse_names)
-        self.D = num_days
+        self.D = max_days
         self.S = 3  # AM, PM, Night
 
         # One-hot assignment tensor: shape (N, D, S)
@@ -229,13 +244,18 @@ class NurseRosteringEnv(Env):
         self.step_count = 0
         self.total_reward = 0
         self.done = False
-
-        obs = self.assignment.flatten()
-
-        if obs.ndim == 0:
-            obs = np.array([], dtype=np.int8)
     
-        return obs, {}  # observation and empty info dict
+        return self._get_obs(), {}  # observation and empty info dict
+    
+
+    def _get_obs(self):
+        full = self.assignment.flatten()
+        # Mask out positions beyond active_days
+        feat_per_day = (self.N * self.S)
+        cutoff = feat_per_day * self.active_days
+        masked = np.zeros_like(full)
+        masked[:cutoff] = full[:cutoff]
+        return masked
 
 
     def step(self, action: int):
@@ -248,6 +268,12 @@ class NurseRosteringEnv(Env):
         info = {}
         self.step_count += 1
         done = (self.step_count >= self.N * self.D)
+        reward = 0
+
+        # skip masked days
+        if d >= self.active_days:
+            obs = self._get_obs()
+            return obs, reward, done, False, {}
 
         # 1) Illegal move mask: if nurse already has a shift that day, zero reward and skip
         if self.assignment[n, d].any():
@@ -290,6 +316,41 @@ class NurseRosteringEnv(Env):
             if isinstance(pref_val, str) and pref_val.strip().upper() == SHIFT_LABELS[s].upper():
                 reward += 5
 
+            # ── DAILY AM‐COVERAGE BONUS ──
+            # whenever you’ve taken N actions, you’ve just finished assigning everyone
+            # for one day, so step_count % N == 0
+            if self.step_count % self.N == 0:
+                # which day did we just finish?
+                day_finished = (self.step_count // self.N) - 1
+
+                # compute AM coverage for that day
+                am_count   = int(self.assignment[:, day_finished, 0].sum())
+                total_any  = int(self.assignment[:, day_finished, :].sum())
+                pct_am     = 100 * am_count / total_any if total_any > 0 else 0
+
+                # if you hit your AM‐coverage target, give +0.5
+                if pct_am >= AM_COVERAGE_MIN_PERCENT:
+                    reward += 1.0 / self.max_days    # normalize by num_days
+
+                # ── WEEKLY HOURS‐TARGET BONUS ──
+                # if that day is the end of a 7‐day block:
+                if (day_finished + 1) % DAYS_PER_WEEK == 0:
+                    week_idx = day_finished // DAYS_PER_WEEK
+                    start_d  = week_idx * DAYS_PER_WEEK
+                    end_d    = start_d  + DAYS_PER_WEEK
+
+                    # sum up all hours assigned across all nurses that week
+                    week_hours = 0
+                    for d in range(start_d, end_d):
+                        for s, hrs in enumerate(SHIFT_HOURS):
+                            # count how many nurses you gave shift s on day d
+                            week_hours += int(self.assignment[:, d, s].sum()) * hrs
+
+                    # if the *average per nurse* ≥ preferred weekly hours, +2
+                    avg_nurse_hours = week_hours / self.N
+                    if avg_nurse_hours >= PREFERRED_WEEKLY_HOURS:
+                        reward += 2.0 / self.max_days    # normalize by num_days
+
         # 6) End-of-episode final penalty
         if done:
             final_penalty = compute_total_penalty(
@@ -298,15 +359,15 @@ class NurseRosteringEnv(Env):
                 self.preferences_df,
                 self.start_date
             )
-            info['final_penalty'] = final_penalty
+            info['final_penalty'] = final_penalty / self.max_days
             # subtract the long-term penalty once at the end
-            reward -= final_penalty
+            reward -= final_penalty / self.max_days
         
         # 7) Clip per‐step reward to [-10, +10]
         reward = max(-10, min(10, reward))
 
-        # 8) Return flattened observation, shaped reward, done flag, and info
-        return self.assignment.flatten(), reward, done, False, info
+        # 8) Return observation, shaped reward, done flag, and info
+        return self._get_obs(), reward, done, False, info
 
 
     def render(self, mode='human'):

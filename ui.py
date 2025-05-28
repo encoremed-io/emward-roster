@@ -76,7 +76,7 @@ def show_editable_schedule():
     new_overrides = {}
     for nurse in edited.index:
         for col in edited.columns:
-            if edited.at[nurse, col] == "EL" and st.session_state.sched_df.at[nurse, col] != "EL":
+            if edited.at[nurse, col].strip().upper() == "EL" and st.session_state.sched_df.at[nurse, col].strip().upper() != "EL":
                 day_idx = (pd.to_datetime(col).date() 
                            - st.session_state.start_date.date()).days
                 new_overrides[(nurse, day_idx)] = "EL"
@@ -145,18 +145,22 @@ if st.sidebar.button("Generate Schedule"):
 
         # RL warm start
         if use_rl:
-            env = NurseRosteringEnv(df_profiles, df_prefs, pd.to_datetime(start_date), num_days)
+            env = NurseRosteringEnv(df_profiles, df_prefs, pd.to_datetime(start_date), max_days=28, active_days=num_days)
             vec = DummyVecEnv([lambda: env])
             for h in (7, 14, 28):
                 if h >= num_days:
                     try:
-                        model = PPO.load(f"models/ppo_nurse_{h}d.zip", env=vec)
+                        model = PPO.load(f"models/ppo_nurse_{h}d/best_model.zip", env=vec)
                         obs, _ = env.reset()
                         done = False
                         while not done:
                             action, _ = model.predict(obs, deterministic=True)
                             obs, _, done, _, _ = env.step(int(action))
-                        st.session_state.rl_assignment = obs.tolist()
+                        N = df_profiles.shape[0]
+                        S = len(SHIFT_LABELS)  # e.g. 3
+                        slice_len = N * num_days * S
+                        sliced_obs = obs[:slice_len].tolist()
+                        st.session_state.rl_assignment = sliced_obs
                         st.sidebar.success(f"🔁 Warm-start from {h}-day model")
                     except:
                         pass
@@ -197,6 +201,8 @@ if st.session_state.sched_df is not None:
 
     if st.button("🔁 Regenerate with Emergency Leave"):
         orig = st.session_state.original_sched_df
+        if not st.session_state.get("pending_overrides"):
+            st.warning("No EL overrides to apply.")
         overrides = st.session_state.pending_overrides or {}
         if not overrides:
             st.warning("No EL overrides to apply.")
@@ -206,7 +212,7 @@ if st.session_state.sched_df is not None:
         w0 = min(day_idx for (_, day_idx) in overrides.keys())
 
         # build a full fixed_assignments dict
-        fixed = {}
+        fixed = st.session_state.fixed.copy()
         orig = st.session_state.original_sched_df
 
         # 1) freeze days < w0, but only valid single shifts / EL / MC

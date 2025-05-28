@@ -26,6 +26,12 @@ def all(c):
 def train(c):
     c.run("python train_rl.py")
 
+
+@task
+def train_logs(c):
+    c.run("tensorboard --logdir tb_logs")
+
+
 @task
 def clean(c):
     if os.name == 'nt':  # Windows
