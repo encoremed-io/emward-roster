@@ -82,7 +82,9 @@ def show_editable_schedule():
                 new_overrides[(nurse, day_idx)] = "EL"
 
     st.session_state.pending_overrides = new_overrides
+    st.session_state.all_el_overrides.update(new_overrides)
     st.sidebar.write(f"Pending EL overrides: {len(new_overrides)}")
+    st.sidebar.write(f"Total EL declarations: {len(st.session_state.all_el_overrides)}")
 
 # Sidebar inputs
 st.sidebar.header("Inputs")
@@ -102,6 +104,7 @@ for key, default in {
     "df_prefs": None,
     "start_date": pd.to_datetime(start_date),
     "num_days": num_days,
+    "all_el_overrides": {},
 }.items():
     if key not in st.session_state:
         st.session_state[key] = default
@@ -112,6 +115,7 @@ if st.sidebar.button("Generate Schedule"):
     st.session_state.rl_assignment = None
     st.session_state.start_date = pd.to_datetime(start_date)
     st.session_state.num_days = num_days
+    st.session_state.all_el_overrides = {}
 
     if not profiles_file or not prefs_file:
         st.error("Please upload both the profiles and preferences Excel files.")
@@ -199,54 +203,53 @@ if st.session_state.sched_df is not None:
     if st.session_state.show_schedule_expanded:
         show_editable_schedule()
 
-    if st.button("🔁 Regenerate with Emergency Leave"):
-        orig = st.session_state.original_sched_df
-        if not st.session_state.get("pending_overrides"):
-            st.warning("No EL overrides to apply.")
-        overrides = st.session_state.pending_overrides or {}
-        if not overrides:
-            st.warning("No EL overrides to apply.")
-            st.stop()
+        if st.button("🔁 Regenerate with Emergency Leave"):
+            overrides = st.session_state.get("all_el_overrides") or {}
+            pending = st.session_state.get("pending_overrides") or {}
 
-        # find earliest EL day across all overrides
-        w0 = min(day_idx for (_, day_idx) in overrides.keys())
+            if not pending or not overrides:
+                st.info("No EL overrides to apply.")
 
-        # build a full fixed_assignments dict
-        fixed = st.session_state.fixed.copy()
-        orig = st.session_state.original_sched_df
+            else:
+                # find earliest EL day across pending overrides
+                w0 = min(day_idx for (_, day_idx) in pending.keys())
+                # st.write(w0)
 
-        # 1) freeze days < w0, but only valid single shifts / EL / MC
-        for nurse, row in orig.iterrows():
-            for i, col in enumerate(orig.columns):
-                if i >= w0:
-                    break
-                val = str(row[col]).strip()
-                # only freeze true shifts or EL; skip "MC", "Rest", "AM/PM*", etc.
-                if val in SHIFT_LABELS or val.upper() == "EL":
-                    fixed[(nurse, i)] = val
-                # skip "Rest" or "AM/PM*" etc.
+                # merge pending into cumulative and clear pending
+                overrides.update(pending)
+                pending.clear()
 
-        # 2) add all of your pending EL overrides
-        fixed.update(overrides)
+                # build fixed assignments from most updated schedule
+                fixed = {}
+                orig = st.session_state.sched_df.copy()
 
-        # store it back so next time you keep on growing it
-        st.session_state.fixed = fixed
+                # freeze all values for days < w0
+                for nurse, row in orig.iterrows():
+                    for i, col in enumerate(orig.columns):
+                        if i >= w0:
+                            break
+                        val = str(row[col]).strip()
+                        fixed[(nurse, i)] = val
 
-        # now re-solve only the tail
-        sched2, summ2 = build_schedule_model(
-            st.session_state.df_profiles,
-            st.session_state.df_prefs,
-            st.session_state.start_date,
-            st.session_state.num_days,
-            rl_assignment=st.session_state.rl_assignment,
-            fixed_assignments=fixed
-        )
-        st.session_state.sched_df   = sched2
-        st.session_state.summary_df = summ2
+                # add all of your pending EL overrides, then store it back to keep growing next time
+                fixed.update(overrides)
+                st.session_state.fixed = fixed
 
-        st.success(f"Re-solved from day {w0} onward.")
-        st.session_state.show_schedule_expanded = False
-        st.rerun()
+                # re-solve starting from earliest EL day (included)
+                sched2, summ2 = build_schedule_model(
+                    st.session_state.df_profiles,
+                    st.session_state.df_prefs,
+                    st.session_state.start_date,
+                    st.session_state.num_days,
+                    rl_assignment=st.session_state.rl_assignment,
+                    fixed_assignments=fixed
+                )
+                st.session_state.sched_df   = sched2
+                st.session_state.summary_df = summ2
+
+                st.success(f"Re-solved from day {w0} onward.")
+                st.session_state.show_schedule_expanded = False
+                st.rerun()
 
     st.subheader("📅 Final Schedule")
     st.dataframe(st.session_state.sched_df, use_container_width=True)

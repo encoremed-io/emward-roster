@@ -7,6 +7,7 @@ import json
 from gymnasium import spaces, Env
 from gymnasium.utils import seeding
 from datetime import date as dt_date
+from collections import defaultdict
 
 with open('config/constants.json', 'r') as f:
     constants = json.load(f)
@@ -26,7 +27,8 @@ FAIRNESS_GAP_PENALTY = constants["FAIRNESS_GAP_PENALTY"]
 def compute_total_penalty(assignment: np.ndarray,
                           profiles_df: pd.DataFrame,
                           preferences_df: pd.DataFrame,
-                          start_date: pd.Timestamp | dt_date) -> int:
+                          start_date: pd.Timestamp | dt_date,
+                          fixed_assignments) -> int:
     """
     Compute the total penalty for a given assignment.
     (Same logic as in your standalone function.)
@@ -41,6 +43,11 @@ def compute_total_penalty(assignment: np.ndarray,
     nurse_names = [str(n).strip().upper() for n in profiles_df['Name']]
     name_to_idx = {n: i for i, n in enumerate(nurse_names)}
     shift_str_to_idx = {'AM': 0, 'PM': 1, 'NIGHT': 2}
+
+    el_days = defaultdict(set)
+    for (nurse, d), label in fixed_assignments.items():
+        if label.upper() == "EL":
+            el_days[nurse].add(d)
 
     num_days = assignment.shape[1]
 
@@ -75,7 +82,8 @@ def compute_total_penalty(assignment: np.ndarray,
             hours = sum(assignment[i, d, s] * SHIFT_HOURS[s]
                         for d in days for s in range(S))
             mc_cnt = sum(1 for d in days if d in mc_days[nurse])
-            adj = mc_cnt * AVG_HOURS
+            el_cnt = sum(1 for d in days if d in el_days[nurse])
+            adj = (mc_cnt + el_cnt) * int(AVG_HOURS)
             eff_pref = max(0, PREFERRED_WEEKLY_HOURS - adj)
             if hours < eff_pref:
                 total_penalty += PREF_HOURS_PENALTY
@@ -204,6 +212,7 @@ class NurseRosteringEnv(Env):
         self.max_days = max_days
         # If active_days not provided, use all columns in prefs
         self.active_days = active_days or min(preferences_df.shape[1], max_days)
+        self.fixed_assignments = {}
 
         # Pad preferences_df up to max_days columns with zeros
         prefs = preferences_df.copy()
@@ -357,7 +366,8 @@ class NurseRosteringEnv(Env):
                 self.assignment,
                 self.profiles_df,
                 self.preferences_df,
-                self.start_date
+                self.start_date,
+                self.fixed_assignments
             )
             info['final_penalty'] = final_penalty / self.max_days
             # subtract the long-term penalty once at the end

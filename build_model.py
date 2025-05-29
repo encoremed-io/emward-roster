@@ -151,9 +151,10 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     ]
 
     # === Variables ===
+    shift_types = len(SHIFT_LABELS)
     work = {
         (n, d, s): model.NewBoolVar(f'work_{n}_{d}_{s}')
-        for n in nurse_names for d in range(num_days) for s in range(3)
+        for n in nurse_names for d in range(num_days) for s in range(shift_types)
     }
     satisfied = {}
     total_satisfied = {}
@@ -171,20 +172,38 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
     for (nurse, day_idx), shift_label in fixed_assignments.items():
         label = shift_label.upper()
-        if label == "EL":
+
+        if label in {"EL", "MC", "REST"}:
             # Block all shifts
-            for s in range(3):
+            for s in range(shift_types):
                 model.Add(work[nurse, day_idx, s] == 0)
             # Record EL
-            el_days.add(day_idx)
-            el_days_per_nurse[nurse].add(day_idx)
+            if label == "EL":
+                el_days.add(day_idx)
+                el_days_per_nurse[nurse].add(day_idx)
+
+        # handle double-shifts, e.g. "AM/PM*"
+        elif "/" in label:
+            # remove any trailing "*" and split
+            parts = label.rstrip("*").split("/")
+            # validate
+            try:
+                idxs = [ shift_str_to_idx[p] for p in parts ]
+            except KeyError as e:
+                raise ValueError(f"Unknown shift part '{e.args[0]}' in double-shift '{label}' for {nurse}")
+            # force both component shifts on, others off
+            for s in idxs:
+                model.Add(work[nurse, day_idx, s] == 1)
+            for other_s in set(range(shift_types)) - set(idxs):
+                model.Add(work[nurse, day_idx, other_s] == 0)
+
+        # Force that one shift and turn off the others
         else:
-            # Force that one shift and turn off the others
             if label not in shift_str_to_idx:
                 raise ValueError(f"Unknown shift '{label}' for {nurse}")
             s = shift_str_to_idx[label]
             model.Add(work[nurse, day_idx, s] == 1)
-            for other_s in (set(range(3)) - {s}):
+            for other_s in (set(range(shift_types)) - {s}):
                 model.Add(work[nurse, day_idx, other_s] == 0)
 
     # 1. Number of shift per nurse per day
@@ -196,16 +215,16 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         for d in range(num_days):
             if d not in el_days:
             # no EL here: enforce original rule
-                model.AddAtMostOne(work[n, d, s] for s in range(3))
+                model.AddAtMostOne(work[n, d, s] for s in range(shift_types))
             else:
             # EL day: allow either 1 or 2 shifts
                 ts = model.NewBoolVar(f"two_shifts_{n}_{d}")
                 two_shifts[(n, d)] = ts
 
                 # If ts==False → sum_s work ≤ 1
-                model.Add(sum(work[n, d, s] for s in range(3)) <= 1).OnlyEnforceIf(ts.Not())
+                model.Add(sum(work[n, d, s] for s in range(shift_types)) <= 1).OnlyEnforceIf(ts.Not())
                 # If ts==True  → sum_s work == 2
-                model.Add(sum(work[n, d, s] for s in range(3)) == 2).OnlyEnforceIf(ts)
+                model.Add(sum(work[n, d, s] for s in range(shift_types)) == 2).OnlyEnforceIf(ts)
 
                 # If double shift, apply penalty
                 high_priority_penalty.append(ts * DOUBLE_SHIFT_PENALTY)
@@ -214,7 +233,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     for n in nurse_names:
         for w in range(2):
             days = range(w * DAYS_PER_WEEK, min((w + 1) * DAYS_PER_WEEK, num_days))
-            weekly_hours = sum(work[n, d, s] * SHIFT_HOURS[s] for d in days for s in range(3))
+            weekly_hours = sum(work[n, d, s] * SHIFT_HOURS[s] for d in days for s in range(shift_types))
 
             mc_count = sum(1 for d in days if d in mc_days.get(n, set()))
             el_count = sum(1 for d in days if d in el_days_per_nurse.get(n, set()))
@@ -237,7 +256,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
     # 3. Each shift must have at least 4 nurses and at least 1 senior
     for d in range(num_days):
-        for s in range(3):
+        for s in range(shift_types):
             model.Add(sum(work[n, d, s] for n in nurse_names) >= MIN_NURSES_PER_SHIFT)
             model.Add(sum(work[n, d, s] for n in senior_names) >= MIN_SENIORS_PER_SHIFT)
 
@@ -246,13 +265,13 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         for d1, d2 in weekend_days:
             for day in (d1, d2):
                 if day + 7 < num_days:
-                    model.Add(sum(work[n, day, s] for s in range(3)) <=
-                              1 - sum(work[n, day + 7, s] for s in range(3)))
+                    model.Add(sum(work[n, day, s] for s in range(shift_types)) <=
+                              1 - sum(work[n, day + 7, s] for s in range(shift_types)))
 
     # 5. MC days: cannot assign any shift
     for n in nurse_names:
         for d in mc_days.get(n, []):
-            for s in range(3):
+            for s in range(shift_types):
                 model.Add(work[n, d, s] == 0)
 
     # 6. Max 2 MC days/week and no more than 2 consecutive MC days
@@ -274,7 +293,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
     # 1. AM coverage per day should be >=60%, ideally
     for d in range(num_days):
-        total_shifts = sum(work[n, d, s] for n in nurse_names for s in range(3))
+        total_shifts = sum(work[n, d, s] for n in nurse_names for s in range(shift_types))
         am_shifts = sum(work[n, d, 0] for n in nurse_names)
         am_seniors = sum(work[n, d, 0] for n in nurse_names if n in senior_names)
 
@@ -430,7 +449,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         # and apply explicit “0” hints on everything else
         # for n in nurse_names:
         #     for d in range(num_days):
-        #         for s in range(3):
+        #         for s in range(shift_types):
         #             if (n, d, s) not in hinted_ones:
         #                 model.AddHint(work[n, d, s], 0)
 
@@ -456,13 +475,13 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     cached_values = {}
     for n in nurse_names:
         for d in range(num_days):
-            for s in range(3):
+            for s in range(shift_types):
                 cached_values[(n, d, s)] = solver.Value(work[n, d, s])
 
     cached_total_prefs_met = 0
     for n in nurse_names:
         for d in range(num_days):
-            picked = [s for s in range(3) if cached_values[(n, d, s)]]
+            picked = [s for s in range(shift_types) if cached_values[(n, d, s)]]
             pref = shift_preferences.get(n, {}).get(d)
             if pref is not None and len(picked) == 1 and pref in picked:
                 cached_total_prefs_met += 1
@@ -505,7 +524,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             new_total_prefs_met = 0
             for n in nurse_names:
                 for d in range(num_days):
-                    picked = [s for s in range(3) if solver.Value(work[n, d, s])]
+                    picked = [s for s in range(shift_types) if solver.Value(work[n, d, s])]
                     pref = shift_preferences.get(n, {}).get(d)
                     if pref is not None and len(picked) == 1 and pref in picked:
                         new_total_prefs_met += 1
@@ -547,9 +566,9 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                 shift = "EL"
             else:
                 if use_fallback:
-                    picked = [s for s in range(3) if cached_values[(n, d, s)]]
+                    picked = [s for s in range(shift_types) if cached_values[(n, d, s)]]
                 else:
-                    picked = [s for s in range(3) if solver.Value(work[n, d, s])]
+                    picked = [s for s in range(shift_types) if solver.Value(work[n, d, s])]
                 
                 match(len(picked)):
                     case 0:
@@ -557,7 +576,10 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                     case 1:
                         shift = SHIFT_LABELS[picked[0]]
                     case 2:
-                        shift = f"{SHIFT_LABELS[picked[0]]}/{SHIFT_LABELS[picked[1]]}*"
+                        first, second = sorted(picked)
+                        shift = f"{SHIFT_LABELS[first]}/{SHIFT_LABELS[second]}*"
+                    case _:
+                        shift = "OVER*"
             row.append(shift)
 
             for p in picked:
@@ -579,7 +601,8 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             days = range(begin, end)
             hours_worked = hours_w1 if w == 1 else hours_w2
             mc_count_week = mc_days.get(n, set()).intersection(days)
-            eff_pref_hours = max(0, PREFERRED_WEEKLY_HOURS - (len(mc_count_week) * AVG_HOURS))
+            el_count_week = el_days_per_nurse.get(n, set()).intersection(days)
+            eff_pref_hours = max(0, PREFERRED_WEEKLY_HOURS - (len(mc_count_week | el_count_week) * AVG_HOURS))
 
             if hours_worked < eff_pref_hours:
                 violations["Low_Hours_Nurses"].append(f"{n} Week {w}: {hours_worked}h; pref {eff_pref_hours}")
@@ -605,10 +628,10 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     for d in range(num_days):
         if use_fallback:
             am = sum(cached_values[(n, d, 0)] for n in nurse_names)
-            total = sum(cached_values[(n, d, s)] for n in nurse_names for s in range(3))
+            total = sum(cached_values[(n, d, s)] for n in nurse_names for s in range(shift_types))
         else:
             am = sum(solver.Value(work[n, d, 0]) for n in nurse_names)
-            total = sum(solver.Value(work[n, d, s]) for n in nurse_names for s in range(3))
+            total = sum(solver.Value(work[n, d, s]) for n in nurse_names for s in range(shift_types))
 
         if total and am / total < 0.6:
             violations["Low_AM_Days"].append(f"{dates[d].strftime('%a %Y-%m-%d')} ({am/total:.0%})")
