@@ -468,6 +468,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     solver.parameters.max_time_in_seconds = 120.0  # tunable
     solver.parameters.random_seed = 42
     solver.parameters.relative_gap_limit = 0.01
+    solver.parameters.num_search_workers = 4
 
     status1 = solver.Solve(model)
     logger.info(f"⏱ Solve time: {solver.WallTime():.2f} seconds")
@@ -516,6 +517,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         solver.parameters.max_time_in_seconds = 180.0
         solver.parameters.random_seed = 42
         solver.parameters.relative_gap_limit = 0.01
+        solver.parameters.num_search_workers = 4
         status2 = solver.Solve(model)
         logger.info(f"⏱ Solve time: {solver.WallTime():.2f} seconds")
         logger.info(f"High Priority Penalty Phase 2: {solver.Value(sum(high_priority_penalty))}")

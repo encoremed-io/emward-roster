@@ -115,7 +115,7 @@ def make_schedule(req: ScheduleRequest):
             for j, label in enumerate(sched_df.loc[nurse]):
                 if isinstance(label, str) and label.upper() in label_to_idx:
                     assign[i, j, label_to_idx[label.upper()]] = 1
-        penalty = int(compute_total_penalty(assign, profiles, prefs, pd.to_datetime(req.start_date)))
+        penalty = int(compute_total_penalty(assign, profiles, prefs, pd.to_datetime(req.start_date), fixed))
     except Exception:
         penalty = None
 
