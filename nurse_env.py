@@ -23,6 +23,7 @@ AM_COVERAGE_MIN_PERCENT = constants["AM_COVERAGE_MIN_PERCENT"]
 AM_COVERAGE_PENALTIES = constants["AM_COVERAGE_PENALTIES"]
 PREF_MISS_PENALTY = constants["PREF_MISS_PENALTY"]
 FAIRNESS_GAP_PENALTY = constants["FAIRNESS_GAP_PENALTY"]
+FAIRNESS_GAP_THRESHOLD = constants["FAIRNESS_GAP_THRESHOLD"]
 
 def compute_total_penalty(assignment: np.ndarray,
                           profiles_df: pd.DataFrame,
@@ -116,7 +117,9 @@ def compute_total_penalty(assignment: np.ndarray,
             pct_sat.append(100 * met / len(prefs))
     if pct_sat:
         gap = max(pct_sat) - min(pct_sat)
-        total_penalty += gap * FAIRNESS_GAP_PENALTY
+        if gap >= FAIRNESS_GAP_THRESHOLD:
+            over_gap = gap - FAIRNESS_GAP_THRESHOLD
+            total_penalty += over_gap * FAIRNESS_GAP_PENALTY
 
     return int(total_penalty)
 

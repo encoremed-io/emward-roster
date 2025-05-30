@@ -49,6 +49,7 @@ AM_COVERAGE_PENALTIES = constants["AM_COVERAGE_PENALTIES"]
 
 PREF_MISS_PENALTY = constants["PREF_MISS_PENALTY"]
 FAIRNESS_GAP_PENALTY = constants["FAIRNESS_GAP_PENALTY"]
+FAINRESS_GAP_THRESHOLD = constants["FAIRNESS_GAP_THRESHOLD"]
 
 def load_nurse_profiles(path='data/nurse_profiles.xlsx') -> pd.DataFrame:
     df = pd.read_excel(path)
@@ -394,9 +395,10 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         gap_pct = model.NewIntVar(0, 100, "gap_pct")
         model.Add(gap_pct == max_pct - min_pct)
 
-        clipped_gap = model.NewIntVar(0, 25, "clipped_gap")
-        model.AddMinEquality(clipped_gap, [gap_pct, 25])
-        low_priority_penalty.append(clipped_gap * FAIRNESS_GAP_PENALTY)
+        # Start penalise fairness when gap_pct >= 60 based on distance from 60
+        over_gap  = model.NewIntVar(0, 100, "over_gap")
+        model.AddMaxEquality(over_gap, [gap_pct - FAINRESS_GAP_THRESHOLD, 0])
+        low_priority_penalty.append(gap_pct * FAIRNESS_GAP_PENALTY)
 
     # === Add RL assignment hints (warm start) ===
     if rl_assignment is not None:
@@ -502,6 +504,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         model.Add(sum(high_priority_penalty) <= int(high1))
         if valid_pcts:
           model.Add(gap_pct <= cached_gap)
+            # model.AddLinearConstraint(gap_pct, 0, T)
 
         # 3. Switch objective to preferences
         # preference_obj = sum(total_satisfied[n] for n in nurse_names)
