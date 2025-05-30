@@ -393,7 +393,10 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
         gap_pct = model.NewIntVar(0, 100, "gap_pct")
         model.Add(gap_pct == max_pct - min_pct)
-        low_priority_penalty.append(gap_pct * FAIRNESS_GAP_PENALTY)
+
+        clipped_gap = model.NewIntVar(0, 25, "clipped_gap")
+        model.AddMinEquality(clipped_gap, [gap_pct, 25])
+        low_priority_penalty.append(clipped_gap * FAIRNESS_GAP_PENALTY)
 
     # === Add RL assignment hints (warm start) ===
     if rl_assignment is not None:
@@ -507,7 +510,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
         # 4. Re-solve (you can reset your time budget)
         solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = 120.0
+        solver.parameters.max_time_in_seconds = 180.0
         solver.parameters.random_seed = 42
         solver.parameters.relative_gap_limit = 0.01
         status2 = solver.Solve(model)
