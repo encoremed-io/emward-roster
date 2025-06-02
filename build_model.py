@@ -234,7 +234,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     for n in nurse_names:
         for w in range(2):
             days = range(w * DAYS_PER_WEEK, min((w + 1) * DAYS_PER_WEEK, num_days))
-            weekly_hours = sum(work[n, d, s] * SHIFT_HOURS[s] for d in days for s in range(shift_types))
+            weekly_hours = sum(work[n, d, s] * int(SHIFT_HOURS[s]) for d in days for s in range(shift_types))
 
             mc_count = sum(1 for d in days if d in mc_days.get(n, set()))
             el_count = sum(1 for d in days if d in el_days_per_nurse.get(n, set()))
