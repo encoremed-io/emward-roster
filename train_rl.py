@@ -128,6 +128,7 @@ from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
 from stable_baselines3.common.callbacks import EvalCallback, CallbackList, BaseCallback
 from build_model import load_nurse_profiles, load_shift_preferences
 from nurse_env import NurseRosteringEnv
+from callbacks.reward_logger import RewardComponentLogger
 
 # ------------------------
 # Schedule helper funcs
@@ -183,7 +184,7 @@ def make_train_env_factory(num_days):
     return _make_env
 
 
-def compute_eval_starts(total_days: int, window: int, n_windows: int = 4):
+def compute_eval_starts(total_days: int, window: int, n_windows: int = 8):
     max_start = total_days - window
     if max_start <= 0:
         return [0]
@@ -194,7 +195,7 @@ def compute_eval_starts(total_days: int, window: int, n_windows: int = 4):
 def make_eval_env_factory(num_days):
     prefs_full = preferences_full.copy()
     total_days = len(prefs_full.columns)
-    starts = compute_eval_starts(total_days, num_days, n_windows=4)
+    starts = compute_eval_starts(total_days, num_days, n_windows=8)
 
     def _make_env():
         profiles = profiles_full.copy()
@@ -229,7 +230,7 @@ if __name__ == "__main__":
 
     n_envs = 8
     horizons = [7, 14, 28]
-    timesteps_map = {7: 200_000, 14: 600_000, 28: 800_000}
+    timesteps_map = {7: 400_000, 14: 600_000, 28: 800_000}
     prev_model_path = None  # Will hold the file path of the best model
 
     for num_days in horizons:
@@ -238,14 +239,17 @@ if __name__ == "__main__":
         # 1) Build train/environment
         train_factory = make_train_env_factory(num_days)
         vec_env = SubprocVecEnv([train_factory] * n_envs)
-        vec_env = VecNormalize(vec_env, norm_obs=True, norm_reward=True, clip_obs=10.0)
+        if num_days in (14, 28):
+            vec_env = VecNormalize(vec_env, norm_obs=True, norm_reward=True, clip_obs=10.0)
 
         # 2) Build fixed eval environment
         eval_factory = make_eval_env_factory(num_days)
         eval_vec_env = SubprocVecEnv([eval_factory] * n_envs)
-        eval_vec = VecNormalize.load("path_to_saved_normalizer.pkl", eval_vec)
-        eval_vec.training = False
-        eval_vec.norm_reward = False
+
+        if num_days in (14, 28):
+            eval_vec_env = VecNormalize(eval_vec_env, norm_obs=True, norm_reward=True, clip_obs=10.0)
+            eval_vec_env.training = False
+            eval_vec_env.norm_reward = False
 
         # 3) Set up EvalCallback
         eval_cb = EvalCallback(
@@ -253,7 +257,7 @@ if __name__ == "__main__":
             best_model_save_path=f"models/ppo_nurse_{num_days}d/",
             log_path=f"eval_logs/{num_days}d/",
             eval_freq=10_000,
-            n_eval_episodes=20,
+            n_eval_episodes=40,
             deterministic=True
         )
 
@@ -261,10 +265,13 @@ if __name__ == "__main__":
         match num_days:
             case 7:
                 start_lr, end_lr, start_coef, end_coef, n_steps, batch_size, n_epochs = 1e-3, 1e-5, 1e-2, 1e-4, 2048, 512, 6
+                warmup_steps = 0
             case 14:
-                start_lr, end_lr, start_coef, end_coef, n_steps, batch_size, n_epochs = 3e-4, 1e-5, 5e-3, 1e-4, 4096, 1024, 8
+                start_lr, end_lr, start_coef, end_coef, n_steps, batch_size, n_epochs = 3e-4, 1e-5, 7e-3, 1e-4, 4096, 1024, 3
+                warmup_steps = 50_000
             case _:  # 28 days
-                start_lr, end_lr, start_coef, end_coef, n_steps, batch_size, n_epochs = 3e-4, 1e-5, 5e-3, 1e-4, 8192, 2048, 10
+                start_lr, end_lr, start_coef, end_coef, n_steps, batch_size, n_epochs = 3e-4, 1e-5, 1e-2, 1e-4, 4096, 1024, 3
+                warmup_steps = 50_000
 
         # 5) Instantiate a fresh EntropyDecayCallback for THIS horizon
         ent_decay_cb = EntropyDecayCallback(
@@ -274,8 +281,10 @@ if __name__ == "__main__":
             verbose=0
         )
 
+        reward_logger = RewardComponentLogger(verbose=0)
+
         # 6) Combine callbacks
-        cb_list = CallbackList([eval_cb, ent_decay_cb])
+        cb_list = CallbackList([eval_cb, ent_decay_cb, reward_logger])
 
         # 7) Create or load the PPO model
         if prev_model_path is None:
@@ -286,7 +295,8 @@ if __name__ == "__main__":
                 verbose=1,
                 tensorboard_log="./tb_logs",
                 seed=42,
-                learning_rate=linear_schedule(start_lr, end_lr),
+                # For now, give a dummy LR; we'll change it before training.
+                learning_rate=1e-5,
                 ent_coef=start_coef,
                 gamma=0.99,
                 n_steps=n_steps,
@@ -302,21 +312,40 @@ if __name__ == "__main__":
                 env=vec_env,         # attach the new VecEnv
                 tensorboard_log="./tb_logs",
                 seed=42,
-                learning_rate=linear_schedule(start_lr, end_lr),
+                # Again, dummy LR for now; we’ll set the real schedule below
+                learning_rate=1e-5,
                 ent_coef=start_coef,
                 gamma=0.99,
-                n_steps=n_steps,       # ← correct buffer size for this horizon
-                batch_size=batch_size, # ← correct batch size for this horizon
-                n_epochs=n_epochs,     # ← correct epochs for this horizon
+                n_steps=n_steps,
+                batch_size=batch_size,
+                n_epochs=n_epochs,
                 clip_range=0.2,
                 policy_kwargs=dict(net_arch=[256, 256])
             )
             # No need to call set_parameters(), because PPO.load(...) already built a new buffer 
             # (of size `n_steps`) and loaded all weights/optimizer state.
 
-        # 8) Train for this horizon
+        # ── 8) TWO-PHASE TRAINING: warm-up (if requested) + main schedule ──
+        total_steps = timesteps_map[num_days]
+        # Phase 1: warm-up (constant LR = 1e-5)
+        if warmup_steps > 0:
+            # Temporarily override lr_schedule to be constant 1e-5
+            model.learning_rate = lambda _: 1e-5
+            print(f"  • Warm-up: training first {warmup_steps} steps at lr=1e-5")
+            model.learn(
+                total_timesteps=warmup_steps,
+                tb_log_name=f"PPO_{num_days}d_warmup",
+                callback=cb_list
+            )
+            remaining = total_steps - warmup_steps
+        else:
+            remaining = total_steps
+
+        # Phase 2: switch to the linear schedule from start_lr → end_lr
+        model.learning_rate = linear_schedule(start_lr, end_lr)
+        print(f"  • Main training: remaining {remaining} steps with lr from {start_lr} → {end_lr}")
         model.learn(
-            total_timesteps=timesteps_map[num_days],
+            total_timesteps=remaining,
             tb_log_name=f"PPO_{num_days}d",
             callback=cb_list
         )

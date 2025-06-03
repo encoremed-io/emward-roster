@@ -29,7 +29,8 @@ def compute_total_penalty(assignment: np.ndarray,
                           profiles_df: pd.DataFrame,
                           preferences_df: pd.DataFrame,
                           start_date: pd.Timestamp | dt_date,
-                          fixed_assignments) -> int:
+                          fixed_assignments,
+                          active_days: int) -> int:
     """
     Compute the total penalty for a given assignment.
     (Same logic as in your standalone function.)
@@ -50,7 +51,7 @@ def compute_total_penalty(assignment: np.ndarray,
         if label.upper() == "EL":
             el_days[nurse].add(d)
 
-    num_days = assignment.shape[1]
+    num_days = active_days
 
     # Build preferences and MC-day sets
     shift_prefs = {n: {} for n in nurse_names}
@@ -280,17 +281,31 @@ class NurseRosteringEnv(Env):
         info = {}
         self.step_count += 1
         done = (self.step_count >= self.N * self.D)
-        reward = 0
+        penalty_reduction = 0.0
+        valid_assign_bonus = 0.0
+        pref_match_bonus   = 0.0
+        am_coverage_bonus  = 0.0
+        weekly_hours_bonus = 0.0
+        final_penalty_term = 0.0
+        reward = 0.0
 
         # skip masked days
         if d >= self.active_days:
             obs = self._get_obs()
-            return obs, reward, done, False, {}
+            info = {
+                "penalty_reduction": penalty_reduction,
+                "valid_assign":      valid_assign_bonus,
+                "preference":        pref_match_bonus,
+                "am_coverage":       am_coverage_bonus,
+                "weekly_hours":      weekly_hours_bonus,
+                "final_penalty":     final_penalty_term
+            }
+            return obs, reward, done, False, info
 
         # 1) Illegal move mask: if nurse already has a shift that day, zero reward and skip
         if self.assignment[n, d].any():
             # no change to assignment, small zero reward instead of huge negative
-            reward = 0
+            reward = 0.0
         else:
             # 2) Compute old penalty for this day
             old_penalty = compute_penalty_per_day(
@@ -314,11 +329,11 @@ class NurseRosteringEnv(Env):
             )
 
             # 5) Base reward = reduction in per-day penalty
-            reward = old_penalty - new_penalty
+            penalty_reduction = float(old_penalty - new_penalty)
 
             # ── REWARD SHAPING ──
             # +1 for any valid assignment
-            reward += 1
+            valid_assign_bonus += 1.0
 
             # +5 if this assignment matches the nurse’s preference for that day
             # (assumes SHIFT_LABELS = ['AM','PM','Night'] is defined at class scope)
@@ -326,7 +341,7 @@ class NurseRosteringEnv(Env):
             day_date = (self.start_date + pd.to_timedelta(d, unit="D")).date()
             pref_val = self.preferences_df.at[nurse_name, day_date]
             if isinstance(pref_val, str) and pref_val.strip().upper() == SHIFT_LABELS[s].upper():
-                reward += 5
+                pref_match_bonus += 5
 
             # ── DAILY AM‐COVERAGE BONUS ──
             # whenever you’ve taken N actions, you’ve just finished assigning everyone
@@ -340,9 +355,9 @@ class NurseRosteringEnv(Env):
                 total_any  = int(self.assignment[:, day_finished, :].sum())
                 pct_am     = 100 * am_count / total_any if total_any > 0 else 0
 
-                # if you hit your AM‐coverage target, give +0.5
+                # if you hit your AM‐coverage target, give +1
                 if pct_am >= AM_COVERAGE_MIN_PERCENT:
-                    reward += 1.0 / self.max_days    # normalize by num_days
+                    am_coverage_bonus += 1.0 / self.active_days    # normalize by num_days
 
                 # ── WEEKLY HOURS‐TARGET BONUS ──
                 # if that day is the end of a 7‐day block:
@@ -361,7 +376,16 @@ class NurseRosteringEnv(Env):
                     # if the *average per nurse* ≥ preferred weekly hours, +2
                     avg_nurse_hours = week_hours / self.N
                     if avg_nurse_hours >= PREFERRED_WEEKLY_HOURS:
-                        reward += 2.0 / self.max_days    # normalize by num_days
+                        weekly_hours_bonus += 2.0 / self.active_days    # normalize by num_days
+
+            raw_reward = (
+                penalty_reduction
+                + valid_assign_bonus
+                + pref_match_bonus
+                + am_coverage_bonus
+                + weekly_hours_bonus
+            )
+            reward = raw_reward
 
         # 6) End-of-episode final penalty
         if done:
@@ -370,14 +394,25 @@ class NurseRosteringEnv(Env):
                 self.profiles_df,
                 self.preferences_df,
                 self.start_date,
-                self.fixed_assignments
+                self.fixed_assignments,
+                self.active_days
             )
-            info['final_penalty'] = final_penalty / self.max_days
+            final_penalty_term = float(final_penalty / self.active_days)
             # subtract the long-term penalty once at the end
-            reward -= final_penalty / self.max_days
+            reward -= final_penalty_term / self.active_days
         
         # 7) Clip per‐step reward to [-10, +10]
         reward = max(-10, min(10, reward))
+
+        # 8) Build the info dict so you can log each component later
+        info = {
+            "penalty_reduction": penalty_reduction,
+            "valid_assign":      valid_assign_bonus,
+            "preference":        pref_match_bonus,
+            "am_coverage":       am_coverage_bonus,
+            "weekly_hours":      weekly_hours_bonus,
+            "final_penalty":     final_penalty_term
+        }
 
         # 8) Return observation, shaped reward, done flag, and info
         return self._get_obs(), reward, done, False, info
