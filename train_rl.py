@@ -126,7 +126,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
 from stable_baselines3.common.callbacks import EvalCallback, CallbackList, BaseCallback
-from build_model import load_nurse_profiles, load_shift_preferences
+from utils.loader import *
 from nurse_env import NurseRosteringEnv
 from callbacks.reward_logger import RewardComponentLogger
 
@@ -273,7 +273,7 @@ if __name__ == "__main__":
         # 4) Adaptive hyperparameters
         match num_days:
             case 7:
-                start_lr, end_lr, start_coef, end_coef, n_steps, batch_size, n_epochs = 3e-4, 1e-5, 1e-2, 1e-4, 4096, 512, 10
+                start_lr, end_lr, start_coef, end_coef, n_steps, batch_size, n_epochs = 3e-4, 1e-5, 1e-2, 1e-3, 4096, 512, 10
                 warmup_steps = 0
             case 14:
                 start_lr, end_lr, start_coef, end_coef, n_steps, batch_size, n_epochs = 3e-4, 1e-5, 7e-3, 1e-4, 4096, 1024, 3

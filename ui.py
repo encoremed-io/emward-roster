@@ -6,12 +6,9 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 from datetime import date
-from build_model import (
-    load_nurse_profiles,
-    load_shift_preferences,
-    validate_nurse_data,
-    build_schedule_model,
-)
+from build_model import build_schedule_model
+from utils.loader import *
+from utils.validate import *
 from st_aggrid import GridOptionsBuilder, AgGrid, GridUpdateMode
 from nurse_env import NurseRosteringEnv
 from stable_baselines3 import PPO
@@ -149,7 +146,7 @@ if st.sidebar.button("Generate Schedule"):
 
         # RL warm start
         if use_rl:
-            env = NurseRosteringEnv(df_profiles, df_prefs, pd.to_datetime(start_date), max_days=28, active_days=num_days)
+            env = NurseRosteringEnv(df_profiles, df_prefs, pd.to_datetime(start_date), active_days=num_days)
             vec = DummyVecEnv([lambda: env])
             for h in (7, 14, 28):
                 if h >= num_days:

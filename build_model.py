@@ -51,36 +51,6 @@ PREF_MISS_PENALTY = constants["PREF_MISS_PENALTY"]
 FAIRNESS_GAP_PENALTY = constants["FAIRNESS_GAP_PENALTY"]
 FAINRESS_GAP_THRESHOLD = constants["FAIRNESS_GAP_THRESHOLD"]
 
-def load_nurse_profiles(path='data/nurse_profiles.xlsx') -> pd.DataFrame:
-    df = pd.read_excel(path)
-    df['Name'] = df['Name'].str.strip().str.upper()
-    return df
-
-
-def load_shift_preferences(path='data/nurse_preferences.xlsx') -> pd.DataFrame:
-    df = pd.read_excel(path)
-    df.rename(columns={df.columns[0]: 'Name'}, inplace=True)
-    df.set_index('Name', inplace=True)
-    # parse date columns
-    cleaned = []
-    for col in df.columns:
-        # assume format contains YYYY-MM-DD
-        dt = pd.to_datetime(str(col).strip().split()[-1], format="%Y-%m-%d").date()
-        cleaned.append(dt)
-    df.columns = cleaned
-    df.index = df.index.str.strip().str.upper()
-    return df
-
-
-def validate_nurse_data(profiles_df: pd.DataFrame, preferences_df: pd.DataFrame):
-    profile_names = set(profiles_df['Name'].str.strip())
-    preference_names = set(preferences_df.index.str.strip())
-    missing = profile_names - preference_names
-    extra = preference_names - profile_names
-    if missing or extra:
-        return missing, extra
-    return None, None  # valid
-
 
 def build_schedule_model(profiles_df: pd.DataFrame,
                          preferences_df: pd.DataFrame,

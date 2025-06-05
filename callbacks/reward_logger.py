@@ -21,7 +21,7 @@ class RewardComponentLogger(BaseCallback):
             "valid_assign",
             "preference",
             "am_coverage",
-            "weekly_hours",
+            # "weekly_hours",
             "final_penalty"
         ]
 
