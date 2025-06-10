@@ -13,6 +13,7 @@ from st_aggrid import GridOptionsBuilder, AgGrid, GridUpdateMode
 from nurse_env import NurseRosteringEnv
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
+from collections import Counter, defaultdict
 import json
 import numpy as np
 import traceback
@@ -22,6 +23,8 @@ with open('config/constants.json', 'r') as f:
     constants = json.load(f)
 
 SHIFT_LABELS = constants["SHIFT_LABELS"]
+MAX_MC_DAYS_PER_WEEK = constants["MAX_MC_DAYS_PER_WEEK"]
+DAYS_PER_WEEK = constants["DAYS_PER_WEEK"]
 
 logging.basicConfig(filename="ui_error.log", level=logging.ERROR)
 
@@ -70,18 +73,28 @@ def show_editable_schedule():
     edited = pd.DataFrame(grid["data"]).set_index("Nurse")
 
     # Collect new EL overrides
-    new_overrides = {}
+    new_el = {}
+    new_mc = {}
     for nurse in edited.index:
         for col in edited.columns:
-            if edited.at[nurse, col].strip().upper() == "EL" and st.session_state.sched_df.at[nurse, col].strip().upper() != "EL":
+            val = edited.at[nurse, col].strip().upper()
+            old = st.session_state.sched_df.at[nurse, col].strip().upper()
+            if val == "EL" and old != "EL":
                 day_idx = (pd.to_datetime(col).date() 
                            - st.session_state.start_date.date()).days
-                new_overrides[(nurse, day_idx)] = "EL"
+                new_el[(nurse, day_idx)] = "EL"
+            if val == "MC" and old != "MC":
+                day_idx = (pd.to_datetime(col).date() 
+                           - st.session_state.start_date.date()).days
+                new_mc[(nurse, day_idx)] = "MC"
 
-    st.session_state.pending_overrides = new_overrides
-    st.session_state.all_el_overrides.update(new_overrides)
-    st.sidebar.write(f"Pending EL overrides: {len(new_overrides)}")
+    st.session_state.pending_el = new_el
+    st.session_state.pending_mc = new_mc
+    st.sidebar.write(f"Pending EL overrides: {len(new_el)}")
     st.sidebar.write(f"Total EL declarations: {len(st.session_state.all_el_overrides)}")
+    st.sidebar.write(f"Pending MC overrides: {len(new_mc)}")
+    st.sidebar.write(f"Total MC declarations: {len(st.session_state.all_mc_overrides)}")
+    # all_mc_overrides and all_el_overrides only updated after validation
 
 # Sidebar inputs
 st.sidebar.header("Inputs")
@@ -102,6 +115,7 @@ for key, default in {
     "start_date": pd.to_datetime(start_date),
     "num_days": num_days,
     "all_el_overrides": {},
+    "all_mc_overrides": {}
 }.items():
     if key not in st.session_state:
         st.session_state[key] = default
@@ -113,6 +127,7 @@ if st.sidebar.button("Generate Schedule"):
     st.session_state.start_date = pd.to_datetime(start_date)
     st.session_state.num_days = num_days
     st.session_state.all_el_overrides = {}
+    st.session_state.all_mc_overrides = {}
 
     if not profiles_file or not prefs_file:
         st.error("Please upload both the profiles and preferences Excel files.")
@@ -200,21 +215,63 @@ if st.session_state.sched_df is not None:
     if st.session_state.show_schedule_expanded:
         show_editable_schedule()
 
-        if st.button("🔁 Regenerate with Emergency Leave"):
-            overrides = st.session_state.get("all_el_overrides") or {}
-            pending = st.session_state.get("pending_overrides") or {}
+        if st.button("🔁 Regenerate with All Overrides"):
+            el_overrides = st.session_state.get("all_el_overrides") or {}
+            mc_overrides = st.session_state.get("all_mc_overrides") or {}
+            pending_el = st.session_state.get("pending_el") or {}
+            pending_mc = st.session_state.get("pending_mc") or {}
 
-            if not pending or not overrides:
-                st.info("No EL overrides to apply.")
+            # check mc override validity
+            if pending_mc:
+
+                # 1) collect every MC day: initial schedule, old overrides, new overrides
+                orig = st.session_state.original_sched_df
+                init = {(n,i) for n,r in orig.iterrows() 
+                        for i,col in enumerate(orig.columns) 
+                        if str(r[col]).strip().upper()=="MC"}
+                all_mc = init | set(mc_overrides) | set(pending_mc)
+
+                # 2) group days by nurse
+                nd = defaultdict(set)
+                for n,d in all_mc: 
+                    nd[n].add(d)
+
+                # 3) validate
+                errs = []
+                for n, days in nd.items():
+                    # weekly counts
+                    for wk, cnt in Counter(d//DAYS_PER_WEEK for d in days).items():
+                        if cnt > MAX_MC_DAYS_PER_WEEK:
+                            errs.append(f"{n}: {cnt} MCs in week {wk+1} (max {MAX_MC_DAYS_PER_WEEK})")
+                    # consecutive runs
+                    seq = sorted(days)
+                    if any(seq[i+2] - seq[i] < 3 for i in range(len(seq)-2)):
+                        errs.append(f"{n}: >2 consecutive MC days")
+
+                if errs:
+                    st.session_state.pending_mc.clear()
+                    st.error("❌ Invalid MC override:\n" + "\n".join(errs))
+                    st.info("Click 'hide' and 'show' to try again")
+                    st.stop()
+
+            if not pending_el and not pending_mc:
+                st.info("No overrides to apply.")
 
             else:
-                # find earliest EL day across pending overrides
-                w0 = min(day_idx for (_, day_idx) in pending.keys())
+                # merge pending into cumulative
+                st.session_state.all_el_overrides.update(st.session_state.pending_el)
+                st.session_state.all_mc_overrides.update(st.session_state.pending_mc)
+                el_overrides = st.session_state.all_el_overrides
+                mc_overrides = st.session_state.all_mc_overrides
+
+                # find earliest override day across pending overrides
+                all_days = [d for (_,d) in pending_el.keys()] + [d for (_,d) in pending_mc.keys()]
+                w0 = min(all_days)
                 # st.write(w0)
 
-                # merge pending into cumulative and clear pending
-                overrides.update(pending)
-                pending.clear()
+                # clear pending
+                st.session_state.pending_el.clear()
+                st.session_state.pending_mc.clear()
 
                 # build fixed assignments from most updated schedule
                 fixed = {}
@@ -228,8 +285,9 @@ if st.session_state.sched_df is not None:
                         val = str(row[col]).strip()
                         fixed[(nurse, i)] = val
 
-                # add all of your pending EL overrides, then store it back to keep growing next time
-                fixed.update(overrides)
+                # add all of your pending overrides, then store it back to keep growing next time
+                fixed.update(el_overrides)
+                fixed.update(mc_overrides)
                 st.session_state.fixed = fixed
 
                 # re-solve starting from earliest EL day (included)

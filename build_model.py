@@ -152,6 +152,9 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             if label == "EL":
                 el_days.add(day_idx)
                 el_days_per_nurse[nurse].add(day_idx)
+            # Record MC overrides
+            elif label == "MC":
+                mc_days[nurse].add(day_idx)
 
         # handle double-shifts, e.g. "AM/PM*"
         elif "/" in label:
