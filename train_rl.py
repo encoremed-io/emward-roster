@@ -122,234 +122,220 @@
 import os
 import pandas as pd
 import numpy as np
+
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
 from stable_baselines3.common.callbacks import EvalCallback, CallbackList, BaseCallback
-from utils.loader import *
+
+from utils.loader import load_nurse_profiles, load_shift_preferences
 from nurse_env import NurseRosteringEnv
 from callbacks.reward_logger import RewardComponentLogger
 
-# ------------------------
-# Schedule helper funcs
-# ------------------------
+# ───────────────
+# Hyper-helpers
+# ───────────────
 
 np.random.seed(42)
-profiles_full = load_nurse_profiles("data/nurse_profiles.xlsx")
+profiles_full    = load_nurse_profiles("data/nurse_profiles.xlsx")
 preferences_full = load_shift_preferences("data/nurse_preferences.xlsx")
 
 class EntropyDecayCallback(BaseCallback):
-    """
-    Linearly decay ent_coef from start_coef to end_coef over total_timesteps
-    """
-    def __init__(self, start_coef: float, end_coef: float, total_timesteps: int, verbose=0):
+    """Linearly decay ent_coef from start_coef to end_coef over total_timesteps."""
+    def __init__(self, start_coef, end_coef, total_timesteps, verbose=0):
         super().__init__(verbose)
-        self.start_coef = start_coef
-        self.end_coef = end_coef
+        self.start_coef      = start_coef
+        self.end_coef        = end_coef
         self.total_timesteps = total_timesteps
 
     def _on_step(self) -> bool:
-        frac = min(1.0, self.num_timesteps / self.total_timesteps)
+        frac     = min(1.0, self.num_timesteps / self.total_timesteps)
         new_coef = self.start_coef + frac * (self.end_coef - self.start_coef)
         setattr(self.model, "ent_coef", new_coef)
         return True
 
-# ------------------------
-# Environment factories
-# ------------------------
+def lr_with_optional_warmup(start_lr, end_lr, total_steps, warmup_steps=0):
+    if warmup_steps == 0:
+        return lambda prog: end_lr + prog * (start_lr - end_lr)
+    warmup_frac = warmup_steps / total_steps
+    def schedule(prog):
+        # prog = progress_remaining
+        if prog > (1.0 - warmup_frac):
+            return end_lr
+        eff = prog / (1.0 - warmup_frac)
+        return end_lr + eff * (start_lr - end_lr)
+    return schedule
 
-def make_train_env_factory(num_days):
-    def _make_env():
-        profiles = profiles_full.copy()
-        prefs = preferences_full.copy()
-        all_dates = prefs.columns.tolist()
-        max_start = len(all_dates) - num_days
-        start_idx = np.random.randint(0, max_start + 1)
-        selected = all_dates[start_idx : start_idx + num_days]
-        prefs = prefs[selected]
-        start_date = pd.to_datetime(prefs.columns[0])
-        env = NurseRosteringEnv(
-            profiles_df=profiles,
-            preferences_df=prefs,
-            start_date=start_date,
-            active_days=num_days
-        )
-        return Monitor(env)
-    return _make_env
+# ───────────────
+# Env factories
+# ───────────────
 
-
-def compute_eval_starts(total_days: int, window: int, n_windows: int = 8):
-    max_start = total_days - window
-    if max_start <= 0:
-        return [0]
-    k = min(n_windows, max_start + 1)
-    return [int(round(i * max_start / (k - 1))) for i in range(k)]
-
-
-def make_eval_env_factory(num_days):
-    prefs_full = preferences_full.copy()
-    total_days = len(prefs_full.columns)
-    starts = compute_eval_starts(total_days, num_days, n_windows=8)
-
+def make_env_factory(num_days, phase, hp_baseline=None):
     def _make_env():
         profiles = profiles_full.copy()
         prefs    = preferences_full.copy()
-        all_dates = prefs.columns.tolist()
-
-        # Pop the front element, append to back → cycle in shuffled order
-        idx = starts.pop(0)
-        starts.append(idx)
-
-        selected = all_dates[idx : idx + num_days]
-        prefs = prefs[selected]
-        start_date = pd.to_datetime(selected[0])
-
+        dates    = prefs.columns.tolist()
+        start_idx = np.random.randint(0, len(dates) - num_days + 1)
+        window    = dates[start_idx : start_idx + num_days]
+        prefs     = prefs[window]
+        start_dt  = pd.to_datetime(window[0])
         env = NurseRosteringEnv(
-            profiles_df=profiles,
-            preferences_df=prefs,
-            start_date=start_date,
-            active_days=num_days
+            profiles_df    = profiles,
+            preferences_df = prefs,
+            start_date     = start_dt,
+            active_days    = num_days,
+            phase          = phase,
+            hp_baseline    = hp_baseline
         )
         return Monitor(env)
     return _make_env
 
+def make_eval_env(num_days, phase, hp_baseline=None):
+    """Deterministic slicing for evaluation."""
+    dates = preferences_full.columns.tolist()
+    def _make_env():
+        window   = dates[:num_days]
+        prefs    = preferences_full[window]
+        start_dt = pd.to_datetime(window[0])
+        env = NurseRosteringEnv(
+            profiles_df    = profiles_full.copy(),
+            preferences_df = prefs,
+            start_date     = start_dt,
+            active_days    = num_days,
+            phase          = phase,
+            hp_baseline    = hp_baseline
+        )
+        return Monitor(env)
+    return _make_env
 
-def lr_with_optional_warmup(start_lr: float, end_lr: float, total_steps: int, warmup_steps: int = 0):
-    if warmup_steps == 0:
-        def pure_linear(progress_remaining: float) -> float:
-            return end_lr + progress_remaining * (start_lr - end_lr)
-        return pure_linear
+def evaluate_hp(model, num_days, n_episodes=10):
+    """Run a phase-1 model to get its average final HP."""
+    # 4 parallel eval envs
+    env = SubprocVecEnv([make_eval_env(num_days, phase=1)] * 4)
+    # normalize observations but keep raw rewards
+    env = VecNormalize(env, norm_obs=True, norm_reward=False)
+    env.training   = False
+    env.norm_reward = False
 
-    warmup_frac = warmup_steps / total_steps
+    total_hp = 0.0
+    for _ in range(n_episodes):
+        obs   = env.reset()          # only obs is returned
+        done  = False
+        while not done:
+            action, _ = model.predict(obs, deterministic=True)
+            obs, rewards, dones, infos = env.step(action)
+            done = bool(dones[0])    # finish when the first sub-env ends
 
-    def _schedule(progress_remaining: float) -> float:
-        if progress_remaining > (1.0 - warmup_frac):
-            return end_lr
-        else:
-            eff_progress = progress_remaining / (1.0 - warmup_frac)
-            return end_lr + (eff_progress * (start_lr - end_lr))
-    
-    return _schedule
+        # fetch the first sub-env's cum_hp
+        total_hp += env.env_method('cum_hp')[0]
 
-# ------------------------
-# Training loop
-# ------------------------
+    env.close()
+    return total_hp / n_episodes
+
+# ───────────────
+# Training
+# ───────────────
 
 if __name__ == "__main__":
-    os.makedirs("models", exist_ok=True)
+    os.makedirs("models",    exist_ok=True)
     os.makedirs("eval_logs", exist_ok=True)
 
-    n_envs = 8
-    # horizons = [7, 14, 28]
-    timesteps_map = {7: 400_000, 14: 600_000, 28: 800_000}
-    prev_model_path = None  # Will hold the file path of the best model
+    n_envs       = 8
+    horizons     = [7]           # extend to [7,14,28] as needed
+    timesteps_map= {7:400_000, 14:600_000, 28:800_000}
 
-    horizons = [7]
     for num_days in horizons:
-        print(f"\n=== TRAINING on {num_days}-day windows ===")
+        print(f"\n→ PHASE 1: Minimize HP penalties on {num_days}-day windows")
 
-        # 1) Build train/environment
-        train_factory = make_train_env_factory(num_days)
-        vec_env = SubprocVecEnv([train_factory] * n_envs)
-        vec_env = VecNormalize(vec_env, norm_obs=True, norm_reward=True, clip_obs=10.0)
+        # 1a) Create training VecEnv (phase=1)
+        ph1_factory = make_env_factory(num_days, phase=1, hp_baseline=None)
+        ph1_vec     = SubprocVecEnv([ph1_factory]*n_envs)
+        ph1_vec     = VecNormalize(ph1_vec, norm_obs=True, norm_reward=True, clip_obs=10.0)
 
-        # 2) Build fixed eval environment
-        eval_factory = make_eval_env_factory(num_days)
-        eval_vec_env = SubprocVecEnv([eval_factory] * n_envs)
-        eval_vec_env = VecNormalize(eval_vec_env, norm_obs=True, norm_reward=True, clip_obs=10.0)
-        eval_vec_env.training = False
-        eval_vec_env.norm_reward = False
+        # 1b) Hyper-parameters per horizon
+        match num_days:
+            case 7:
+                start_lr, end_lr, start_coef, end_coef = 3e-4, 1e-5, 1e-2, 1e-3
+                n_steps, batch_size, n_epochs = 4096, 512, 10
+                warmup_steps = 0
+            case 14:
+                start_lr, end_lr, start_coef, end_coef = 3e-4, 1e-5, 7e-3, 1e-4
+                n_steps, batch_size, n_epochs = 4096, 1024, 3
+                warmup_steps = 50_000
+            case 28:
+                start_lr, end_lr, start_coef, end_coef = 3e-4, 1e-5, 1e-2, 1e-4
+                n_steps, batch_size, n_epochs = 4096, 1024, 3
+                warmup_steps = 50_000
 
-        # 3) Set up EvalCallback
-        eval_cb = EvalCallback(
-            eval_vec_env,
-            best_model_save_path=f"models/ppo_nurse_{num_days}d/",
-            log_path=f"eval_logs/{num_days}d/",
+        # 1c) Callbacks
+        eval_cb_ph1    = EvalCallback(
+            SubprocVecEnv([make_eval_env(num_days,1)]*n_envs),
+            best_model_save_path=f"models/phase1_{num_days}d/",
+            log_path=f"eval_logs/phase1_{num_days}d/",
             eval_freq=10_000,
             n_eval_episodes=40,
             deterministic=True
         )
+        reward_logger  = RewardComponentLogger()
+        ent_decay_cb   = EntropyDecayCallback(start_coef, end_coef, timesteps_map[num_days])
+        cb_ph1         = CallbackList([eval_cb_ph1, ent_decay_cb, reward_logger])
 
-        # 4) Adaptive hyperparameters
-        match num_days:
-            case 7:
-                start_lr, end_lr, start_coef, end_coef, n_steps, batch_size, n_epochs = 3e-4, 1e-5, 1e-2, 1e-3, 4096, 512, 10
-                warmup_steps = 0
-            case 14:
-                start_lr, end_lr, start_coef, end_coef, n_steps, batch_size, n_epochs = 3e-4, 1e-5, 7e-3, 1e-4, 4096, 1024, 3
-                warmup_steps = 50_000
-            case _:  # 28 days
-                start_lr, end_lr, start_coef, end_coef, n_steps, batch_size, n_epochs = 3e-4, 1e-5, 1e-2, 1e-4, 4096, 1024, 3
-                warmup_steps = 50_000
-
-        total_steps = timesteps_map[num_days]
-        schedule_fn = lr_with_optional_warmup(start_lr, end_lr, total_steps, warmup_steps)
-
-        # 5) Instantiate a fresh EntropyDecayCallback for THIS horizon
-        ent_decay_cb = EntropyDecayCallback(
-            start_coef=start_coef,
-            end_coef=end_coef,
-            total_timesteps=timesteps_map[num_days],
-            verbose=0
+        # 1d) Build & train Phase 1 PPO
+        model_ph1 = PPO(
+            "MlpPolicy", ph1_vec, verbose=1, seed=42,
+            learning_rate=lr_with_optional_warmup(start_lr, end_lr, timesteps_map[num_days], warmup_steps),
+            ent_coef=start_coef,
+            gamma=0.99,
+            n_steps=n_steps,
+            batch_size=batch_size,
+            n_epochs=n_epochs,
+            tensorboard_log="./tb_logs"
         )
+        model_ph1.learn(total_timesteps=timesteps_map[num_days], callback=cb_ph1)
+        model_ph1.save(f"models/phase1_{num_days}d/best_model")
+        ph1_vec.close()
 
-        reward_logger = RewardComponentLogger(verbose=0)
+        # 1e) Evaluate Phase 1’s HP baseline
+        hp_baseline = evaluate_hp(model_ph1, num_days, n_episodes=20)
+        print(f"→ Phase 1 HP baseline: {hp_baseline:.1f}")
 
-        # 6) Combine callbacks
-        cb_list = CallbackList([eval_cb, ent_decay_cb, reward_logger])
+        # ───────────────
+        # PHASE 2: Lock in HP ≤ baseline, then minimize LP
+        print(f"\n→ PHASE 2: Optimize LP while preserving HP ≤ {hp_baseline:.1f}")
 
-        # 7) Create or load the PPO model
-        if prev_model_path is None:
-            # 7-day horizon: instantiate from scratch
-            model = PPO(
-                policy="MlpPolicy",
-                env=vec_env,
-                verbose=1,
-                tensorboard_log="./tb_logs",
-                seed=42,
-                learning_rate=schedule_fn,
-                ent_coef=start_coef,
-                gamma=0.99,
-                n_steps=n_steps,
-                batch_size=batch_size,
-                n_epochs=n_epochs,
-                clip_range=0.2,
-                policy_kwargs=dict(net_arch=[256, 256])
-            )
-        else:
-            # Subsequent horizons: load a brand-new PPO instance with new hyperparameters
-            model = PPO.load(
-                prev_model_path,     # load weights from previous best
-                env=vec_env,         # attach the new VecEnv
-                tensorboard_log="./tb_logs",
-                seed=42,
-                learning_rate=schedule_fn,
-                ent_coef=start_coef,
-                gamma=0.99,
-                n_steps=n_steps,
-                batch_size=batch_size,
-                n_epochs=n_epochs,
-                clip_range=0.2,
-                policy_kwargs=dict(net_arch=[256, 256])
-            )
-            # No need to call set_parameters(), because PPO.load(...) already built a new buffer 
-            # (of size `n_steps`) and loaded all weights/optimizer state.
+        # 2a) Create training VecEnv (phase=2), keep raw rewards
+        ph2_factory = make_env_factory(num_days, phase=2, hp_baseline=hp_baseline)
+        ph2_vec     = SubprocVecEnv([ph2_factory]*n_envs)
+        ph2_vec     = VecNormalize(ph2_vec, norm_obs=True, norm_reward=False)
 
-        # ── 8) TWO-PHASE TRAINING: warm-up (if requested) + main schedule ──
-        print(f"  • Training: {total_steps} steps (warmup={warmup_steps})")
-        model.learn(
-            total_timesteps=total_steps,
-            tb_log_name=f"PPO_{num_days}d",
-            callback=cb_list
+        # 2b) Callbacks
+        eval_cb_ph2   = EvalCallback(
+            SubprocVecEnv([make_eval_env(num_days,2,hp_baseline)]*n_envs),
+            best_model_save_path=f"models/phase2_{num_days}d/",
+            log_path=f"eval_logs/phase2_{num_days}d/",
+            eval_freq=10_000,
+            n_eval_episodes=20,
+            deterministic=True
         )
+        reward_logger = RewardComponentLogger()
+        ent_decay_cb  = EntropyDecayCallback(start_coef, end_coef, timesteps_map[num_days])
+        cb_ph2        = CallbackList([eval_cb_ph2, ent_decay_cb, reward_logger])
 
-        # 9) Save best & final models to disk
-        best_path = f"models/ppo_nurse_{num_days}d/best_model"
-        model.save(best_path)
-        prev_model_path = best_path   # -> used in the next loop iteration
+        # 2c) Load Phase1 weights into Phase2
+        model_ph2 = PPO.load(
+            f"models/phase1_{num_days}d/best_model",
+            env=ph2_vec,
+            seed=42,
+            learning_rate=lr_with_optional_warmup(start_lr, end_lr, timesteps_map[num_days], warmup_steps),
+            ent_coef=start_coef,
+            gamma=0.99,
+            n_steps=n_steps,
+            batch_size=batch_size,
+            n_epochs=n_epochs,
+            tensorboard_log="./tb_logs"
+        )
+        model_ph2.learn(total_timesteps=timesteps_map[num_days], callback=cb_ph2)
+        model_ph2.save(f"models/phase2_{num_days}d/best_model")
+        ph2_vec.close()
 
-        print(f"✅ Saved policy for {num_days}-day horizon")
-
-        vec_env.close()
-        eval_vec_env.close()
-
+    print("\n✅ All horizons (and both phases) completed.")

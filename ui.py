@@ -161,26 +161,50 @@ if st.sidebar.button("Generate Schedule"):
 
         # RL warm start
         if use_rl:
-            env = NurseRosteringEnv(df_profiles, df_prefs, pd.to_datetime(start_date), active_days=num_days)
-            vec = DummyVecEnv([lambda: env])
             for h in (7, 14, 28):
                 if h >= num_days:
-                    try:
-                        model = PPO.load(f"models/ppo_nurse_{h}d/best_model.zip", env=vec)
-                        obs, _ = env.reset()
-                        done = False
-                        while not done:
-                            action, _ = model.predict(obs, deterministic=True)
-                            obs, _, done, _, _ = env.step(int(action))
-                        N = df_profiles.shape[0]
-                        S = len(SHIFT_LABELS)  # e.g. 3
-                        slice_len = N * num_days * S
-                        sliced_obs = obs[:slice_len].tolist()
-                        st.session_state.rl_assignment = sliced_obs
-                        st.sidebar.success(f"🔁 Warm-start from {h}-day model")
-                    except:
-                        pass
+                    # 1) Phase 1 rollout to minimize high-priority penalties
+                    env1 = NurseRosteringEnv(
+                        st.session_state.df_profiles,
+                        st.session_state.df_prefs,
+                        st.session_state.start_date,
+                        active_days=st.session_state.num_days,
+                        phase=1,
+                        hp_baseline=None
+                    )
+                    vec1 = DummyVecEnv([lambda: env1])
+                    model1 = PPO.load(f"models/phase1_{h}d/best_model.zip", env=vec1)
+                    obs = env1.reset()[0]            # unpack (obs,info)
+                    done = False
+                    while not done:
+                        action, _ = model1.predict(obs, deterministic=True)
+                        obs, _, done, _, _ = env1.step(int(action))
+                    # at the end of rollout, env1.cum_hp holds the minimized HP baseline
+                    hp_baseline = env1.cum_hp
+
+                    # 2) Phase 2 rollout to honor HP ≤ baseline, then optimize LP
+                    env2 = NurseRosteringEnv(
+                        st.session_state.df_profiles,
+                        st.session_state.df_prefs,
+                        st.session_state.start_date,
+                        active_days=st.session_state.num_days,
+                        phase=2,
+                        hp_baseline=hp_baseline
+                    )
+                    vec2 = DummyVecEnv([lambda: env2])
+                    model2 = PPO.load(f"models/phase2_{h}d/best_model.zip", env=vec2)
+                    obs = env2.reset()[0]
+                    done = False
+                    while not done:
+                        action, _ = model2.predict(obs, deterministic=True)
+                        obs, _, done, _, _ = env2.step(int(action))
+
+                    # 3) extract the final assignment as flat list for CP-SAT warm start
+                    #    (obs is a flattened vector of 0/1 assignments)
+                    st.session_state.rl_assignment = obs.tolist()
+                    st.sidebar.success(f"🔁 RL warm-start from {h}-day model")
                     break
+
 
         sched, summ = build_schedule_model(
             df_profiles, df_prefs,

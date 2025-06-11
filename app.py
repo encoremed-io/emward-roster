@@ -5,13 +5,10 @@ import pandas as pd
 from datetime import date
 import numpy as np
 
-from build_model import (
-    load_nurse_profiles,
-    load_shift_preferences,
-    validate_nurse_data,
-    build_schedule_model,
-)
-from nurse_env import compute_total_penalty
+from utils.loader import *
+from utils.pen_calc import *
+from utils.validate import *
+from build_model import build_schedule_model
 
 app = FastAPI(title="Nurse Roster Scheduler API")
 
@@ -70,12 +67,13 @@ def make_schedule(req: ScheduleRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
     # 2) Build schedule
-    rl_arr = np.array(req.rl_assignment, dtype=int) if req.rl_assignment else None
-    
-    if rl_arr is not None:
+    if req.rl_assignment:
         rl_arr = np.array(req.rl_assignment, dtype=int)
+        if rl_arr.shape != (len(profiles), req.num_days, 3):
+            raise HTTPException(400, f"Invalid shape for rl_assignment: expected ({len(profiles)}, {req.num_days}, 3)")
         print("🔁 Warm-starting with RL assignment!")
     else:
+        rl_arr = None
         print("🔨 No warm start — CP-SAT only.")
 
     try:
@@ -88,9 +86,9 @@ def make_schedule(req: ScheduleRequest):
             if not (0 <= day_idx < req.num_days):
                 raise HTTPException(400, f"Override date {ov.el_date} out of scheduling window")
             typ = ov.type.strip().upper()
-            if typ != "EL":
-                raise HTTPException(400, "Overrides currently only support type='EL'")
-            fixed[(name, day_idx)] = "EL"
+            if typ not in {"EL", "MC"}:
+                raise HTTPException(400, "Overrides currently only support type='EL' or 'MC")
+            fixed[(name, day_idx)] = typ
 
         sched_df, summ_df = build_schedule_model(
             profiles,
@@ -115,11 +113,12 @@ def make_schedule(req: ScheduleRequest):
             for j, label in enumerate(sched_df.loc[nurse]):
                 if isinstance(label, str) and label.upper() in label_to_idx:
                     assign[i, j, label_to_idx[label.upper()]] = 1
-        penalty = int(compute_total_penalty(assign, profiles, prefs, pd.to_datetime(req.start_date), fixed))
+        penalty = int(compute_total_penalty(assign, profiles, prefs, pd.to_datetime(req.start_date), fixed, active_days=req.num_days))
     except Exception:
+        print(f"Penalty Calculation Error!")
         penalty = None
 
-    used_rl = used_rl = bool(req.rl_assignment and len(req.rl_assignment) > 0)
+    used_rl = bool(req.rl_assignment and len(req.rl_assignment) > 0)
 
     return ScheduleResponse(
         schedule=sched_df.to_dict(),

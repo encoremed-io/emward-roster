@@ -1,55 +1,49 @@
-# nurse_env.py
-
 import gymnasium as gym
 import numpy as np
 import pandas as pd
 from gymnasium import spaces, Env
 from gymnasium.utils import seeding
+
 from utils.pen_calc import *
+
+HUGE_VIOLATION_PENALTY = 2000
 
 class NurseRosteringEnv(Env):
     """Gym environment for nurse rostering."""
     metadata = {'render.modes': []}
 
-    def __init__(self,
-                 profiles_df: pd.DataFrame,
-                 preferences_df: pd.DataFrame,
-                 start_date: pd.Timestamp,
-                 active_days: int = 0):
-        
+    def __init__(
+        self,
+        profiles_df: pd.DataFrame,
+        preferences_df: pd.DataFrame,
+        start_date: pd.Timestamp,
+        active_days: int = 0,
+        phase: int = 2,
+        hp_baseline=None
+    ):
         super().__init__()
 
-        if len(profiles_df) == 0:
-            raise ValueError("profiles_df cannot be empty")
-        if len(preferences_df.columns) == 0:
-            raise ValueError("preferences_df must contain at least one day")
-        
-        # Set days parameters
-        # If active_days not provided, use all columns in prefs
-        self.active_days = active_days
-        self.fixed_assignments = {}
+        assert phase in (1, 2), "phase must be 1 or 2"
+        self.phase = phase
+        self.hp_baseline = hp_baseline
 
-        # # Pad preferences_df up to max_days columns with zeros
-        # prefs = preferences_df.copy()
-        # if prefs.shape[1] < max_days:
-        #     last_date = pd.to_datetime(prefs.columns[-1])
-        #     for i in range(prefs.shape[1], max_days):
-        #         new_date = (last_date + pd.Timedelta(days=(i - prefs.shape[1] + 1))).date()
-        #         prefs[new_date] = 0  # neutral preference value
-        # # If more cols than max, slice
-        # prefs = prefs.iloc[:, :max_days]
-        
+        if profiles_df.empty:
+            raise ValueError("profiles_df cannot be empty")
+        if preferences_df.columns.empty:
+            raise ValueError("preferences_df must contain at least one day")
+
         self.profiles_df = profiles_df
         self.preferences_df = preferences_df
         self.start_date = start_date
-        self.np_random, _ = seeding.np_random(None)
+        self.active_days = active_days
+        self.fixed_assignments = {}
 
+        self.np_random, _ = seeding.np_random(None)
         self.nurse_names = [str(n).strip().upper() for n in profiles_df['Name']]
         self.N = len(self.nurse_names)
         self.D = active_days
-        self.S = 3  # AM, PM, Night
+        self.S = len(SHIFT_LABELS)
 
-        # One-hot assignment tensor: shape (N, D, S)
         self.observation_space = spaces.Box(
             low=0, high=1,
             shape=(self.N * self.D * self.S,),
@@ -62,206 +56,159 @@ class NurseRosteringEnv(Env):
     def reset(self, *, seed=None, options=None):
         self.np_random, seed = seeding.np_random(seed)
         super().reset(seed=seed)
-        
-        # Re-initialize environment state
+
         self.assignment = np.zeros((self.N, self.D, self.S), dtype=np.int8)
         self.step_count = 0
-        self.valid_count = 0
         self.total_reward = 0
         self.done = False
-    
-        return self._get_obs(), {}  # observation and empty info dict
-    
+
+        # compute initial HP penalty
+        self.cum_hp = compute_high_priority_penalty(
+            self.assignment,
+            self.profiles_df,
+            self.preferences_df,
+            self.start_date,
+            self.fixed_assignments,
+            self.active_days
+        )
+        return self._get_obs(), {}
 
     def _get_obs(self):
-        # full = self.assignment.flatten()
-        # # Mask out positions beyond active_days
-        # feat_per_day = (self.N * self.S)
-        # cutoff = feat_per_day * self.active_days
-        # masked = np.zeros_like(full)
-        # masked[:cutoff] = full[:cutoff]
-        # return masked
         return self.assignment.flatten()
 
-
     def step(self, action: int):
+        # decode action index
         n = action // (self.D * self.S)
         rem = action % (self.D * self.S)
         d = rem // self.S
         s = rem % self.S
 
-        penalty_reduction = 0.0
-        valid_assign_bonus = 0.0
-        pref_match_bonus = 0.0
-        am_coverage_bonus = 0.0
-        # weekly_hours_bonus = 0.0
-        final_penalty_term = 0.0
-        reward = 0.0
+        if self.done:
+            raise RuntimeError("Step called after environment is done")
 
         self.step_count += 1
 
-        # # skip masked days
-        # if d >= self.active_days:
-        #     obs = self._get_obs()
-        #     info = {
-        #         "penalty_reduction": penalty_reduction,
-        #         "valid_assign":      valid_assign_bonus,
-        #         "preference":        pref_match_bonus,
-        #         "am_coverage":       am_coverage_bonus,
-        #         "weekly_hours":      weekly_hours_bonus,
-        #         "final_penalty":     final_penalty_term
-        #     }
-        #     return obs, reward, done, False, info
-
-        # 1) Illegal move mask: if nurse already has a shift that day, zero reward and skip
+        # illegal move?
         if self.assignment[n, d].any():
-            # no change to assignment, small -1 reward instead of huge negative
-            reward = -1.0
-            valid_assign_bonus -= 1.0
-            print(f"[ILLEGAL MOVE] nurse={n}, day={d}")  # for debugging
+            return self._get_obs(), -1.0, False, False, {"illegal": 1}
+
+        # pre‐action HP penalty
+        hp_before = compute_high_priority_penalty(
+            self.assignment, self.profiles_df, self.preferences_df,
+            self.start_date, self.fixed_assignments, self.active_days
+        )
+
+        # apply assignment
+        self.assignment[n, d, s] = 1
+
+        # post‐action HP penalty
+        hp_after = compute_high_priority_penalty(
+            self.assignment, self.profiles_df, self.preferences_df,
+            self.start_date, self.fixed_assignments, self.active_days
+        )
+        self.cum_hp = hp_after
+        hp_delta = hp_before - hp_after
+
+        # low‐priority penalty (aggregate)
+        lp_pen = compute_low_priority_penalty(
+            self.assignment, self.profiles_df, self.preferences_df,
+            self.start_date, self.active_days
+        )
+        lp_estimate = -lp_pen
+
+        # prepare breakdown inputs
+        shift_prefs, mc_days = get_shift_prefs_and_mc_days(
+            self.preferences_df, self.profiles_df, self.start_date, self.active_days
+        )
+        el_days = get_el_days(self.fixed_assignments)
+        senior_set = get_senior_set(self.profiles_df)
+
+        # ── High-priority components ───────────────────────────────
+        hp_am_cov        = hp_am_coverage(self.assignment, self.active_days)
+        hp_weekly        = hp_weekly_hours(
+            self.assignment, self.nurse_names, mc_days, el_days, self.active_days
+        )
+
+        # staffing shortages
+        nurse_shortage = 0
+        senior_shortage = 0
+        for day in range(self.D):
+            for shift in range(self.S):
+                cnt = int(self.assignment[:, day, shift].sum())
+                if cnt < MIN_NURSES_PER_SHIFT:
+                    nurse_shortage += (MIN_NURSES_PER_SHIFT - cnt)
+                if cnt > 0:
+                    sc = sum(
+                        int(self.assignment[i, day, shift] == 1 and self.nurse_names[i] in senior_set)
+                        for i in range(self.N)
+                    )
+                    if sc < MIN_SENIORS_PER_SHIFT:
+                        senior_shortage += 1
+
+        hp_nurses_per_shift  = nurse_shortage * HARD_CONSTRAINT_PENALTY
+        hp_seniors_per_shift = senior_shortage * HARD_CONSTRAINT_PENALTY
+
+        # ── Low-priority components ────────────────────────────────
+        pref_misses = 0
+        sats = []
+        for i, nm in enumerate(self.nurse_names):
+            prefs = shift_prefs.get(nm, {})
+            if not prefs:
+                continue
+            met = 0
+            for day, ss in prefs.items():
+                if self.assignment[i, day, ss] == 1:
+                    met += 1
+                else:
+                    pref_misses += 1
+            sats.append(100 * met / len(prefs))
+
+        lp_preference = pref_misses * PREF_MISS_PENALTY
+
+        gap = max(sats) - min(sats) if sats else 0
+        lp_fairness = ((gap - FAIRNESS_GAP_THRESHOLD) * FAIRNESS_GAP_PENALTY
+                       if sats and gap >= FAIRNESS_GAP_THRESHOLD else 0)
+
+        # ── Reward & termination ───────────────────────────────────
+        if self.phase == 1:
+            reward = hp_delta
+            violation = 0
         else:
-            self.valid_count += 1
-            print(f"[ASSIGNED] nurse={n}, day={d}, shift={s}")
+            BIG = 1000.0
+            reward = hp_delta * BIG + lp_estimate
+            violation = 0
+            if self.hp_baseline is not None and self.cum_hp > self.hp_baseline:
+                violation = self.cum_hp - self.hp_baseline
+                reward -= violation * HUGE_VIOLATION_PENALTY
 
-            # 2) Compute old penalty for this day
-            old_penalty = compute_penalty_per_day(
-                self.assignment,
-                self.profiles_df,
-                self.preferences_df,
-                self.start_date,
-                d
-            )
+        self.done = (self.step_count >= self.N * self.D)
+        truncated = False
+        reward = float(np.clip(reward, -10, 10))
 
-            # 3) Apply the action
-            self.assignment[n, d, s] = 1
-
-            # 4) Compute new penalty for this day
-            new_penalty = compute_penalty_per_day(
-                self.assignment,
-                self.profiles_df,
-                self.preferences_df,
-                self.start_date,
-                d
-            )
-
-            # 5) Base reward = reduction in per-day penalty
-            penalty_reduction = float(old_penalty - new_penalty)
-
-            # ── REWARD SHAPING ──
-            # +1 for any valid assignment
-            valid_assign_bonus += 1.0
-
-            # +5 if this assignment matches the nurse’s preference for that day
-            # (assumes SHIFT_LABELS = ['AM','PM','Night'] is defined at class scope)
-            nurse_name = self.nurse_names[n]
-            day_date = (self.start_date + pd.to_timedelta(d, unit="D")).date()
-            pref_val = self.preferences_df.at[nurse_name, day_date]
-            if isinstance(pref_val, str) and pref_val.strip().upper() == SHIFT_LABELS[s].upper():
-                pref_match_bonus += 5.0
-
-            # ── DAILY AM‐COVERAGE BONUS ──
-            # whenever you’ve taken N actions, you’ve just finished assigning everyone
-            # for one day, so step_count % N == 0
-            if self.valid_count % self.N == 0:
-                # which day did we just finish?
-                day_finished = (self.valid_count // self.N) - 1
-
-                # compute AM coverage for that day
-                am_count   = int(self.assignment[:, day_finished, 0].sum())
-                total_any  = int(self.assignment[:, day_finished, :].sum())
-                pct_am     = 100 * am_count / total_any if total_any > 0 else 0
-
-                am_coverage_bonus += (am_count * 2)
-
-                # if you hit your AM‐coverage target, give +5
-                if pct_am >= AM_COVERAGE_MIN_PERCENT:
-                    am_coverage_bonus += 10.0 
-
-                # # ── DAILY PARTIAL WEEKLY‐HOURS BONUS ──
-                # # Compute total hours for days [0..day_finished]
-                # week_idx = day_finished // DAYS_PER_WEEK
-                # if week_idx == 0:  # only first week
-                #     week_hours_so_far = 0
-                #     for dd in range(0, day_finished + 1):
-                #         for shift_idx, hrs in enumerate(SHIFT_HOURS):
-                #             week_hours_so_far += int(
-                #                 self.assignment[:, dd, shift_idx].sum()
-                #             ) * hrs
-
-                #     avg_hours_so_far = week_hours_so_far / self.N
-                #     # Give up to +2 points per day if avg_hours_so_far → 40
-                #     partial_bonus = (avg_hours_so_far / PREFERRED_WEEKLY_HOURS) * 2.0
-                #     weekly_hours_bonus += partial_bonus
-
-                # # ── FULL WEEKLY‐HOURS TARGET ON DAY 6 ──
-                # if (day_finished + 1) % DAYS_PER_WEEK == 0:
-                #     # Sum 7 days exactly
-                #     start_d = week_idx * DAYS_PER_WEEK
-                #     end_d   = start_d + DAYS_PER_WEEK
-                #     full_week_hours = 0
-                #     for dd in range(start_d, end_d):
-                #         for shift_idx, hrs in enumerate(SHIFT_HOURS):
-                #             full_week_hours += int(
-                #                 self.assignment[:, dd, shift_idx].sum()
-                #             ) * hrs
-
-                #     avg_nurse_hours = full_week_hours / self.N
-                #     # If we hit 40 (PREFERRED_WEEKLY_HOURS), +10 bonus
-                #     if avg_nurse_hours >= PREFERRED_WEEKLY_HOURS:
-                #         weekly_hours_bonus += 10.0
-
-            reward = float(
-                penalty_reduction
-                + valid_assign_bonus
-                + am_coverage_bonus
-                # + weekly_hours_bonus
-            )
-
-            tier1_fulfilled = (am_coverage_bonus >= 10.0 and valid_assign_bonus > 0)
-            if tier1_fulfilled:
-                reward += pref_match_bonus
-
-        # 6) End-of-episode final penalty
-        done = (self.step_count >= self.N * self.D)
-        if done:
-            final_penalty = compute_total_penalty(
-                self.assignment,
-                self.profiles_df,
-                self.preferences_df,
-                self.start_date,
-                self.fixed_assignments,
-                self.active_days
-            )
-            final_penalty_term = float(final_penalty / self.active_days)
-            survival_bonus = 5.0
-            # subtract the long-term penalty once at the end
-            reward = reward - (final_penalty_term / 100) + survival_bonus
-        
-        # 7) Clip per‐step reward to [-10, +10]
-        reward = max(-10, min(10, reward))
-
-        # 8) Build the info dict so you can log each component later
         info = {
-            "penalty_reduction": penalty_reduction,
-            "valid_assign":      valid_assign_bonus,
-            "preference":        pref_match_bonus,
-            "am_coverage":       am_coverage_bonus,
-            # "weekly_hours":      weekly_hours_bonus,
-            "final_penalty":     final_penalty_term
+            # high priority
+            "hp_am_coverage":       hp_am_cov,
+            "hp_weekly_hours":      hp_weekly,
+            "hp_nurses_per_shift":  hp_nurses_per_shift,
+            "hp_seniors_per_shift": hp_seniors_per_shift,
+            # low priority
+            "lp_preference":        -lp_preference,
+            "lp_fairness":          -lp_fairness,
+            # aggregates
+            "hp_delta":             hp_delta,
+            "lp_estimate":          lp_estimate,
+            "illegal":              0,
         }
+        if self.phase == 2 and violation > 0:
+            info["hp_violation"] = violation
 
-        # 8) Return observation, shaped reward, done flag, and info
-        return self._get_obs(), reward, done, False, info
+        return self._get_obs(), reward, self.done, truncated, info
 
 
     def render(self, mode='human'):
-        # Print a simple readable schedule: nurses x days, with shift labels or '-'
-        for n, nurse in enumerate(self.nurse_names):
+        for i, nurse in enumerate(self.nurse_names):
             line = f"{nurse:10s}: "
             for d in range(self.D):
-                assigned_shift = np.where(self.assignment[n, d, :] == 1)[0]
-                if len(assigned_shift) == 1:
-                    line += SHIFT_LABELS[assigned_shift[0]][0] + " "
-                else:
-                    line += "- "
+                shifts = np.where(self.assignment[i, d] == 1)[0]
+                line += (SHIFT_LABELS[shifts[0]][0] if len(shifts) == 1 else "-") + " "
             print(line)
