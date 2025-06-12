@@ -22,6 +22,8 @@ PREFERRED_WEEKLY_HOURS = constants["PREFERRED_WEEKLY_HOURS"]
 PREF_HOURS_PENALTY = constants["PREF_HOURS_PENALTY"]
 AM_COVERAGE_MIN_PERCENT = constants["AM_COVERAGE_MIN_PERCENT"]
 AM_COVERAGE_PENALTIES = constants["AM_COVERAGE_PENALTIES"]
+AM_SENIOR_MIN_PERCENT = constants["AM_SENIOR_MIN_PERCENT"]
+AM_SENIOR_PENALTIES = constants["AM_SENIOR_PENALTIES"]
 PREF_MISS_PENALTY = constants["PREF_MISS_PENALTY"]
 FAIRNESS_GAP_PENALTY = constants["FAIRNESS_GAP_PENALTY"]
 FAIRNESS_GAP_THRESHOLD = constants["FAIRNESS_GAP_THRESHOLD"]
@@ -190,8 +192,47 @@ def hp_am_coverage(assignment, active_days):
     return penalty
 
 
+def hp_am_senior_coverage(assignment, nurse_names, senior_names, active_days):
+    """Penalty 6: AM senior shift coverage"""
+    penalty = 0
+    for d in range(active_days):
+        total_am = 0
+        senior_am = 0
+        senior_pm = 0
+        senior_night = 0
+
+        for i, nurse in enumerate(nurse_names):
+            if assignment[i, d, 0] == 1:  # AM shift
+                total_am += 1
+                if nurse in senior_names:
+                    senior_am += 1
+            elif assignment[i, d, 1] == 1:  # PM shift
+                if nurse in senior_names:
+                    senior_pm += 1
+            elif assignment[i, d, 2] == 1:  # Night shift
+                if nurse in senior_names:
+                    senior_night += 1
+
+        if total_am == 0:
+            continue
+
+        pct = 100 * senior_am / total_am
+
+        # Apply penalties based on coverage levels
+        if pct < AM_SENIOR_MIN_PERCENT - 20:
+            penalty += AM_SENIOR_PENALTIES[2]
+        elif pct < AM_SENIOR_MIN_PERCENT - 10:
+            penalty += AM_SENIOR_PENALTIES[1]
+        elif pct < AM_SENIOR_MIN_PERCENT:
+            penalty += AM_SENIOR_PENALTIES[0]
+        # Check if AM is less than or equal to other shifts
+        elif senior_am <= senior_pm or senior_am <= senior_night:
+            penalty += HARD_CONSTRAINT_PENALTY
+    return penalty
+
+
 def hp_mc_day_rules(nurse_names, mc_days, active_days):
-    """Penalty 6: MC days rule violations."""
+    """Penalty 7: MC days rule violations."""
     penalty = 0
     
     for nurse in nurse_names:
@@ -218,7 +259,7 @@ def hp_mc_day_rules(nurse_names, mc_days, active_days):
 
 
 def hp_weekend_consecutive_work(assignment, start_date, nurse_names, active_days):
-    """Penalty 7: Consecutive weekend work."""
+    """Penalty 8: Consecutive weekend work."""
     penalty = 0
     
     # Find all weekend days (Saturday and Sunday)
@@ -260,6 +301,7 @@ def compute_high_priority_penalty(assignment, profiles_df, preferences_df, start
     total_penalty += hp_staffing_levels(assignment, nurse_names, senior_set, active_days)
     total_penalty += hp_weekly_hours(assignment, nurse_names, mc_days, el_days, active_days)
     total_penalty += hp_am_coverage(assignment, active_days)
+    total_penalty += hp_am_senior_coverage(assignment, nurse_names, senior_set, active_days)
     total_penalty += hp_mc_day_rules(nurse_names, mc_days, active_days)
     total_penalty += hp_weekend_consecutive_work(assignment, start_date_dt, nurse_names, active_days)
     

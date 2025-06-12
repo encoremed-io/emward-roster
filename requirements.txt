@@ -5,6 +5,7 @@ ortools
 numpy
 gymnasium
 stable-baselines3
+sb3-contrib
 langchain
 langchain-community
 langchain-openai

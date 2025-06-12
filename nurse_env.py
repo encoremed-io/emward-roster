@@ -90,7 +90,13 @@ class NurseRosteringEnv(Env):
 
         # illegal move?
         if self.assignment[n, d].any():
+            illegal_penalty = -20.0
+            reward = np.tanh(illegal_penalty / 100)
+            info = {"illegal": 1}
+            print(f"[ILLEGAL MOVE] nurse={n}, day={d}")
             return self._get_obs(), -1.0, False, False, {"illegal": 1}
+
+        print(f"[ASSIGNED] nurse={n}, day={d}")
 
         # pre‐action HP penalty
         hp_before = compute_high_priority_penalty(
@@ -125,6 +131,7 @@ class NurseRosteringEnv(Env):
 
         # ── High-priority components ───────────────────────────────
         hp_am_cov        = hp_am_coverage(self.assignment, self.active_days)
+        hp_am_senior_cov = hp_am_senior_coverage(self.assignment, self.nurse_names, senior_set, self.active_days)
         hp_weekly        = hp_weekly_hours(
             self.assignment, self.nurse_names, mc_days, el_days, self.active_days
         )
@@ -161,7 +168,8 @@ class NurseRosteringEnv(Env):
                     met += 1
                 else:
                     pref_misses += 1
-            sats.append(100 * met / len(prefs))
+            if len(prefs) > 0:
+                sats.append(100 * met / len(prefs))
 
         lp_preference = pref_misses * PREF_MISS_PENALTY
 
@@ -183,11 +191,12 @@ class NurseRosteringEnv(Env):
 
         self.done = (self.step_count >= self.N * self.D)
         truncated = False
-        reward = float(np.clip(reward, -10, 10))
+        reward = np.tanh(reward / 100)
 
         info = {
             # high priority
             "hp_am_coverage":       hp_am_cov,
+            "hp_am_senior_coverage": hp_am_senior_cov,
             "hp_weekly_hours":      hp_weekly,
             "hp_nurses_per_shift":  hp_nurses_per_shift,
             "hp_seniors_per_shift": hp_seniors_per_shift,

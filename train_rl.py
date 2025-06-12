@@ -192,10 +192,10 @@ def make_env_factory(num_days, phase, hp_baseline=None):
         return Monitor(env)
     return _make_env
 
-def make_eval_env(num_days, phase, hp_baseline=None):
-    """Deterministic slicing for evaluation."""
-    dates = preferences_full.columns.tolist()
+def make_eval_env_factory(num_days, phase, hp_baseline=None):
+    """Factory that returns a deterministic eval env builder."""
     def _make_env():
+        dates    = preferences_full.columns.tolist()
         window   = dates[:num_days]
         prefs    = preferences_full[window]
         start_dt = pd.to_datetime(window[0])
@@ -213,7 +213,7 @@ def make_eval_env(num_days, phase, hp_baseline=None):
 def evaluate_hp(model, num_days, n_episodes=10):
     """Run a phase-1 model to get its average final HP."""
     # 4 parallel eval envs
-    env = SubprocVecEnv([make_eval_env(num_days, phase=1)] * 4)
+    env = SubprocVecEnv([make_eval_env_factory(num_days, phase=1)] * 4)
     # normalize observations but keep raw rewards
     env = VecNormalize(env, norm_obs=True, norm_reward=False)
     env.training   = False
@@ -255,6 +255,8 @@ if __name__ == "__main__":
         ph1_factory = make_env_factory(num_days, phase=1, hp_baseline=None)
         ph1_vec     = SubprocVecEnv([ph1_factory]*n_envs)
         ph1_vec     = VecNormalize(ph1_vec, norm_obs=True, norm_reward=True, clip_obs=10.0)
+        eval_env_ph1 = SubprocVecEnv([make_eval_env_factory(num_days, 1)] * n_envs)
+        eval_env_ph1 = VecNormalize(eval_env_ph1, norm_obs=True, norm_reward=False)
 
         # 1b) Hyper-parameters per horizon
         match num_days:
@@ -273,7 +275,7 @@ if __name__ == "__main__":
 
         # 1c) Callbacks
         eval_cb_ph1    = EvalCallback(
-            SubprocVecEnv([make_eval_env(num_days,1)]*n_envs),
+            eval_env_ph1,
             best_model_save_path=f"models/ppo_nurse_{num_days}d/phase1/",
             log_path=f"eval_logs/phase1_{num_days}d/",
             eval_freq=10_000,
@@ -329,10 +331,12 @@ if __name__ == "__main__":
         ph2_factory = make_env_factory(num_days, phase=2, hp_baseline=hp_baseline)
         ph2_vec     = SubprocVecEnv([ph2_factory]*n_envs)
         ph2_vec     = VecNormalize(ph2_vec, norm_obs=True, norm_reward=False)
+        eval_env_ph2 = SubprocVecEnv([make_eval_env_factory(num_days, 2, hp_baseline)] * n_envs)
+        eval_env_ph2 = VecNormalize(eval_env_ph2, norm_obs=True, norm_reward=False)
 
         # 2b) Callbacks
         eval_cb_ph2   = EvalCallback(
-            SubprocVecEnv([make_eval_env(num_days,2,hp_baseline)]*n_envs),
+            eval_env_ph2,
             best_model_save_path=f"models/ppo_nurse_{num_days}d/phase2/",
             log_path=f"eval_logs/phase2_{num_days}d/",
             eval_freq=10_000,
@@ -345,7 +349,7 @@ if __name__ == "__main__":
 
         # 2c) Load Phase1 weights into Phase2
         model_ph2 = PPO.load(
-            f"models/ppo_nurse_{num_days}d/phase1_best_model",
+            f"models/ppo_nurse_{num_days}d/phase1_best_model.zip",
             env=ph2_vec,
             seed=SEED,
             learning_rate=lr_with_optional_warmup(start_lr, end_lr, timesteps_map[num_days], warmup_steps),

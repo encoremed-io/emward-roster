@@ -7,6 +7,7 @@ class RewardComponentLogger(BaseCallback):
         self._keys = [
             # high priority
             "hp_am_coverage",
+            "hp_am_senior_coverage",
             "hp_weekly_hours",
             "hp_nurses_per_shift",
             "hp_seniors_per_shift",
