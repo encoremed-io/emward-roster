@@ -136,7 +136,9 @@ from callbacks.reward_logger import RewardComponentLogger
 # Hyper-helpers
 # ───────────────
 
-np.random.seed(42)
+SEED = 42
+
+np.random.seed(SEED)
 profiles_full    = load_nurse_profiles("data/nurse_profiles.xlsx")
 preferences_full = load_shift_preferences("data/nurse_preferences.xlsx")
 
@@ -244,6 +246,8 @@ if __name__ == "__main__":
     horizons     = [7]           # extend to [7,14,28] as needed
     timesteps_map= {7:400_000, 14:600_000, 28:800_000}
 
+    prev_phase2_model = None
+
     for num_days in horizons:
         print(f"\n→ PHASE 1: Minimize HP penalties on {num_days}-day windows")
 
@@ -270,7 +274,7 @@ if __name__ == "__main__":
         # 1c) Callbacks
         eval_cb_ph1    = EvalCallback(
             SubprocVecEnv([make_eval_env(num_days,1)]*n_envs),
-            best_model_save_path=f"models/phase1_{num_days}d/",
+            best_model_save_path=f"models/ppo_nurse_{num_days}d/phase1/",
             log_path=f"eval_logs/phase1_{num_days}d/",
             eval_freq=10_000,
             n_eval_episodes=40,
@@ -281,18 +285,36 @@ if __name__ == "__main__":
         cb_ph1         = CallbackList([eval_cb_ph1, ent_decay_cb, reward_logger])
 
         # 1d) Build & train Phase 1 PPO
-        model_ph1 = PPO(
-            "MlpPolicy", ph1_vec, verbose=1, seed=42,
-            learning_rate=lr_with_optional_warmup(start_lr, end_lr, timesteps_map[num_days], warmup_steps),
-            ent_coef=start_coef,
-            gamma=0.99,
-            n_steps=n_steps,
-            batch_size=batch_size,
-            n_epochs=n_epochs,
-            tensorboard_log="./tb_logs"
-        )
+        if prev_phase2_model is None:
+            model_ph1 = PPO(
+                "MlpPolicy", 
+                ph1_vec, 
+                verbose=1, 
+                seed=SEED,
+                learning_rate=lr_with_optional_warmup(start_lr, end_lr, timesteps_map[num_days], warmup_steps),
+                ent_coef=start_coef,
+                gamma=0.99,
+                n_steps=n_steps,
+                batch_size=batch_size,
+                n_epochs=n_epochs,
+                tensorboard_log="./tb_logs"
+            )
+        else:
+            model_ph1 = PPO.load(
+                prev_phase2_model,
+                env=ph1_vec, 
+                seed=SEED,
+                learning_rate=lr_with_optional_warmup(start_lr, end_lr, timesteps_map[num_days], warmup_steps),
+                ent_coef=start_coef,
+                gamma=0.99,
+                n_steps=n_steps,
+                batch_size=batch_size,
+                n_epochs=n_epochs,
+                tensorboard_log="./tb_logs"
+            )
+
         model_ph1.learn(total_timesteps=timesteps_map[num_days], callback=cb_ph1)
-        model_ph1.save(f"models/phase1_{num_days}d/best_model")
+        # model_ph1.save(f"models/ppo_nurse_{num_days}d/phase1_final_model")
         ph1_vec.close()
 
         # 1e) Evaluate Phase 1’s HP baseline
@@ -311,7 +333,7 @@ if __name__ == "__main__":
         # 2b) Callbacks
         eval_cb_ph2   = EvalCallback(
             SubprocVecEnv([make_eval_env(num_days,2,hp_baseline)]*n_envs),
-            best_model_save_path=f"models/phase2_{num_days}d/",
+            best_model_save_path=f"models/ppo_nurse_{num_days}d/phase2/",
             log_path=f"eval_logs/phase2_{num_days}d/",
             eval_freq=10_000,
             n_eval_episodes=20,
@@ -323,9 +345,9 @@ if __name__ == "__main__":
 
         # 2c) Load Phase1 weights into Phase2
         model_ph2 = PPO.load(
-            f"models/phase1_{num_days}d/best_model",
+            f"models/ppo_nurse_{num_days}d/phase1_best_model",
             env=ph2_vec,
-            seed=42,
+            seed=SEED,
             learning_rate=lr_with_optional_warmup(start_lr, end_lr, timesteps_map[num_days], warmup_steps),
             ent_coef=start_coef,
             gamma=0.99,
@@ -335,7 +357,10 @@ if __name__ == "__main__":
             tensorboard_log="./tb_logs"
         )
         model_ph2.learn(total_timesteps=timesteps_map[num_days], callback=cb_ph2)
-        model_ph2.save(f"models/phase2_{num_days}d/best_model")
+        # model_ph2.save(f"models/ppo_nurse_{num_days}d/phase2_final_model")
         ph2_vec.close()
+
+        prev_phase2_model = f"models/ppo_nurse_{num_days}d/phase2/best_model.zip"
+        print(f"✅ Saved policy for {num_days}-day horizon")
 
     print("\n✅ All horizons (and both phases) completed.")

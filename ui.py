@@ -173,7 +173,7 @@ if st.sidebar.button("Generate Schedule"):
                         hp_baseline=None
                     )
                     vec1 = DummyVecEnv([lambda: env1])
-                    model1 = PPO.load(f"models/phase1_{h}d/best_model.zip", env=vec1)
+                    model1 = PPO.load(f"models/ppo_nurse_{h}d/phase1/best_model.zip", env=vec1)
                     obs = env1.reset()[0]            # unpack (obs,info)
                     done = False
                     while not done:
@@ -192,7 +192,7 @@ if st.sidebar.button("Generate Schedule"):
                         hp_baseline=hp_baseline
                     )
                     vec2 = DummyVecEnv([lambda: env2])
-                    model2 = PPO.load(f"models/phase2_{h}d/best_model.zip", env=vec2)
+                    model2 = PPO.load(f"models/ppo_nurse_{h}d/phase2/best_model.zip", env=vec2)
                     obs = env2.reset()[0]
                     done = False
                     while not done:
