@@ -219,7 +219,7 @@ def evaluate_hp(model, num_days, n_episodes=10):
     env.training   = False
     env.norm_reward = False
 
-    total_hp = 0.0
+    hp_values = []
     for _ in range(n_episodes):
         obs   = env.reset()          # only obs is returned
         done  = False
@@ -228,11 +228,10 @@ def evaluate_hp(model, num_days, n_episodes=10):
             obs, rewards, dones, infos = env.step(action)
             done = bool(dones[0])    # finish when the first sub-env ends
 
-        # fetch the first sub-env's cum_hp
-        total_hp += env.env_method('cum_hp')[0]
+        hp_values.append(env.get_attr('cum_hp')[0])
 
     env.close()
-    return total_hp / n_episodes
+    return min(hp_values)
 
 # ───────────────
 # Training
@@ -349,7 +348,7 @@ if __name__ == "__main__":
 
         # 2c) Load Phase1 weights into Phase2
         model_ph2 = PPO.load(
-            f"models/ppo_nurse_{num_days}d/phase1_best_model.zip",
+            f"models/ppo_nurse_{num_days}d/phase1/best_model",
             env=ph2_vec,
             seed=SEED,
             learning_rate=lr_with_optional_warmup(start_lr, end_lr, timesteps_map[num_days], warmup_steps),

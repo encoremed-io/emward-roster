@@ -6,7 +6,7 @@ from gymnasium.utils import seeding
 
 from utils.pen_calc import *
 
-HUGE_VIOLATION_PENALTY = 2000
+HUGE_VIOLATION_PENALTY = 10000
 
 class NurseRosteringEnv(Env):
     """Gym environment for nurse rostering."""
@@ -26,6 +26,8 @@ class NurseRosteringEnv(Env):
         assert phase in (1, 2), "phase must be 1 or 2"
         self.phase = phase
         self.hp_baseline = hp_baseline
+        self.best_phase1_result = None
+        self.best_phase2_result = None
 
         if profiles_df.empty:
             raise ValueError("profiles_df cannot be empty")
@@ -42,14 +44,18 @@ class NurseRosteringEnv(Env):
         self.nurse_names = [str(n).strip().upper() for n in profiles_df['Name']]
         self.N = len(self.nurse_names)
         self.D = active_days
+        # only AM, PM, Night
         self.S = len(SHIFT_LABELS)
+        # add one extra action representing an implicit Rest (no assignment)
+        self.A = self.S + 1
 
         self.observation_space = spaces.Box(
             low=0, high=1,
             shape=(self.N * self.D * self.S,),
             dtype=np.int8
         )
-        self.action_space = spaces.Discrete(self.N * self.D * self.S)
+        # actions 0..S-1 = shifts, S = rest (no shift)
+        self.action_space = spaces.Discrete(self.A)
 
         self.reset()
 
@@ -57,10 +63,20 @@ class NurseRosteringEnv(Env):
         self.np_random, seed = seeding.np_random(seed)
         super().reset(seed=seed)
 
+        # assignment[n,d,s] flags only for real shifts
         self.assignment = np.zeros((self.N, self.D, self.S), dtype=np.int8)
         self.step_count = 0
         self.total_reward = 0
         self.done = False
+        self.assigned_flag = np.zeros((self.N, self.D), dtype=bool)
+
+        # parse all prefs & MC days exactly once per episode
+        self.shift_prefs, self.mc_days = get_shift_prefs_and_mc_days(
+            self.preferences_df,
+            self.profiles_df,
+            self.start_date,
+            self.active_days,
+        )
 
         # compute initial HP penalty
         self.cum_hp = compute_high_priority_penalty(
@@ -76,38 +92,59 @@ class NurseRosteringEnv(Env):
     def _get_obs(self):
         return self.assignment.flatten()
 
-    def step(self, action: int):
-        # decode action index
-        n = action // (self.D * self.S)
-        rem = action % (self.D * self.S)
-        d = rem // self.S
-        s = rem % self.S
+    def _current_nd(self):
+        idx = self.step_count
+        # assign shifts for 1 nurse for all days first, before moving on to next nurse
+        n = idx // self.D
+        d = idx % self.D
+        # # assign shifts for all nurses for 1 day first, before moving on to next day
+        # d = idx // self.N
+        # n = idx % self.N
+        return n, d
 
+    def step(self, action: int):
         if self.done:
             raise RuntimeError("Step called after environment is done")
 
-        self.step_count += 1
+        n, d = self._current_nd()
+        s = action
 
-        # illegal move?
-        if self.assignment[n, d].any():
-            illegal_penalty = -20.0
-            reward = np.tanh(illegal_penalty / 100)
-            info = {"illegal": 1}
-            print(f"[ILLEGAL MOVE] nurse={n}, day={d}")
-            return self._get_obs(), -1.0, False, False, {"illegal": 1}
+        shift_prefs, mc_days = self.shift_prefs, self.mc_days
+        nm = self.nurse_names[n]
 
-        print(f"[ASSIGNED] nurse={n}, day={d}")
+        # ——— ILLEGAL: already assigned ———
+        if self.assigned_flag[n, d]:
+            self.assigned_flag[n, d] = True
+            self.step_count += 1
+            self.done = (self.step_count >= self.N * self.D)
+            # print(f"[ILLEGAL] nurse={n}, day={d}, Shift already exists")
+            return self._get_obs(), -HUGE_VIOLATION_PENALTY, self.done, False, {
+                "illegal": 1,
+                "reason": "already assigned",
+            }
 
-        # pre‐action HP penalty
-        hp_before = compute_high_priority_penalty(
-            self.assignment, self.profiles_df, self.preferences_df,
-            self.start_date, self.fixed_assignments, self.active_days
-        )
+        # ——— ILLEGAL: MC violation ———
+        if d in mc_days.get(nm, set()):
+            self.assigned_flag[n, d] = True
+            self.step_count += 1
+            self.done = (self.step_count >= self.N * self.D)
+            # print(f"[MC] nurse={n}, day={d}, MC violation")
+            return self._get_obs(), -HUGE_VIOLATION_PENALTY, self.done, False, {
+                "illegal": 1,
+                "reason": "MC violation",
+            }
 
-        # apply assignment
-        self.assignment[n, d, s] = 1
+        # ——— LEGAL assignment ———
+        hp_before = self.cum_hp
 
-        # post‐action HP penalty
+        if s < self.S:
+            self.assignment[n, d, s] = 1
+        #     print(f"[ASSIGNED] nurse={n}, day={d}, shift={SHIFT_LABELS[s]}")
+        # else:
+        #     print(f"[ASSIGNED] nurse={n}, day={d}, REST (implicit)")
+
+        self.assigned_flag[n, d] = True
+
         hp_after = compute_high_priority_penalty(
             self.assignment, self.profiles_df, self.preferences_df,
             self.start_date, self.fixed_assignments, self.active_days
@@ -115,103 +152,91 @@ class NurseRosteringEnv(Env):
         self.cum_hp = hp_after
         hp_delta = hp_before - hp_after
 
-        # low‐priority penalty (aggregate)
-        lp_pen = compute_low_priority_penalty(
+        lp_pen      = compute_low_priority_penalty(
             self.assignment, self.profiles_df, self.preferences_df,
             self.start_date, self.active_days
         )
         lp_estimate = -lp_pen
 
-        # prepare breakdown inputs
-        shift_prefs, mc_days = get_shift_prefs_and_mc_days(
-            self.preferences_df, self.profiles_df, self.start_date, self.active_days
-        )
-        el_days = get_el_days(self.fixed_assignments)
+        el_days    = get_el_days(self.fixed_assignments)
         senior_set = get_senior_set(self.profiles_df)
 
-        # ── High-priority components ───────────────────────────────
-        hp_am_cov        = hp_am_coverage(self.assignment, self.active_days)
-        hp_am_senior_cov = hp_am_senior_coverage(self.assignment, self.nurse_names, senior_set, self.active_days)
-        hp_weekly        = hp_weekly_hours(
+        # HP components
+        hp_am_cov         = hp_am_coverage(self.assignment, self.active_days)
+        hp_am_senior_cov = hp_am_senior_coverage(
+            self.assignment, self.nurse_names, senior_set, self.active_days
+        )
+        hp_weekly = hp_weekly_hours(
             self.assignment, self.nurse_names, mc_days, el_days, self.active_days
         )
+        hp_nurses_per_shift = hp_nurses_staffing_level(self.assignment, self.active_days)
+        hp_seniors_per_shift = hp_senior_staffing_level(
+            self.assignment, self.nurse_names, senior_set, self.active_days
+        )
 
-        # staffing shortages
-        nurse_shortage = 0
-        senior_shortage = 0
-        for day in range(self.D):
-            for shift in range(self.S):
-                cnt = int(self.assignment[:, day, shift].sum())
-                if cnt < MIN_NURSES_PER_SHIFT:
-                    nurse_shortage += (MIN_NURSES_PER_SHIFT - cnt)
-                if cnt > 0:
-                    sc = sum(
-                        int(self.assignment[i, day, shift] == 1 and self.nurse_names[i] in senior_set)
-                        for i in range(self.N)
-                    )
-                    if sc < MIN_SENIORS_PER_SHIFT:
-                        senior_shortage += 1
-
-        hp_nurses_per_shift  = nurse_shortage * HARD_CONSTRAINT_PENALTY
-        hp_seniors_per_shift = senior_shortage * HARD_CONSTRAINT_PENALTY
-
-        # ── Low-priority components ────────────────────────────────
+        # LP: preference & fairness
         pref_misses = 0
-        sats = []
+        sats        = []
         for i, nm in enumerate(self.nurse_names):
             prefs = shift_prefs.get(nm, {})
-            if not prefs:
-                continue
-            met = 0
-            for day, ss in prefs.items():
-                if self.assignment[i, day, ss] == 1:
-                    met += 1
-                else:
-                    pref_misses += 1
-            if len(prefs) > 0:
-                sats.append(100 * met / len(prefs))
+            met   = sum(self.assignment[i, day, ss]
+                        for day, ss in prefs.items())
+            pref_misses += int(len(prefs) - met)
+            if prefs:
+                sats.append(100.0 * met / len(prefs))
 
-        lp_preference = pref_misses * PREF_MISS_PENALTY
+        lp_preference = int(pref_misses) * PREF_MISS_PENALTY
+        gap           = max(sats) - min(sats) if sats else 0
+        lp_fairness   = ((gap - FAIRNESS_GAP_THRESHOLD) *
+                         FAIRNESS_GAP_PENALTY
+                         if gap >= FAIRNESS_GAP_THRESHOLD else 0)
+        
+        # ——— Advance and return for the legal case ———
+        self.step_count += 1
+        self.done = (self.step_count >= self.N * self.D)
 
-        gap = max(sats) - min(sats) if sats else 0
-        lp_fairness = ((gap - FAIRNESS_GAP_THRESHOLD) * FAIRNESS_GAP_PENALTY
-                       if sats and gap >= FAIRNESS_GAP_THRESHOLD else 0)
-
-        # ── Reward & termination ───────────────────────────────────
+        # Compute reward
+        violation = 0
         if self.phase == 1:
             reward = hp_delta
-            violation = 0
-        else:
-            BIG = 1000.0
-            reward = hp_delta * BIG + lp_estimate
-            violation = 0
-            if self.hp_baseline is not None and self.cum_hp > self.hp_baseline:
-                violation = self.cum_hp - self.hp_baseline
-                reward -= violation * HUGE_VIOLATION_PENALTY
+            if self.done:
+                if self.best_phase1_result is None or self.cum_hp < self.best_phase1_result:
+                    reward += 5000
+                    self.best_phase1_result = self.cum_hp
+                else:
+                    reward -= np.clip(self.cum_hp - self.best_phase1_result, 0, 5000)
 
-        self.done = (self.step_count >= self.N * self.D)
-        truncated = False
-        reward = np.tanh(reward / 100)
+        else:
+            reward = hp_delta * 10.0 + lp_estimate
+            if self.done:
+                if self.hp_baseline is not None and self.cum_hp > self.hp_baseline:
+                    violation = self.cum_hp - self.hp_baseline
+                    reward -= violation * HUGE_VIOLATION_PENALTY
+
+                if self.best_phase2_result is None or self.cum_hp < self.best_phase2_result:
+                    reward += 5000  # Bonus for better schedule
+                    self.best_phase2_result = self.cum_hp
+                else:
+                    reward -= np.clip(self.cum_hp - self.best_phase2_result, 0, 5000) 
 
         info = {
-            # high priority
-            "hp_am_coverage":       hp_am_cov,
-            "hp_am_senior_coverage": hp_am_senior_cov,
-            "hp_weekly_hours":      hp_weekly,
-            "hp_nurses_per_shift":  hp_nurses_per_shift,
-            "hp_seniors_per_shift": hp_seniors_per_shift,
-            # low priority
-            "lp_preference":        -lp_preference,
-            "lp_fairness":          -lp_fairness,
-            # aggregates
-            "hp_delta":             hp_delta,
-            "lp_estimate":          lp_estimate,
-            "illegal":              0,
+            "illegal":               0,
+            "hp_am_coverage":        -hp_am_cov,
+            "hp_am_senior_coverage": -hp_am_senior_cov,
+            "hp_weekly_hours":       -hp_weekly,
+            "hp_nurses_per_shift":   -hp_nurses_per_shift,
+            "hp_seniors_per_shift":  -hp_seniors_per_shift,
+            "lp_preference":         -lp_preference,
+            "lp_fairness":           -lp_fairness,
+            "hp_delta":              hp_delta,
+            "lp_estimate":           lp_estimate,
         }
-        if self.phase == 2 and violation > 0:
-            info["hp_violation"] = violation
+        if self.done:
+            info["cum_hp"] = self.cum_hp
+            if self.phase == 2 and violation > 0:
+                info["hp_violation"] = violation
 
-        return self._get_obs(), reward, self.done, truncated, info
+        return self._get_obs(), reward, self.done, False, info
 
 
     def render(self, mode='human'):
@@ -219,5 +244,10 @@ class NurseRosteringEnv(Env):
             line = f"{nurse:10s}: "
             for d in range(self.D):
                 shifts = np.where(self.assignment[i, d] == 1)[0]
-                line += (SHIFT_LABELS[shifts[0]][0] if len(shifts) == 1 else "-") + " "
+                if shifts.size == 1:
+                    token = SHIFT_LABELS[shifts[0]]
+                else:
+                    token = "-"  # either rest or unassigned
+                line += f"{token:5s} "
             print(line)
+        print("\nLegend: AM, PM, Night; blank = Rest/MC/unassigned")

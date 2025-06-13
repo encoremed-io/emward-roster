@@ -106,31 +106,41 @@ def hp_mc_day_assignments(assignment, nurse_names, mc_days, active_days):
     return penalty
 
 
-def hp_staffing_levels(assignment, nurse_names, senior_set, active_days):
-    """Penalty 3: Minimum nurses and seniors per shift."""
+def hp_nurses_staffing_level(assignment, active_days):
+    """Penalty 3: Minimum nurses per shift."""
     penalty = 0
     S = assignment.shape[2]
     
     for d in range(active_days):
         for s in range(S):
-            # Nurse count
             total_on_shift = assignment[:, d, s].sum()
             if total_on_shift < MIN_NURSES_PER_SHIFT:
                 penalty += (MIN_NURSES_PER_SHIFT - total_on_shift) * HARD_CONSTRAINT_PENALTY
             
-            # Senior count
-            if total_on_shift > 0:
+    return penalty
+
+
+def hp_senior_staffing_level(assignment, nurse_names, senior_set, active_days):
+    """Penalty 4: Minimum seniors per AM shift."""
+    penalty = 0
+    S = assignment.shape[2]
+
+    for d in range(active_days):
+        for s in range(S):
+            # check nurses working on that day > 0
+            if assignment[:, d, s].sum() > 0:
                 senior_count = sum(
                     assignment[i, d, s] == 1 and nurse_names[i] in senior_set
                     for i in range(len(nurse_names))
                 )
                 if senior_count < MIN_SENIORS_PER_SHIFT:
-                    penalty += HARD_CONSTRAINT_PENALTY
+                    penalty += (MIN_SENIORS_PER_SHIFT - senior_count) * HARD_CONSTRAINT_PENALTY
+    
     return penalty
 
 
 def hp_weekly_hours(assignment, nurse_names, mc_days, el_days, active_days):
-    """Penalty 4: Weekly hours constraints."""
+    """Penalty 5: Weekly hours constraints."""
     penalty = 0
     
     for i, nurse in enumerate(nurse_names):
@@ -165,7 +175,7 @@ def hp_weekly_hours(assignment, nurse_names, mc_days, el_days, active_days):
 
 
 def hp_am_coverage(assignment, active_days):
-    """Penalty 5: AM shift coverage."""
+    """Penalty 6: AM shift coverage."""
     penalty = 0
     for d in range(active_days):
         total_shifts = assignment[:, d, :].sum()
@@ -193,7 +203,7 @@ def hp_am_coverage(assignment, active_days):
 
 
 def hp_am_senior_coverage(assignment, nurse_names, senior_names, active_days):
-    """Penalty 6: AM senior shift coverage"""
+    """Penalty 7: AM senior shift coverage"""
     penalty = 0
     for d in range(active_days):
         total_am = 0
@@ -232,7 +242,7 @@ def hp_am_senior_coverage(assignment, nurse_names, senior_names, active_days):
 
 
 def hp_mc_day_rules(nurse_names, mc_days, active_days):
-    """Penalty 7: MC days rule violations."""
+    """Penalty 8: MC days rule violations."""
     penalty = 0
     
     for nurse in nurse_names:
@@ -259,7 +269,7 @@ def hp_mc_day_rules(nurse_names, mc_days, active_days):
 
 
 def hp_weekend_consecutive_work(assignment, start_date, nurse_names, active_days):
-    """Penalty 8: Consecutive weekend work."""
+    """Penalty 9: Consecutive weekend work."""
     penalty = 0
     
     # Find all weekend days (Saturday and Sunday)
@@ -284,7 +294,7 @@ def hp_weekend_consecutive_work(assignment, start_date, nurse_names, active_days
 
 # High Priority Penalty Integration
 def compute_high_priority_penalty(assignment, profiles_df, preferences_df, start_date, fixed_assignments, active_days):
-    """Compute all 7 high priority penalties."""
+    """Compute all 9 high priority penalties."""
     # Parse inputs
     start_date_dt = start_date.date() if isinstance(start_date, pd.Timestamp) else start_date
     nurse_names = [str(n).strip().upper() for n in profiles_df['Name']]
@@ -298,7 +308,8 @@ def compute_high_priority_penalty(assignment, profiles_df, preferences_df, start
     total_penalty = 0
     total_penalty += hp_multiple_shifts(assignment, nurse_names, active_days)
     total_penalty += hp_mc_day_assignments(assignment, nurse_names, mc_days, active_days)
-    total_penalty += hp_staffing_levels(assignment, nurse_names, senior_set, active_days)
+    total_penalty += hp_nurses_staffing_level(assignment, active_days)
+    total_penalty += hp_senior_staffing_level(assignment, nurse_names, senior_set, active_days)
     total_penalty += hp_weekly_hours(assignment, nurse_names, mc_days, el_days, active_days)
     total_penalty += hp_am_coverage(assignment, active_days)
     total_penalty += hp_am_senior_coverage(assignment, nurse_names, senior_set, active_days)
