@@ -5,6 +5,7 @@ from gymnasium import spaces, Env
 from gymnasium.utils import seeding
 
 from utils.pen_calc import *
+from utils.shift_utils import *
 
 HUGE_VIOLATION_PENALTY = 10000
 
@@ -94,12 +95,12 @@ class NurseRosteringEnv(Env):
 
     def _current_nd(self):
         idx = self.step_count
-        # assign shifts for 1 nurse for all days first, before moving on to next nurse
-        n = idx // self.D
-        d = idx % self.D
-        # # assign shifts for all nurses for 1 day first, before moving on to next day
-        # d = idx // self.N
-        # n = idx % self.N
+        # # assign shifts for 1 nurse for all days first, before moving on to next nurse
+        # n = idx // self.D
+        # d = idx % self.D
+        # assign shifts for all nurses for 1 day first, before moving on to next day
+        d = idx // self.N
+        n = idx % self.N
         return n, d
 
     def step(self, action: int):
@@ -129,7 +130,7 @@ class NurseRosteringEnv(Env):
             self.step_count += 1
             self.done = (self.step_count >= self.N * self.D)
             # print(f"[MC] nurse={n}, day={d}, MC violation")
-            return self._get_obs(), -HUGE_VIOLATION_PENALTY, self.done, False, {
+            return self._get_obs(), 0, self.done, False, {
                 "illegal": 1,
                 "reason": "MC violation",
             }
@@ -150,7 +151,8 @@ class NurseRosteringEnv(Env):
             self.start_date, self.fixed_assignments, self.active_days
         )
         self.cum_hp = hp_after
-        hp_delta = hp_before - hp_after
+        # hp_delta = hp_before - hp_after
+        hp_delta = (hp_before - hp_after) / (hp_before + 1e-8)
 
         lp_pen      = compute_low_priority_penalty(
             self.assignment, self.profiles_df, self.preferences_df,
@@ -201,7 +203,7 @@ class NurseRosteringEnv(Env):
             reward = hp_delta
             if self.done:
                 if self.best_phase1_result is None or self.cum_hp < self.best_phase1_result:
-                    reward += 5000
+                    reward += 1000
                     self.best_phase1_result = self.cum_hp
                 else:
                     reward -= np.clip(self.cum_hp - self.best_phase1_result, 0, 5000)
@@ -214,7 +216,7 @@ class NurseRosteringEnv(Env):
                     reward -= violation * HUGE_VIOLATION_PENALTY
 
                 if self.best_phase2_result is None or self.cum_hp < self.best_phase2_result:
-                    reward += 5000  # Bonus for better schedule
+                    reward += 1000  # Bonus for better schedule
                     self.best_phase2_result = self.cum_hp
                 else:
                     reward -= np.clip(self.cum_hp - self.best_phase2_result, 0, 5000) 

@@ -137,6 +137,8 @@ from callbacks.reward_logger import RewardComponentLogger
 # ───────────────
 
 SEED = 42
+N_ENVS = 8
+N_EPISODES = 40
 
 np.random.seed(SEED)
 profiles_full    = load_nurse_profiles("data/nurse_profiles.xlsx")
@@ -210,10 +212,10 @@ def make_eval_env_factory(num_days, phase, hp_baseline=None):
         return Monitor(env)
     return _make_env
 
-def evaluate_hp(model, num_days, n_episodes=10):
+def evaluate_hp(model, num_days, n_episodes=N_EPISODES, n_envs=N_ENVS):
     """Run a phase-1 model to get its average final HP."""
-    # 4 parallel eval envs
-    env = SubprocVecEnv([make_eval_env_factory(num_days, phase=1)] * 4)
+    # 8 parallel eval envs
+    env = SubprocVecEnv([make_eval_env_factory(num_days, phase=1)] * n_envs)
     # normalize observations but keep raw rewards
     env = VecNormalize(env, norm_obs=True, norm_reward=False)
     env.training   = False
@@ -226,9 +228,10 @@ def evaluate_hp(model, num_days, n_episodes=10):
         while not done:
             action, _ = model.predict(obs, deterministic=True)
             obs, rewards, dones, infos = env.step(action)
-            done = bool(dones[0])    # finish when the first sub-env ends
+            if any(dones):
+                done = True
 
-        hp_values.append(env.get_attr('cum_hp')[0])
+        hp_values.append(min(env.get_attr('cum_hp')))  # take the minimum HP across all sub-envs
 
     env.close()
     return min(hp_values)
@@ -240,8 +243,8 @@ def evaluate_hp(model, num_days, n_episodes=10):
 if __name__ == "__main__":
     os.makedirs("models",    exist_ok=True)
     os.makedirs("eval_logs", exist_ok=True)
+    os.makedirs("tb_logs",   exist_ok=True)
 
-    n_envs       = 8
     horizons     = [7]           # extend to [7,14,28] as needed
     timesteps_map= {7:400_000, 14:600_000, 28:800_000}
 
@@ -251,16 +254,16 @@ if __name__ == "__main__":
         print(f"\n→ PHASE 1: Minimize HP penalties on {num_days}-day windows")
 
         # 1a) Create training VecEnv (phase=1)
-        ph1_factory = make_env_factory(num_days, phase=1, hp_baseline=None)
-        ph1_vec     = SubprocVecEnv([ph1_factory]*n_envs)
+        ph1_factory = make_env_factory(num_days, phase=1)
+        ph1_vec     = SubprocVecEnv([ph1_factory]*N_ENVS)
         ph1_vec     = VecNormalize(ph1_vec, norm_obs=True, norm_reward=True, clip_obs=10.0)
-        eval_env_ph1 = SubprocVecEnv([make_eval_env_factory(num_days, 1)] * n_envs)
+        eval_env_ph1 = SubprocVecEnv([make_eval_env_factory(num_days, 1)] * N_ENVS)
         eval_env_ph1 = VecNormalize(eval_env_ph1, norm_obs=True, norm_reward=False)
 
         # 1b) Hyper-parameters per horizon
         match num_days:
             case 7:
-                start_lr, end_lr, start_coef, end_coef = 3e-4, 1e-5, 1e-2, 1e-3
+                start_lr, end_lr, start_coef, end_coef = 3e-4, 1e-5, 1e-1, 1e-2
                 n_steps, batch_size, n_epochs = 4096, 512, 10
                 warmup_steps = 0
             case 14:
@@ -278,7 +281,7 @@ if __name__ == "__main__":
             best_model_save_path=f"models/ppo_nurse_{num_days}d/phase1/",
             log_path=f"eval_logs/phase1_{num_days}d/",
             eval_freq=10_000,
-            n_eval_episodes=40,
+            n_eval_episodes=N_EPISODES,
             deterministic=True
         )
         reward_logger  = RewardComponentLogger()
@@ -319,7 +322,7 @@ if __name__ == "__main__":
         ph1_vec.close()
 
         # 1e) Evaluate Phase 1’s HP baseline
-        hp_baseline = evaluate_hp(model_ph1, num_days, n_episodes=20)
+        hp_baseline = evaluate_hp(model_ph1, num_days, n_episodes=N_EPISODES, n_envs=N_ENVS)
         print(f"→ Phase 1 HP baseline: {hp_baseline:.1f}")
 
         # ───────────────
@@ -328,9 +331,9 @@ if __name__ == "__main__":
 
         # 2a) Create training VecEnv (phase=2), keep raw rewards
         ph2_factory = make_env_factory(num_days, phase=2, hp_baseline=hp_baseline)
-        ph2_vec     = SubprocVecEnv([ph2_factory]*n_envs)
+        ph2_vec     = SubprocVecEnv([ph2_factory]*N_ENVS)
         ph2_vec     = VecNormalize(ph2_vec, norm_obs=True, norm_reward=False)
-        eval_env_ph2 = SubprocVecEnv([make_eval_env_factory(num_days, 2, hp_baseline)] * n_envs)
+        eval_env_ph2 = SubprocVecEnv([make_eval_env_factory(num_days, 2, hp_baseline)] * N_ENVS)
         eval_env_ph2 = VecNormalize(eval_env_ph2, norm_obs=True, norm_reward=False)
 
         # 2b) Callbacks
@@ -339,7 +342,7 @@ if __name__ == "__main__":
             best_model_save_path=f"models/ppo_nurse_{num_days}d/phase2/",
             log_path=f"eval_logs/phase2_{num_days}d/",
             eval_freq=10_000,
-            n_eval_episodes=20,
+            n_eval_episodes=N_EPISODES,
             deterministic=True
         )
         reward_logger = RewardComponentLogger()
