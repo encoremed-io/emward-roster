@@ -1,31 +1,7 @@
 from datetime import timedelta, date as dt_date
 import pandas as pd
-import json
 from .shift_utils import *
-
-# Load constants
-with open('config/constants.json', 'r') as f:
-    constants = json.load(f)
-
-# Constants initialization
-SHIFT_LABELS = constants["SHIFT_LABELS"]
-SHIFT_HOURS = constants["SHIFT_HOURS"]
-AVG_HOURS = constants["AVG_HOURS"]
-DAYS_PER_WEEK = constants["DAYS_PER_WEEK"]
-MIN_NURSES_PER_SHIFT = constants["MIN_NURSES_PER_SHIFT"]
-MIN_SENIORS_PER_SHIFT = constants["MIN_SENIORS_PER_SHIFT"]
-MAX_WEEKLY_HOURS = constants["MAX_WEEKLY_HOURS"]
-MAX_MC_DAYS_PER_WEEK = constants["MAX_MC_DAYS_PER_WEEK"]
-MIN_ACCEPTABLE_WEEKLY_HOURS = constants["MIN_ACCEPTABLE_WEEKLY_HOURS"]
-PREFERRED_WEEKLY_HOURS = constants["PREFERRED_WEEKLY_HOURS"]
-PREF_HOURS_PENALTY = constants["PREF_HOURS_PENALTY"]
-AM_COVERAGE_MIN_PERCENT = constants["AM_COVERAGE_MIN_PERCENT"]
-AM_COVERAGE_PENALTIES = constants["AM_COVERAGE_PENALTIES"]
-AM_SENIOR_MIN_PERCENT = constants["AM_SENIOR_MIN_PERCENT"]
-AM_SENIOR_PENALTIES = constants["AM_SENIOR_PENALTIES"]
-PREF_MISS_PENALTY = constants["PREF_MISS_PENALTY"]
-FAIRNESS_GAP_PENALTY = constants["FAIRNESS_GAP_PENALTY"]
-FAIRNESS_GAP_THRESHOLD = constants["FAIRNESS_GAP_THRESHOLD"]
+from utils.constants import *   # Import all constants
 
 HARD_CONSTRAINT_PENALTY = 1000
 

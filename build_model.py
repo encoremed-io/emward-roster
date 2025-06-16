@@ -5,7 +5,7 @@ from typing import Optional, Dict, Tuple, Set
 from collections import defaultdict
 from pathlib import Path
 import logging
-import json
+from utils.constants import *       # import all constants
 
 LOG_PATH = Path(__file__).parent / "schedule_run.log"
 
@@ -24,36 +24,137 @@ if not any(isinstance(h, logging.FileHandler) for h in logger.handlers):
     fh.setFormatter(fmt)
     logger.addHandler(fh)
 
-with open('config/constants.json', 'r') as f:
-    constants = json.load(f)
 
-SHIFT_LABELS = constants["SHIFT_LABELS"]
-SHIFT_HOURS = constants["SHIFT_HOURS"]
-AVG_HOURS = constants["AVG_HOURS"]
-DAYS_PER_WEEK = constants["DAYS_PER_WEEK"]
+# == ANALYSE INFEASIBILITY ==
+def analyze_infeasibility(
+    nurse_names, 
+    senior_names, 
+    mc_days, 
+    el_days_per_nurse, 
+    num_days, 
+    shift_types,
+    min_nurses_per_shift,
+    min_seniors_per_shift,
+    min_weekly_hours,
+    days_per_week,
+    shift_hours
+):
+    """Diagnoses scheduling conflicts by verifying hard constraint feasibility"""
+    reasons = []
+    # Precompute shift metrics for efficient calculations
+    max_shift_hours = max(shift_hours)
+    two_largest_sum = sum(sorted(shift_hours, reverse=True)[:2])
+    avg_shift_hours = sum(shift_hours) / len(shift_hours)
+    
+    # 1. Global Shift Capacity Analysis
+    total_shifts_needed = min_nurses_per_shift * shift_types * num_days
+    max_possible_shifts = 0
+    
+    for name in nurse_names:
+        mc_set = mc_days.get(name, set())
+        el_set = el_days_per_nurse.get(name, set())
+        working_days = num_days - len(mc_set | el_set)
+        max_possible_shifts += working_days + len(el_set)  # EL days = 2 shifts
+        
+    if max_possible_shifts < total_shifts_needed:
+        deficit = total_shifts_needed - max_possible_shifts
+        reasons.append(f"🔴 Global staffing shortage: "
+                      f"{deficit} shifts uncovered ({max_possible_shifts} available vs "
+                      f"{total_shifts_needed} needed)\n")
+    
+    # 2. Senior Coverage Validation
+    senior_shifts_needed = min_seniors_per_shift * shift_types * num_days
+    senior_shifts_possible = 0
+    
+    for name in senior_names:
+        mc_set = mc_days.get(name, set())
+        el_set = el_days_per_nurse.get(name, set())
+        senior_shifts_possible += (num_days - len(mc_set | el_set)) + len(el_set)
+        
+    if senior_shifts_possible < senior_shifts_needed:
+        deficit = senior_shifts_needed - senior_shifts_possible
+        reasons.append(f"🔴 Senior coverage gap: "
+                      f"{deficit} shifts uncovered ({senior_shifts_possible} available vs "
+                      f"{senior_shifts_needed} needed)\n")
+    
+    # 3. Weekly Hour Feasibility Check
+    weeks = (num_days + days_per_week - 1) // days_per_week
+    hourly_issues = {}
+    
+    for name in nurse_names:
+        for w in range(weeks):
+            start = w * days_per_week
+            end = min((w + 1) * days_per_week, num_days)
+            week_days = list(range(start, end))
+            
+            mc_in_week = [d for d in week_days if d in mc_days.get(name, set())]
+            el_in_week = [d for d in week_days if d in el_days_per_nurse.get(name, set())]
+            total_off = len(mc_in_week) + len(el_in_week)
+            work_days = days_per_week - total_off
+            
+            # Calculate adjusted minimum hours
+            min_required = max(0, min_weekly_hours - total_off * avg_shift_hours)
+            
+            # Calculate maximum possible hours
+            normal_hours = work_days * max_shift_hours
+            el_hours = len(el_in_week) * two_largest_sum
+            max_possible = normal_hours + el_hours
+            
+            if min_required > max_possible:
+                if w not in hourly_issues:
+                    hourly_issues[w] = []
+                hourly_issues[w].append(
+                    f"{name}: requires {min_required:.1f}h, max {max_possible:.1f}h\n"
+                    f"(MC:{len(mc_in_week)} EL:{len(el_in_week)})\n"
+                )
+    
+    # Format hourly issues
+    for week, nurses in hourly_issues.items():
+        reasons.append(f"⭕ Week {week+1} hour shortages ({len(nurses)} nurses):")
+        reasons.extend([f"   • {msg}" for msg in nurses[:3]])  # Show first 3
+        if len(nurses) > 3:
+            reasons.append(f"   • ...and {len(nurses)-3} more\n")
+    
+    # 4. Daily Staffing Crisis Detection
+    critical_days = []
+    for d in range(num_days):
+        available_nurses = sum(
+            1 for name in nurse_names 
+            if d not in mc_days.get(name, set()) 
+            and d not in el_days_per_nurse.get(name, set())
+        )
+        needed = min_nurses_per_shift * shift_types
+        
+        if available_nurses < needed:
+            critical_days.append(f"Day {d+1}: {available_nurses} available < {needed} needed\n")
+    
+    if critical_days:
+        reasons.append("🚨 Critical staffing shortages on:")
+        reasons.extend([f"   • {day}" for day in critical_days])
+    
+    # 5. When no obvious issues found
+    if not reasons:
+        reasons.append("🟠 No obvious constraint violations detected. Possible causes:")
+        reasons.append("   - Shift pattern conflicts")
+        reasons.append("   - Weekend rest rule violations")
+        reasons.append("   - Complex preference/EL interactions")
+    
+    # Staffing summary for context
+    total_mc = sum(len(v) for v in mc_days.values())
+    total_el = sum(len(v) for v in el_days_per_nurse.values())
+    off_days = total_mc + total_el
+    work_days = num_days * len(nurse_names) - off_days
+    
+    reasons.append("\n📊 Staffing Summary:\n")
+    reasons.append(f"• {len(nurse_names)} nurses ({len(senior_names)} seniors)\n")
+    reasons.append(f"• {num_days} days | Shifts/day: {shift_types}\n")
+    reasons.append(f"• Off-duty: {total_mc} MC + {total_el} EL\n")
+    reasons.append(f"• Coverage rules: {min_nurses_per_shift} nurses/shift ({min_seniors_per_shift} seniors)\n")
 
-MIN_NURSES_PER_SHIFT = constants["MIN_NURSES_PER_SHIFT"]
-MIN_SENIORS_PER_SHIFT = constants["MIN_SENIORS_PER_SHIFT"]
-MAX_WEEKLY_HOURS = constants["MAX_WEEKLY_HOURS"]
-MAX_MC_DAYS_PER_WEEK = constants["MAX_MC_DAYS_PER_WEEK"]
-
-PREFERRED_WEEKLY_HOURS = constants["PREFERRED_WEEKLY_HOURS"]
-MIN_ACCEPTABLE_WEEKLY_HOURS = constants["MIN_ACCEPTABLE_WEEKLY_HOURS"]
-PREF_HOURS_PENALTY = constants["PREF_HOURS_PENALTY"]
-MIN_HOURS_PENALTY = constants["MIN_HOURS_PENALTY"]
-
-DOUBLE_SHIFT_PENALTY = constants["DOUBLE_SHIFT_PENALTY"]
-
-AM_COVERAGE_MIN_PERCENT = constants["AM_COVERAGE_MIN_PERCENT"]
-AM_COVERAGE_PENALTIES = constants["AM_COVERAGE_PENALTIES"]
-AM_SENIOR_MIN_PERCENT = constants["AM_SENIOR_MIN_PERCENT"]
-AM_SENIOR_PENALTIES = constants["AM_SENIOR_PENALTIES"]
-
-PREF_MISS_PENALTY = constants["PREF_MISS_PENALTY"]
-FAIRNESS_GAP_PENALTY = constants["FAIRNESS_GAP_PENALTY"]
-FAINRESS_GAP_THRESHOLD = constants["FAIRNESS_GAP_THRESHOLD"]
+    return reasons
 
 
+# == Build Schedule Model ==
 def build_schedule_model(profiles_df: pd.DataFrame,
                          preferences_df: pd.DataFrame,
                          start_date: pd.Timestamp | dt_date,
@@ -206,29 +307,72 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                 high_priority_penalty.append(ts * DOUBLE_SHIFT_PENALTY)
 
     # 2. Each nurse works <= 42 hours/week (hard), adjustable based on MC; ideally min 40 (soft), at least 30 (hard)
+    # for n in nurse_names:
+    #     for w in range(2):
+    #         days = range(w * DAYS_PER_WEEK, min((w + 1) * DAYS_PER_WEEK, num_days))
+    #         weekly_hours = sum(work[n, d, s] * int(SHIFT_HOURS[s]) for d in days for s in range(shift_types))
+
+    #         mc_count = sum(1 for d in days if d in mc_days.get(n, set()))
+    #         el_count = sum(1 for d in days if d in el_days_per_nurse.get(n, set()))
+
+    #         adjustment = (mc_count + el_count) * AVG_HOURS                      # MC & EL hours deducted from max/pref/min hours
+    #         eff_max_hours = max(0, MAX_WEEKLY_HOURS - adjustment)               # <= 42 - x
+    #         eff_pref_hours = max(0, PREFERRED_WEEKLY_HOURS - adjustment)        # >= 40 - x
+    #         eff_min_hours = max(0, MIN_ACCEPTABLE_WEEKLY_HOURS - adjustment)    # >= 30 - x
+
+    #         model.Add(weekly_hours <= eff_max_hours)
+    #         model.Add(weekly_hours >= eff_min_hours)
+
+    #         # Soft preferences on hours
+    #         if eff_pref_hours > eff_min_hours:
+    #             min_pref = model.NewBoolVar(f'pref_{n}_w{w}')
+    #             model.Add(weekly_hours >= eff_pref_hours).OnlyEnforceIf(min_pref)    # prefer 40 - x
+    #             model.Add(weekly_hours < eff_pref_hours).OnlyEnforceIf(min_pref.Not())
+
+    #             high_priority_penalty.append(min_pref.Not() * PREF_HOURS_PENALTY)
+
     for n in nurse_names:
-        for w in range(2):
-            days = range(w * DAYS_PER_WEEK, min((w + 1) * DAYS_PER_WEEK, num_days))
-            weekly_hours = sum(work[n, d, s] * int(SHIFT_HOURS[s]) for d in days for s in range(shift_types))
+        # Precompute daily‑hours expressions
+        hours_by_day = [
+            sum(work[n, d, s] * SHIFT_HOURS[s] for s in range(shift_types))
+            for d in range(num_days)
+        ]
 
-            mc_count = sum(1 for d in days if d in mc_days.get(n, set()))
-            el_count = sum(1 for d in days if d in el_days_per_nurse.get(n, set()))
+        for d in range(num_days):
+            # 1) Sliding‑window max hours (adjusted for MC/EL)
+            if d >= DAYS_PER_WEEK - 1:
+                window = range(d - (DAYS_PER_WEEK - 1), d + 1)
+                window_hours = sum(hours_by_day[i] for i in window)
+                mc_count = sum(1 for i in window if i in mc_days.get(n, set()))
+                el_count = sum(1 for i in window if i in el_days_per_nurse.get(n, set()))
+                adjustment = (mc_count + el_count) * AVG_HOURS                      # MC & EL hours deducted from max/pref/min hours
+                eff_max_hours = max(0, MAX_WEEKLY_HOURS - adjustment)               # <= 42 - x
+                model.Add(window_hours <= eff_max_hours)
 
-            adjustment = (mc_count + el_count) * AVG_HOURS                      # MC & EL hours deducted from max/pref/min hours
-            eff_max_hours = max(0, MAX_WEEKLY_HOURS - adjustment)               # <= 42 - x
-            eff_pref_hours = max(0, PREFERRED_WEEKLY_HOURS - adjustment)        # >= 40 - x
-            eff_min_hours = max(0, MIN_ACCEPTABLE_WEEKLY_HOURS - adjustment)    # >= 30 - x
+            # 2) Full‑week minimum at each 7‑day boundary
+            if (d + 1) % DAYS_PER_WEEK == 0:
+                week_idx = d // DAYS_PER_WEEK
+                start = week_idx * DAYS_PER_WEEK
+                end   = start + DAYS_PER_WEEK
 
-            model.Add(weekly_hours <= eff_max_hours)
-            model.Add(weekly_hours >= eff_min_hours)
+                weekly_hours = sum(hours_by_day[i] for i in range(start, end))
+                mc_count = sum(1 for i in range(start, end) if i in mc_days.get(n, set()))
+                el_count = sum(1 for i in range(start, end) if i in el_days_per_nurse.get(n, set()))
+                adjustment = (mc_count + el_count) * AVG_HOURS
 
-            # Soft preferences on hours
-            if eff_pref_hours > eff_min_hours:
-                min_pref = model.NewBoolVar(f'pref_{n}_w{w}')
-                model.Add(weekly_hours >= eff_pref_hours).OnlyEnforceIf(min_pref)    # prefer 40 - x
-                model.Add(weekly_hours < eff_pref_hours).OnlyEnforceIf(min_pref.Not())
+                eff_pref_hours = max(0, PREFERRED_WEEKLY_HOURS - adjustment)        # >= 40 - x
+                eff_min_hours = max(0, MIN_ACCEPTABLE_WEEKLY_HOURS - adjustment)    # >= 30 - x
 
-                high_priority_penalty.append(min_pref.Not() * PREF_HOURS_PENALTY)
+                model.Add(weekly_hours >= eff_min_hours)
+
+                if eff_pref_hours > eff_min_hours:
+                    flag = model.NewBoolVar(f'pref_{n}_w{week_idx}')
+                    model.Add(weekly_hours >= eff_pref_hours).OnlyEnforceIf(flag)
+                    model.Add(weekly_hours <  eff_pref_hours).OnlyEnforceIf(flag.Not())
+
+                    high_priority_penalty.append(flag.Not() * PREF_HOURS_PENALTY)
+
+
 
     # 3. Each shift must have at least 4 nurses and at least 1 senior
     for d in range(num_days):
@@ -237,12 +381,13 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             model.Add(sum(work[n, d, s] for n in senior_names) >= MIN_SENIORS_PER_SHIFT)
 
     # 4. Weekend work requires rest on the same day next weekend
-    for n in nurse_names:
-        for d1, d2 in weekend_days:
-            for day in (d1, d2):
-                if day + 7 < num_days:
-                    model.Add(sum(work[n, day, s] for s in range(shift_types)) <=
-                              1 - sum(work[n, day + 7, s] for s in range(shift_types)))
+    if num_days > DAYS_PER_WEEK:
+        for n in nurse_names:
+            for d1, d2 in weekend_days:
+                for day in (d1, d2):
+                    if day + 7 < num_days:
+                        model.Add(sum(work[n, day, s] for s in range(shift_types)) <=
+                                1 - sum(work[n, day + 7, s] for s in range(shift_types)))
 
     # 5. MC days: cannot assign any shift
     for n in nurse_names:
@@ -414,7 +559,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
         # Start penalise fairness when gap_pct >= 60 based on distance from 60
         over_gap  = model.NewIntVar(0, 100, "over_gap")
-        model.AddMaxEquality(over_gap, [gap_pct - FAINRESS_GAP_THRESHOLD, 0])
+        model.AddMaxEquality(over_gap, [gap_pct - FAIRNESS_GAP_THRESHOLD, 0])
         low_priority_penalty.append(gap_pct * FAIRNESS_GAP_PENALTY)
 
     # === Add RL assignment hints (warm start) ===
@@ -492,7 +637,24 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     logger.info(f"High Priority Penalty Phase 1: {solver.ObjectiveValue()}")
     logger.info(f"Low Priority Penalty Phase 1: {solver.Value(sum(low_priority_penalty))}")
     if status1 not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        raise RuntimeError("❌ No feasible solution even for penalties‐only!")
+        # Detailed infeasibility analysis
+        reasons = analyze_infeasibility(
+            nurse_names,
+            senior_names,
+            mc_days,
+            dict(el_days_per_nurse),  # Convert defaultdict
+            num_days,
+            len(SHIFT_LABELS),
+            MIN_NURSES_PER_SHIFT,
+            MIN_SENIORS_PER_SHIFT,
+            MIN_ACCEPTABLE_WEEKLY_HOURS,
+            DAYS_PER_WEEK,
+            SHIFT_HOURS
+        )
+        
+        error_msg = "❌ No feasible solution. Identified issues:\n\n"
+        error_msg += "\n".join(reasons)
+        raise RuntimeError(error_msg)
 
     # save "best" solution found
     cached_values = {}

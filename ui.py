@@ -14,17 +14,10 @@ from nurse_env import NurseRosteringEnv
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
 from collections import Counter, defaultdict
-import json
 import numpy as np
 import traceback
 import logging
-
-with open('config/constants.json', 'r') as f:
-    constants = json.load(f)
-
-SHIFT_LABELS = constants["SHIFT_LABELS"]
-MAX_MC_DAYS_PER_WEEK = constants["MAX_MC_DAYS_PER_WEEK"]
-DAYS_PER_WEEK = constants["DAYS_PER_WEEK"]
+from utils.constants import MAX_MC_DAYS_PER_WEEK, DAYS_PER_WEEK
 
 logging.basicConfig(filename="ui_error.log", level=logging.ERROR)
 
