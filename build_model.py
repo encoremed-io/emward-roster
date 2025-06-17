@@ -294,6 +294,9 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     min_sat = model.NewIntVar(0, num_days, "min_satisfaction")
     max_sat = model.NewIntVar(0, num_days, "max_satisfaction")
 
+    # False by default. If true, max working hours enforced over any consecutive 7 day window
+    USE_SLIDING_WINDOW = False
+
     # === Hard Constraints ===
 
     # === Fix MC, REST as no work ===
@@ -363,48 +366,56 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     for n in nurse_names:
         mc = mc_sets[n]
         el = el_sets[n]
+        num_weeks = (num_days + DAYS_PER_WEEK - 1) // DAYS_PER_WEEK
 
-        # Precompute daily‑hours expressions
-        hours_by_day = [
-            sum(work[n, d, s] * int(SHIFT_HOURS[s]) for s in range(shift_types))
-            for d in range(num_days)
-        ]
+        # Precompute daily‑hours expressions if using sliding window
+        if USE_SLIDING_WINDOW:
+            hours_by_day = [
+                sum(work[n, d, s] * int(SHIFT_HOURS[s]) for s in range(shift_types))
+                for d in range(num_days)
+            ]
 
         for d in range(num_days):
-            # # Maximum working hours every 7 day sliding window (exp: Day 0 to Day 6, then Day 1 to Day 7, etc.)
-            # if d >= DAYS_PER_WEEK - 1:
-            #     window = range(d - (DAYS_PER_WEEK - 1), d + 1)
-            #     window_hours = sum(hours_by_day[i] for i in window)
-            #     mc_count = sum(1 for i in window if i in mc)
-            #     el_count = sum(1 for i in window if i in el)
-            #     adj = (mc_count + el_count) * AVG_HOURS                      # MC & EL hours deducted from max/pref/min hours
-            #     eff_max_hours = max(0, MAX_WEEKLY_HOURS - adj)               # <= 42 - x
-            #     model.Add(window_hours <= eff_max_hours)
+            # Maximum working hours every 7 day sliding window (exp: Day 0 to Day 6, then Day 1 to Day 7, etc.)
+            if USE_SLIDING_WINDOW and d >= DAYS_PER_WEEK - 1:
+                window = range(d - (DAYS_PER_WEEK - 1), d + 1)
+                window_hours = sum(hours_by_day[i] for i in window)
+                mc_count = sum(1 for i in window if i in mc)
+                el_count = sum(1 for i in window if i in el)
+                adj = (mc_count + el_count) * AVG_HOURS                  # MC & EL hours deducted from max/pref/min hours
+                eff_max_hours = max(0, MAX_WEEKLY_HOURS - adj)           # <= 42 - x
+                model.Add(window_hours <= eff_max_hours)
 
-            # Full‑week minimum at each 7‑day boundary (e.g. Day 6, then Day 13, etc.)
-            if (d + 1) % DAYS_PER_WEEK == 0:
-                week_idx = d // DAYS_PER_WEEK
-                start = week_idx * DAYS_PER_WEEK
-                end   = start + DAYS_PER_WEEK
+        # Full‑week minimum at each 7‑day boundary (e.g. Day 6, then Day 13, etc.)
+        for w in range(num_weeks):
+            days = range(w * DAYS_PER_WEEK, min((w + 1) * DAYS_PER_WEEK, num_days))
 
-                weekly_hours = sum(hours_by_day[i] for i in range(start, end))
-                mc_count = sum(1 for i in range(start, end) if i in mc)
-                el_count = sum(1 for i in range(start, end) if i in el)
-                adj = (mc_count + el_count) * AVG_HOURS
+            if USE_SLIDING_WINDOW:
+                weekly_hours = sum(hours_by_day[i] for i in days)
+            else:
+                weekly_hours = sum(
+                    work[n, d, s] * int(SHIFT_HOURS[s])
+                    for d in days for s in range(shift_types)
+                )
 
-                eff_max_hours = max(0, MAX_WEEKLY_HOURS - adj)               # <= 42 - x (this is fixed calendar, comment out for sliding window)
-                eff_pref_hours = max(0, PREFERRED_WEEKLY_HOURS - adj)        # >= 40 - x
-                eff_min_hours = max(0, MIN_ACCEPTABLE_WEEKLY_HOURS - adj)    # >= 30 - x
+            mc_count = sum(1 for i in days if i in mc)
+            el_count = sum(1 for i in days if i in el)
+            adj = (mc_count + el_count) * AVG_HOURS
 
-                model.Add(weekly_hours <= eff_max_hours)    # This is fixed calendar, comment out for sliding window
-                model.Add(weekly_hours >= eff_min_hours)
+            eff_pref_hours = max(0, PREFERRED_WEEKLY_HOURS - adj)        # >= 40 - x
+            eff_min_hours = max(0, MIN_ACCEPTABLE_WEEKLY_HOURS - adj)    # >= 30 - x
 
-                if eff_pref_hours > eff_min_hours:
-                    flag = model.NewBoolVar(f'pref_{n}_w{week_idx}')
-                    model.Add(weekly_hours >= eff_pref_hours).OnlyEnforceIf(flag)
-                    model.Add(weekly_hours < eff_pref_hours).OnlyEnforceIf(flag.Not())
+            model.Add(weekly_hours >= eff_min_hours)
+            if not USE_SLIDING_WINDOW:
+                eff_max_hours = max(0, MAX_WEEKLY_HOURS - adj)           # <= 42 - x 
+                model.Add(weekly_hours <= eff_max_hours)    
 
-                    high_priority_penalty.append(flag.Not() * PREF_HOURS_PENALTY)
+            if eff_pref_hours > eff_min_hours:
+                flag = model.NewBoolVar(f'pref_{n}_w{w}')
+                model.Add(weekly_hours >= eff_pref_hours).OnlyEnforceIf(flag)
+                model.Add(weekly_hours < eff_pref_hours).OnlyEnforceIf(flag.Not())
+
+                high_priority_penalty.append(flag.Not() * PREF_HOURS_PENALTY)
 
     # 3. Each shift must have at least 4 nurses and at least 1 senior
     for d in range(num_days):
