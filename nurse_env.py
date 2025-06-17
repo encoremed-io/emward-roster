@@ -72,11 +72,9 @@ class NurseRosteringEnv(Env):
         self.assigned_flag = np.zeros((self.N, self.D), dtype=bool)
 
         # parse all prefs & MC days exactly once per episode
-        self.shift_prefs, self.mc_days = get_shift_prefs_and_mc_days(
-            self.preferences_df,
-            self.profiles_df,
-            self.start_date,
-            self.active_days,
+        self.shift_prefs, self.mc_days = (
+            get_shift_preferences(self.preferences_df, self.profiles_df, self.start_date, self.active_days, SHIFT_LABELS),
+            get_mc_days(self.preferences_df, self.profiles_df, self.start_date, self.active_days)
         )
 
         # compute initial HP penalty
@@ -160,7 +158,7 @@ class NurseRosteringEnv(Env):
         )
         lp_estimate = -lp_pen
 
-        el_days    = get_el_days(self.fixed_assignments)
+        el_days    = get_el_days(self.fixed_assignments, self.nurse_names)
         senior_set = get_senior_set(self.profiles_df)
 
         # HP components

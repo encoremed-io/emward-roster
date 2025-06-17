@@ -66,6 +66,28 @@ def hp_weekly_hours(assignment, nurse_names, mc_days, el_days, active_days):
     penalty = 0
     
     for i, nurse in enumerate(nurse_names):
+        nurse_mc_days = mc_days.get(nurse, set())
+        nurse_el_days = el_days.get(nurse, set())
+
+        hours_by_day = [
+            sum(assignment[i, d, s] * SHIFT_HOURS[s] for s in range(len(SHIFT_HOURS)))
+            for d in range(active_days)
+        ]
+
+        # sliding window for max weekly hours
+        for d in range(DAYS_PER_WEEK - 1, active_days):
+            window = range(d - (DAYS_PER_WEEK - 1), d + 1)
+            hours = sum(hours_by_day[d] for d in window)
+
+            mc_cnt = sum(1 for d in window if d in nurse_mc_days)
+            el_cnt = sum(1 for d in window if d in nurse_el_days)
+            adj = (mc_cnt + el_cnt) * int(AVG_HOURS)
+            eff_max = max(0, MAX_WEEKLY_HOURS - adj)
+
+            if hours > eff_max:
+                penalty += HARD_CONSTRAINT_PENALTY
+
+        # full week min weekly hours at each 7-day boundary
         for w in range((active_days + DAYS_PER_WEEK - 1) // DAYS_PER_WEEK):
             # Calculate days in week
             start_day = w * DAYS_PER_WEEK
@@ -73,26 +95,26 @@ def hp_weekly_hours(assignment, nurse_names, mc_days, el_days, active_days):
             days = list(range(start_day, end_day))
             
             # Calculate hours worked
-            hours = sum(assignment[i, d, s] * SHIFT_HOURS[s]
-                        for d in days for s in range(len(SHIFT_HOURS)))
+            hours = sum(hours_by_day[d] for d in days)
             
             # Calculate adjustments
-            mc_cnt = sum(1 for d in days if d in mc_days.get(nurse, set()))
-            el_cnt = sum(1 for d in days if d in el_days.get(nurse, set()))
+            mc_cnt = sum(1 for d in days if d in nurse_mc_days)
+            el_cnt = sum(1 for d in days if d in nurse_el_days)
             adj = (mc_cnt + el_cnt) * int(AVG_HOURS)
             
             # Calculate effective limits
-            eff_max = max(0, MAX_WEEKLY_HOURS - adj)
+            # eff_max = max(0, MAX_WEEKLY_HOURS - adj)      # Comment out for sliding window
             eff_pref = max(0, PREFERRED_WEEKLY_HOURS - adj)
             eff_min = max(0, MIN_ACCEPTABLE_WEEKLY_HOURS - adj)
             
             # Apply penalties
-            if hours > eff_max:
-                penalty += HARD_CONSTRAINT_PENALTY
+            # if hours > eff_max:                           # Comment out for sliding window
+            #     penalty += HARD_CONSTRAINT_PENALTY
             if hours < eff_min:
                 penalty += HARD_CONSTRAINT_PENALTY
             if eff_min <= hours < eff_pref:
                 penalty += PREF_HOURS_PENALTY
+
     return penalty
 
 
@@ -222,9 +244,9 @@ def compute_high_priority_penalty(assignment, profiles_df, preferences_df, start
     nurse_names = [str(n).strip().upper() for n in profiles_df['Name']]
     
     # Build data structures
-    shift_prefs, mc_days = get_shift_prefs_and_mc_days(preferences_df, profiles_df, start_date_dt, active_days)
+    mc_days = get_mc_days(preferences_df, profiles_df, start_date_dt, active_days)
     senior_set = get_senior_set(profiles_df)
-    el_days = get_el_days(fixed_assignments)
+    el_days = get_el_days(fixed_assignments, nurse_names)
     
     # Compute penalties
     total_penalty = 0
