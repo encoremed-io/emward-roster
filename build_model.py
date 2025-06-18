@@ -275,10 +275,13 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     el_sets = get_el_days(fixed_assignments, nurse_names)
     prefs_by_nurse = {n: shift_preferences.get(n, {}) for n in nurse_names}
 
-    weekend_days = [
-        (i, i + 1) for i in range(num_days - 1)
-        if (date_start + timedelta(days=i)).weekday() == 5
-    ]
+    weekend_pairs = []
+    for i in range(num_days - 1):
+        if (date_start + timedelta(days=i)).weekday() == 5:  # Saturday
+            if i + 7 < num_days:
+                weekend_pairs.append((i, i + 7))
+            if i + 8 < num_days:                             # Sunday
+                weekend_pairs.append((i + 1, i + 8))
 
     # === Variables ===
     shift_types = len(SHIFT_LABELS)
@@ -424,19 +427,15 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             model.Add(sum(work[n, d, s] for n in senior_names) >= MIN_SENIORS_PER_SHIFT)
 
     # 4. Weekend work requires rest on the same day next weekend
-    if num_days > DAYS_PER_WEEK:
-        for n in nurse_names:
-            for d1, d2 in weekend_days:
-                for day in (d1, d2):
-                    if day + 7 < num_days:
-                        model.Add(sum(work[n, day, s] for s in range(shift_types)) <=
-                                1 - sum(work[n, day + 7, s] for s in range(shift_types)))
+    for n in nurse_names:
+        for d1, d2 in weekend_pairs:
+            model.Add(sum(work[n, d1, s] for s in range(shift_types)) + 
+                       sum(work[n, d2, s] for s in range(shift_types)) <= 1)
 
     # 5. MC days: cannot assign any shift
     for n in nurse_names:
         for d in mc_sets[n]:
-            for s in range(shift_types):
-                model.Add(work[n, d, s] == 0)
+            model.Add(sum(work[n, d, s] for s in range(shift_types)) == 0)
 
     # 6. Max 2 MC days/week and no more than 2 consecutive MC days
     for n in nurse_names:
