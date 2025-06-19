@@ -11,20 +11,15 @@ from utils.shift_utils import *
 
 LOG_PATH = Path(__file__).parent / "schedule_run.log"
 
-# grab our module’s logger
+logging.basicConfig(
+    filename=LOG_PATH,
+    filemode='w',
+    encoding='utf-8',
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
-# Only add the handler once
-if not any(isinstance(h, logging.FileHandler) for h in logger.handlers):
-    fh = logging.FileHandler(LOG_PATH, mode="w", encoding="utf-8")
-    fh.setLevel(logging.INFO)
-    fmt = logging.Formatter(
-        "%(asctime)s  %(levelname)-8s  %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
-    )
-    fh.setFormatter(fmt)
-    logger.addHandler(fh)
 
 
 # == ANALYSE INFEASIBILITY ==
@@ -378,20 +373,23 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                 for d in range(num_days)
             ]
 
-        for d in range(num_days):
-            # Maximum working hours every 7 day sliding window (exp: Day 0 to Day 6, then Day 1 to Day 7, etc.)
-            if USE_SLIDING_WINDOW and d >= DAYS_PER_WEEK - 1:
-                window = range(d - (DAYS_PER_WEEK - 1), d + 1)
-                window_hours = sum(hours_by_day[i] for i in window)
-                mc_count = sum(1 for i in window if i in mc)
-                el_count = sum(1 for i in window if i in el)
-                adj = (mc_count + el_count) * AVG_HOURS                  # MC & EL hours deducted from max/pref/min hours
-                eff_max_hours = max(0, MAX_WEEKLY_HOURS - adj)           # <= 42 - x
-                model.Add(window_hours <= eff_max_hours)
+            for d in range(num_days):
+                # Maximum working hours every 7 day sliding window (exp: Day 0 to Day 6, then Day 1 to Day 7, etc.)
+                if d >= DAYS_PER_WEEK - 1:
+                    window = range(d - (DAYS_PER_WEEK - 1), d + 1)
+                    window_hours = sum(hours_by_day[i] for i in window)
+                    mc_count = sum(1 for i in window if i in mc)
+                    el_count = sum(1 for i in window if i in el)
+                    adj = (mc_count + el_count) * AVG_HOURS                  # MC & EL hours deducted from max/pref/min hours
+                    eff_max_hours = max(0, MAX_WEEKLY_HOURS - adj)           # <= 42 - x
+                    model.Add(window_hours <= eff_max_hours)
 
         # Full‑week minimum at each 7‑day boundary (e.g. Day 6, then Day 13, etc.)
         for w in range(num_weeks):
             days = range(w * DAYS_PER_WEEK, min((w + 1) * DAYS_PER_WEEK, num_days))
+
+            if not USE_SLIDING_WINDOW and len(days) < DAYS_PER_WEEK:
+                continue  # Skip incomplete weeks for extra days if not using sliding window
 
             if USE_SLIDING_WINDOW:
                 weekly_hours = sum(hours_by_day[i] for i in days)
@@ -454,35 +452,39 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                 raise ValueError(f"❌ Nurse {n} has more than 2 consecutive MC days: {sorted_mc[i]}, {sorted_mc[i+1]}, {sorted_mc[i+2]}.\n")
 
     # === Soft Constraints ===
+    # Coverage level flags
+    am_lvl1 = AM_COVERAGE_MIN_PERCENT          # typically 60
+    am_lvl2 = max(am_lvl1 - 10, 0)              # 50
+    am_lvl3 = max(am_lvl1 - 20, 0)              # 40
+
+    senior_lvl1 = AM_SENIOR_MIN_PERCENT            # typically 60
+    senior_lvl2 = max(senior_lvl1 - 10, 0)              # 50
+    senior_lvl3 = max(senior_lvl1 - 20, 0)              # 40
 
     # 1. AM coverage per day should be >=60%, ideally
     for d in range(num_days):
         total_shifts = sum(work[n, d, s] for n in nurse_names for s in range(shift_types))
         am_shifts = sum(work[n, d, 0] for n in nurse_names)
 
-        am_level1 = AM_COVERAGE_MIN_PERCENT          # typically 60
-        am_level2 = max(am_level1 - 10, 0)              # 50
-        am_level3 = max(am_level1 - 20, 0)              # 40
-
-        # Coverage level flags
-        am_level1_ok = model.NewBoolVar(f'day_{d}_am_level1')
-        am_level2_ok = model.NewBoolVar(f'day_{d}_am_level2')
-        am_level3_ok = model.NewBoolVar(f'day_{d}_am_level3')
+        # AM shift coverage level flags
+        am_lvl1_ok = model.NewBoolVar(f'day_{d}_am_lvl1')
+        am_lvl2_ok = model.NewBoolVar(f'day_{d}_am_lvl2')
+        am_lvl3_ok = model.NewBoolVar(f'day_{d}_am_lvl3')
 
         # Soft targets on AM shift
-        model.Add(am_shifts * 100 >= am_level1 * total_shifts).OnlyEnforceIf(am_level1_ok)
-        model.Add(am_shifts * 100 <  am_level1 * total_shifts).OnlyEnforceIf(am_level1_ok.Not())
+        model.Add(am_shifts * 100 >= am_lvl1 * total_shifts).OnlyEnforceIf(am_lvl1_ok)
+        model.Add(am_shifts * 100 <  am_lvl1 * total_shifts).OnlyEnforceIf(am_lvl1_ok.Not())
 
-        model.Add(am_shifts * 100 >= am_level2 * total_shifts).OnlyEnforceIf([am_level1_ok.Not(), am_level2_ok])
-        model.Add(am_shifts * 100 <  am_level2 * total_shifts).OnlyEnforceIf([am_level1_ok.Not(), am_level2_ok.Not()])
+        model.Add(am_shifts * 100 >= am_lvl2 * total_shifts).OnlyEnforceIf(am_lvl2_ok)
+        model.Add(am_shifts * 100 <  am_lvl2 * total_shifts).OnlyEnforceIf(am_lvl2_ok.Not())
 
-        model.Add(am_shifts * 100 >= am_level3 * total_shifts).OnlyEnforceIf([am_level1_ok.Not(), am_level2_ok.Not(), am_level3_ok])
-        model.Add(am_shifts * 100 <  am_level3 * total_shifts).OnlyEnforceIf([am_level1_ok.Not(), am_level2_ok.Not(), am_level3_ok.Not()])
+        model.Add(am_shifts * 100 >= am_lvl3 * total_shifts).OnlyEnforceIf(am_lvl3_ok)
+        model.Add(am_shifts * 100 <  am_lvl3 * total_shifts).OnlyEnforceIf(am_lvl3_ok.Not())
 
         # Hard fallback condition
         all_levels_failed = model.NewBoolVar(f'day_{d}_all_levels_failed')
-        model.AddBoolAnd([am_level1_ok.Not(), am_level2_ok.Not(), am_level3_ok.Not()]).OnlyEnforceIf(all_levels_failed)
-        model.AddBoolOr([am_level1_ok, am_level2_ok, am_level3_ok]).OnlyEnforceIf(all_levels_failed.Not())
+        model.AddBoolAnd([am_lvl1_ok.Not(), am_lvl2_ok.Not(), am_lvl3_ok.Not()]).OnlyEnforceIf(all_levels_failed)
+        model.AddBoolOr([am_lvl1_ok, am_lvl2_ok, am_lvl3_ok]).OnlyEnforceIf(all_levels_failed.Not())
 
         # Explicit PM and Night shift counts
         pm_shift_nurses = sum(work[n, d, 1] for n in nurse_names)
@@ -493,24 +495,16 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         model.Add(am_shifts > night_shift_nurses).OnlyEnforceIf(all_levels_failed)
 
         # Penalties for failing soft levels
-        high_priority_penalty.append(am_level1_ok.Not() * AM_COVERAGE_PENALTIES[0])
-
-        am_level2_penalty_cond = model.NewBoolVar(f'day_{d}_am_level2_penalty')
-        model.AddBoolAnd([am_level1_ok.Not(), am_level2_ok.Not()]).OnlyEnforceIf(am_level2_penalty_cond)
-        high_priority_penalty.append(am_level2_penalty_cond * AM_COVERAGE_PENALTIES[1])
-
-        am_level3_penalty_cond = model.NewBoolVar(f'day_{d}_am_level3_penalty')
-        model.AddBoolAnd([am_level1_ok.Not(), am_level2_ok.Not(), am_level3_ok.Not()]).OnlyEnforceIf(am_level3_penalty_cond)
-        high_priority_penalty.append(am_level3_penalty_cond * AM_COVERAGE_PENALTIES[2])
+        high_priority_penalty.append(
+            am_lvl1_ok.Not() * AM_COVERAGE_PENALTIES[0] +
+            am_lvl2_ok.Not() * AM_COVERAGE_PENALTIES[1] +
+            am_lvl3_ok.Not() * AM_COVERAGE_PENALTIES[2]
+        )
 
     # 2) Seniors coverage on AM shift should be >= 60%, ideally
     for d in range(num_days):
-        total_shifts = sum(work[n, d, s] for n in nurse_names for s in range(shift_types))
-        am_seniors = sum(work[n, d, 0] for n in nurse_names if n in senior_names)
-
-        senior_level1 = AM_SENIOR_MIN_PERCENT            # typically 60
-        senior_level2 = max(senior_level1 - 10, 0)              # 50
-        senior_level3 = max(senior_level1 - 20, 0)              # 40
+        am_shifts = sum(work[n, d, 0] for n in nurse_names)
+        am_seniors = sum(work[n, d, 0] for n in senior_names)
 
         # Senior ratio level flags
         senior_lvl1_ok = model.NewBoolVar(f'day_{d}_am_senior_lvl1')
@@ -518,14 +512,14 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         senior_lvl3_ok = model.NewBoolVar(f'day_{d}_am_senior_lvl3')
 
         # Soft targets: senior nurses on AM shifts
-        model.Add(am_seniors * 100 >= senior_level1 * am_shifts).OnlyEnforceIf(senior_lvl1_ok)
-        model.Add(am_seniors * 100 <  senior_level1 * am_shifts).OnlyEnforceIf(senior_lvl1_ok.Not())
+        model.Add(am_seniors * 100 >= senior_lvl1 * am_shifts).OnlyEnforceIf(senior_lvl1_ok)
+        model.Add(am_seniors * 100 <  senior_lvl1 * am_shifts).OnlyEnforceIf(senior_lvl1_ok.Not())
 
-        model.Add(am_seniors * 100 >= senior_level2 * am_shifts).OnlyEnforceIf([senior_lvl1_ok.Not(), senior_lvl2_ok])
-        model.Add(am_seniors * 100 <  senior_level2 * am_shifts).OnlyEnforceIf([senior_lvl1_ok.Not(), senior_lvl2_ok.Not()])
+        model.Add(am_seniors * 100 >= senior_lvl2 * am_shifts).OnlyEnforceIf(senior_lvl2_ok)
+        model.Add(am_seniors * 100 <  senior_lvl2 * am_shifts).OnlyEnforceIf(senior_lvl2_ok.Not())
 
-        model.Add(am_seniors * 100 >= senior_level3 * am_shifts).OnlyEnforceIf([senior_lvl1_ok.Not(), senior_lvl2_ok.Not(), senior_lvl3_ok])
-        model.Add(am_seniors * 100 <  senior_level3 * am_shifts).OnlyEnforceIf([senior_lvl1_ok.Not(), senior_lvl2_ok.Not(), senior_lvl3_ok.Not()])
+        model.Add(am_seniors * 100 >= senior_lvl3 * am_shifts).OnlyEnforceIf(senior_lvl3_ok)
+        model.Add(am_seniors * 100 <  senior_lvl3 * am_shifts).OnlyEnforceIf(senior_lvl3_ok.Not())
 
         # Hard fallback: all levels failed
         senior_all_levels_failed = model.NewBoolVar(f'day_{d}_am_senior_all_levels_failed')
@@ -533,23 +527,22 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         model.AddBoolOr([senior_lvl1_ok, senior_lvl2_ok, senior_lvl3_ok]).OnlyEnforceIf(senior_all_levels_failed.Not())
 
         # Explicit PM and Night seniors shift counts
-        pm_shift_seniors = sum(work[n, d, 1] for n in nurse_names if n in senior_names)
-        night_shift_seniors = sum(work[n, d, 2] for n in nurse_names if n in senior_names)
+        pm_shift_seniors = sum(work[n, d, 1] for n in senior_names)
+        night_shift_seniors = sum(work[n, d, 2] for n in senior_names)
 
         # Enforce AM seniors > PM seniors and AM seniors > Night seniors if all levels fail (hard constraint)
         model.Add(am_seniors > pm_shift_seniors).OnlyEnforceIf(senior_all_levels_failed)
         model.Add(am_seniors > night_shift_seniors).OnlyEnforceIf(senior_all_levels_failed)
 
         # Penalties for senior ratio violations
-        high_priority_penalty.append(senior_lvl1_ok.Not() * AM_SENIOR_PENALTIES[0])
+        penalty = (
+            senior_lvl1_ok.Not() * AM_SENIOR_PENALTIES[0] +
+            senior_lvl2_ok.Not() * AM_SENIOR_PENALTIES[1] +
+            senior_lvl3_ok.Not() * AM_SENIOR_PENALTIES[2]
+        )
 
-        senior_lvl2_penalty_cond = model.NewBoolVar(f'day_{d}_am_senior_lvl2_penalty')
-        model.AddBoolAnd([senior_lvl1_ok.Not(), senior_lvl2_ok.Not()]).OnlyEnforceIf(senior_lvl2_penalty_cond)
-        high_priority_penalty.append(senior_lvl2_penalty_cond * AM_SENIOR_PENALTIES[1])
+    high_priority_penalty.append(penalty)
 
-        senior_lvl3_penalty_cond = model.NewBoolVar(f'day_{d}_am_senior_lvl3_penalty')
-        model.AddBoolAnd([senior_lvl1_ok.Not(), senior_lvl2_ok.Not(), senior_lvl3_ok.Not()]).OnlyEnforceIf(senior_lvl3_penalty_cond)
-        high_priority_penalty.append(senior_lvl3_penalty_cond * AM_SENIOR_PENALTIES[2])
 
     # 3. Preference satisfaction
     for n in nurse_names:
@@ -665,6 +658,11 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     logger.info("🚀 Phase 1: minimizing penalties…")
     # 1. Tell the model to minimize penalty sum
     model.Minimize(sum(high_priority_penalty))
+
+    # debug: print model size
+    proto = model.Proto()
+    logger.info(f"→ #constraints_p1 = {len(proto.constraints)},  #bool_vars = {len(proto.variables)}")
+
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = 180.0  # tunable
     solver.parameters.random_seed = 42
@@ -730,12 +728,17 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         # model.Maximize(preference_obj)
         model.Minimize(sum(low_priority_penalty))
 
+        # debug: print model size
+        proto = model.Proto()
+        logger.info(f"→ #constraints_p2 = {len(proto.constraints)},  #bool_vars = {len(proto.variables)}")
+
         # 4. Re-solve (you can reset your time budget)
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = 180.0
         solver.parameters.random_seed = 42
         solver.parameters.relative_gap_limit = 0.01
         solver.parameters.num_search_workers = 4
+
         status2 = solver.Solve(model)
         logger.info(f"⏱ Solve time: {solver.WallTime():.2f} seconds")
         logger.info(f"High Priority Penalty Phase 2: {solver.Value(sum(high_priority_penalty))}")
@@ -775,7 +778,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     num_weeks = (num_days + DAYS_PER_WEEK - 1) // DAYS_PER_WEEK     # number of weeks in the schedule
     schedule = {}
     summary = []
-    violations = {"Low_AM_Days": [], "Low_Hours_Nurses": [], "Preference_Unmet": [], "Fairness_Gap": cached_gap if use_fallback or 'gap_pct' not in locals() else solver.Value(gap_pct)}
+    violations = {"Low_AM_Days": [], "Low_Senior_AM_Days": [], "Low_Hours_Nurses": [], "Preference_Unmet": [], "Fairness_Gap": cached_gap if use_fallback or 'gap_pct' not in locals() else solver.Value(gap_pct)}
 
     for n in nurse_names:
         row = []
@@ -789,7 +792,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             
             if d in mc_sets[n]:
                 shift = "MC"
-            elif (n, d) in fixed_assignments and fixed_assignments[(n, d)].upper() == "EL":
+            elif (n, d) in fixed_assignments and fixed_assignments[(n, d)].strip().upper() == "EL":
                 shift = "EL"
             else:
                 if use_fallback:
@@ -853,14 +856,18 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
     for d in range(num_days):
         if use_fallback:
-            am = sum(cached_values[(n, d, 0)] for n in nurse_names)
-            total = sum(cached_values[(n, d, s)] for n in nurse_names for s in range(shift_types))
+            am_n = sum(cached_values[(n, d, 0)] for n in nurse_names)
+            total_n = sum(cached_values[(n, d, s)] for n in nurse_names for s in range(shift_types))
+            am_snr = sum(cached_values[(n, d, 0)] for n in senior_names)
         else:
-            am = sum(solver.Value(work[n, d, 0]) for n in nurse_names)
-            total = sum(solver.Value(work[n, d, s]) for n in nurse_names for s in range(shift_types))
+            am_n = sum(solver.Value(work[n, d, 0]) for n in nurse_names)
+            total_n = sum(solver.Value(work[n, d, s]) for n in nurse_names for s in range(shift_types))
+            am_snr = sum(solver.Value(work[n, d, 0]) for n in senior_names)
 
-        if total and am / total < 0.6:
-            violations["Low_AM_Days"].append(f"{dates[d].strftime('%a %Y-%m-%d')} ({am/total:.0%})")
+        if total_n and am_n / total_n < (AM_COVERAGE_MIN_PERCENT / 100):
+            violations["Low_AM_Days"].append(f"{dates[d].strftime('%a %Y-%m-%d')} ({am_n/total_n:.0%})")
+        if am_n and am_snr / am_n < (AM_SENIOR_MIN_PERCENT / 100):
+            violations["Low_Senior_AM_Days"].append(f"{dates[d].strftime('%a %Y-%m-%d')} (Seniors {am_snr/am_n:.0%})")
 
     logger.info("\n⚠️ Soft Constraint Violations Summary:")
     for key, items in violations.items():
