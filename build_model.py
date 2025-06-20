@@ -774,12 +774,13 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     num_weeks = (num_days + DAYS_PER_WEEK - 1) // DAYS_PER_WEEK     # number of weeks in the schedule
     schedule = {}
     summary = []
-    violations = {"Low_AM_Days": [], "Low_Senior_AM_Days": [], "Low_Hours_Nurses": [], "Preference_Unmet": [], "Fairness_Gap": cached_gap if use_fallback or 'gap_pct' not in locals() else solver.Value(gap_pct)}
+    violations = {"Double Shifts": [], "Low_AM_Days": [], "Low_Senior_AM_Days": [], "Low_Hours_Nurses": [], "Preference_Unmet": [], "Fairness_Gap": cached_gap if use_fallback or 'gap_pct' not in locals() else solver.Value(gap_pct)}
 
     for n in nurse_names:
         row = []
         hours_per_week = [0] * num_weeks
-        counts = [0, 0, 0]  # AM, PM, Night
+        counts = [0, 0, 0, 0]  # AM, PM, Night, REST
+        double_shift_days = []
         prefs_met = 0
         prefs_unmet = []
 
@@ -795,10 +796,14 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                     picked = [s for s in range(shift_types) if cached_values[(n, d, s)]]
                 else:
                     picked = [s for s in range(shift_types) if solver.Value(work[n, d, s])]
+
+                if len(picked) == 2:
+                    double_shift_days.append(dates[d].strftime('%a %Y-%m-%d'))
                 
                 match(len(picked)):
                     case 0:
                         shift = "Rest"
+                        counts[3] += 1
                     case 1:
                         shift = SHIFT_LABELS[picked[0]]
                     case 2:
@@ -834,16 +839,23 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         if prefs_unmet:
             violations["Preference_Unmet"].append(f"{n}: {'; '.join(prefs_unmet)}")
 
+        if double_shift_days:
+            violations["Double Shifts"].append(f"{n}: {'; '.join(double_shift_days)}")
+
         schedule[n] = row
-        summary_row = {"Nurse": n}
-        for w in range(num_weeks):
-            summary_row[f"Hours_Week{w+1}"] = hours_per_week[w]
-        summary_row.update({
+        summary_row = {
+            "Nurse": n,
+            "MC":   len(mc_sets[n]),
+            "EL":   len(el_sets[n]),
+            "Rest": counts[3],
             "AM":   counts[0],
             "PM":   counts[1],
             "Night":counts[2],
-            "Rest": row.count("Rest"),
-            "MC_Days": len(mc_sets[n]),
+            "Double Shifts": len(double_shift_days),
+        }
+        for w in range(num_weeks):
+            summary_row[f"Hours_Week{w+1}"] = hours_per_week[w]
+        summary_row.update({
             "Prefs_Met": prefs_met,
             "Prefs_Unmet": len(prefs_unmet),
             "Unmet_Details": "; ".join(prefs_unmet),
