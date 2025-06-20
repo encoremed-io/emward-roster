@@ -143,9 +143,9 @@ if st.sidebar.button("Generate Schedule"):
 
         missing, extra = validate_nurse_data(df_profiles, df_prefs)
         if missing or extra:
-            msg = "⚠️ Mismatch:\n"
-            if missing: msg += f"Missing in prefs: {missing}\n"
-            if extra: msg += f"Extra in prefs: {extra}"
+            msg = "⚠️ Mismatch between nurse profiles and preferences:\n\n"
+            if missing: msg += f"Not found in preferences: {sorted(missing)}\n"
+            if extra: msg += f"Not found in profiles: {sorted(extra)}"
             st.error(msg)
             st.stop()
 

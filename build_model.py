@@ -14,7 +14,6 @@ LOG_PATH = Path(__file__).parent / "schedule_run.log"
 logging.basicConfig(
     filename=LOG_PATH,
     filemode='w',
-    encoding='utf-8',
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S"
@@ -234,9 +233,9 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     missing, extra = validate_nurse_data(profiles_df, preferences_df)
     if missing or extra:
         raise ValueError(
-            f"Name mismatch between profiles and preferences:\n"
-            f" • In profiles only: {sorted(missing)}\n"
-            f" • In preferences only: {sorted(extra)}"
+            f"Mismatch between nurse profiles and preferences:\n"
+            f" • Not found in preferences: {sorted(missing)}\n"
+            f" • Not found in profiles: {sorted(extra)}"
         )
 
     # === Model setup ===
@@ -268,6 +267,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     # === Precompute per-nurse lookups ===
     mc_sets = {n: mc_days.get(n, set()) for n in nurse_names}
     el_sets = get_el_days(fixed_assignments, nurse_names)
+    days_with_el = {d for days in el_sets.values() for d in days}
     prefs_by_nurse = {n: shift_preferences.get(n, {}) for n in nurse_names}
 
     weekend_pairs = []
@@ -288,9 +288,6 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     total_satisfied = {}
     high_priority_penalty = []
     low_priority_penalty = []
-
-    min_sat = model.NewIntVar(0, num_days, "min_satisfaction")
-    max_sat = model.NewIntVar(0, num_days, "max_satisfaction")
 
     # False by default. If true, max working hours enforced over any consecutive 7 day window
     USE_SLIDING_WINDOW = False
@@ -336,15 +333,13 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                 model.Add(work[nurse, day_idx, other_s] == 0)
 
     # 1. Number of shift per nurse per day
-    # If no EL, each nurse can work at most one shift per day
-    # If EL, allow 2 shifts per nurse if cannot satisfy other hard constraints for that day
+    # If no EL, each nurse can work at most 1 shift per day
+    # If EL, allow at most 2 shifts per nurse if cannot satisfy other hard constraints for that day
     two_shifts = {}  
 
     for n in nurse_names:
-        el = el_sets[n]
-
         for d in range(num_days):
-            if d not in el:
+            if d not in days_with_el:
             # no EL here: enforce original rule
                 model.AddAtMostOne(work[n, d, s] for s in range(shift_types))
             else:
@@ -352,10 +347,13 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                 ts = model.NewBoolVar(f"two_shifts_{n}_{d}")
                 two_shifts[(n, d)] = ts
 
+                if d in el_sets[n]:     # if nurse has el on that day, explicitly make ts = false for the nurse
+                    model.Add(ts == 0)
+
                 # If ts==False → sum_s work ≤ 1
                 model.Add(sum(work[n, d, s] for s in range(shift_types)) <= 1).OnlyEnforceIf(ts.Not())
-                # If ts==True  → sum_s work == 2
-                model.Add(sum(work[n, d, s] for s in range(shift_types)) == 2).OnlyEnforceIf(ts)
+                # If ts==True  → sum_s work ≤ 2
+                model.Add(sum(work[n, d, s] for s in range(shift_types)) <= 2).OnlyEnforceIf(ts)
 
                 # If double shift, apply penalty
                 high_priority_penalty.append(ts * DOUBLE_SHIFT_PENALTY)
@@ -535,13 +533,11 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         model.Add(am_seniors > night_shift_seniors).OnlyEnforceIf(senior_all_levels_failed)
 
         # Penalties for senior ratio violations
-        penalty = (
+        high_priority_penalty.append(
             senior_lvl1_ok.Not() * AM_SENIOR_PENALTIES[0] +
             senior_lvl2_ok.Not() * AM_SENIOR_PENALTIES[1] +
             senior_lvl3_ok.Not() * AM_SENIOR_PENALTIES[2]
         )
-
-    high_priority_penalty.append(penalty)
 
 
     # 3. Preference satisfaction
