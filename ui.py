@@ -3,20 +3,18 @@ import os
 os.environ['STREAMLIT_SERVER_FILE_WATCHER_TYPE'] = 'none'
 
 import streamlit as st
-import pandas as pd
 from io import BytesIO
 from datetime import date
-from build_model import build_schedule_model
-from utils.loader import *
-from utils.validate import *
 from st_aggrid import GridOptionsBuilder, AgGrid, GridUpdateMode
 from nurse_env import NurseRosteringEnv
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
 from collections import Counter, defaultdict
-import numpy as np
 import traceback
 import logging
+from build_model import build_schedule_model
+from utils.loader import *
+from utils.validate import *
 from utils.constants import MAX_MC_DAYS_PER_WEEK, DAYS_PER_WEEK
 
 logging.basicConfig(filename="ui_error.log", level=logging.ERROR)
@@ -44,7 +42,7 @@ def download_excel(df, filename):
 def show_editable_schedule():
     st.subheader("📅 Schedule (mark ‘EL’ for emergency leave)")
     sched_df = st.session_state.sched_df
-    if sched_df is None or sched_df.empty:
+    if sched_df.empty:
         st.write("No schedule data to show.")
         return
     
@@ -128,18 +126,8 @@ if st.sidebar.button("Generate Schedule"):
 
     try:
         # Load profiles
-        df_profiles = pd.read_excel(profiles_file)
-        df_profiles['Name'] = df_profiles['Name'].str.strip().str.upper()
-
-        # Load preferences
-        df_prefs = pd.read_excel(prefs_file)
-        df_prefs.rename(columns={df_prefs.columns[0]: 'Name'}, inplace=True)
-        df_prefs.set_index('Name', inplace=True)
-        df_prefs.columns = [
-            pd.to_datetime(str(c).strip().split()[-1], format="%Y-%m-%d").date()
-            for c in df_prefs.columns
-        ]
-        df_prefs.index = df_prefs.index.str.strip().str.upper()
+        df_profiles = load_nurse_profiles(profiles_file)
+        df_prefs = load_shift_preferences(prefs_file)
 
         missing, extra = validate_nurse_data(df_profiles, df_prefs)
         if missing or extra:
@@ -155,7 +143,7 @@ if st.sidebar.button("Generate Schedule"):
         # RL warm start
         if use_rl:
             for h in (7, 14, 28):
-                if h >= num_days:
+                if h >= num_days and os.path.exists(f"models/ppo_nurse_{h}d/phase1/best_model.zip") and os.path.exists(f"models/ppo_nurse_{h}d/phase2/best_model.zip"):
                     # 1) Phase 1 rollout to minimize high-priority penalties
                     env1 = NurseRosteringEnv(
                         st.session_state.df_profiles,
@@ -197,6 +185,10 @@ if st.sidebar.button("Generate Schedule"):
                     st.session_state.rl_assignment = obs.tolist()
                     st.sidebar.success(f"🔁 RL warm-start from {h}-day model")
                     break
+                else:
+                    st.sidebar.error(f"⚠️ No matching RL model found!")
+                    st.info("🔁 Using fallback without warm start ...")
+                    break
 
 
         sched, summ = build_schedule_model(
@@ -209,6 +201,10 @@ if st.sidebar.button("Generate Schedule"):
         st.session_state.summary_df = summ
         st.session_state.original_sched_df = sched.copy()
 
+        st.session_state.show_schedule_expanded = False
+        st.session_state["editable_toggle"] = "Hide"
+        st.rerun()
+
     except Exception as e:
         tb = traceback.format_exc()
         st.error(f"Error: {e}")
@@ -220,14 +216,14 @@ if "show_schedule_expanded" not in st.session_state:
 
 if st.session_state.sched_df is not None:
     # Use a radio to simulate expander toggle
-    if st.session_state.sched_df is not None:
-        choice = st.radio(
-            "Editable Schedule",
-            options=["Hide", "Show"],
-            index=1 if st.session_state.show_schedule_expanded else 0,
-            horizontal=True
-        )
-        st.session_state.show_schedule_expanded = (choice == "Show")
+    choice = st.radio(
+        "Editable Schedule",
+        options=["Hide", "Show"],
+        index=1 if st.session_state.show_schedule_expanded else 0,
+        horizontal=True,
+        key="editable_toggle"
+    )
+    st.session_state.show_schedule_expanded = (choice == "Show")
 
     if st.session_state.show_schedule_expanded:
         show_editable_schedule()
