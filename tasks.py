@@ -2,6 +2,7 @@ import os
 import sys
 import io
 from invoke.tasks import task
+import subprocess
 
 if isinstance(sys.stdout, io.TextIOWrapper):
     sys.stdout.reconfigure(encoding='utf-8')
@@ -28,8 +29,20 @@ def front(c):
 
 @task
 def all(c):
-    back(c)
-    front(c)
+    # Launch backend
+    subprocess.Popen(
+        ["cmd", "/k", "uvicorn app:app --reload --host 127.0.0.1 --port 8001"],
+        creationflags=subprocess.CREATE_NEW_CONSOLE
+    )
+
+    # Launch frontend with PYTHONUTF8=1 set properly
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    subprocess.Popen(
+        ["cmd", "/k", "streamlit run ui.py"],
+        creationflags=subprocess.CREATE_NEW_CONSOLE,
+        env=env
+    )
 
 
 @task

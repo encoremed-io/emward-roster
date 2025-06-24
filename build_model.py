@@ -16,7 +16,8 @@ logging.basicConfig(
     filemode='w',
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
+    datefmt="%Y-%m-%d %H:%M:%S",
+    encoding="utf-8"
 )
 logger = logging.getLogger(__name__)
 
@@ -239,10 +240,13 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         )
 
     # === Model setup ===
+    import random
     logger.info("📋 Building model...")
     model = cp_model.CpModel()
     nurses = profiles_df.to_dict(orient='records')
     nurse_names = [n['Name'].strip().upper() for n in nurses]
+    og_nurse_names = nurse_names.copy()           # Save original order of list
+    random.shuffle(nurse_names)                   # Shuffle order for random shift assignments for nurses
     senior_names = get_senior_set(profiles_df)    # Assume senior nurses have ≥3 years experience
     shift_str_to_idx = {label.upper(): i for i, label in enumerate(SHIFT_LABELS)}
 
@@ -590,6 +594,31 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         model.AddMaxEquality(over_gap, [gap_pct - FAIRNESS_GAP_THRESHOLD, 0])
         low_priority_penalty.append(gap_pct * FAIRNESS_GAP_PENALTY)
 
+    # 5. Balance in number of each shift type assigned to nurse
+    # IMBALANCE_PENALTY = 1
+    # for n in nurse_names:
+    #     counts = []
+    #     for s in range(shift_types):
+    #         C_ns = model.NewIntVar(0, num_days, f"count_{n}_shift{s}")
+    #         model.Add(C_ns == sum(work[n, d, s] for d in range(num_days)))
+    #         counts.append(C_ns)
+
+    #     minC = model.NewIntVar(0, num_days, f"min_count_{n}")
+    #     maxC = model.NewIntVar(0, num_days, f"max_count_{n}")
+    #     model.AddMinEquality(minC, counts)
+    #     model.AddMaxEquality(maxC, counts)
+
+    #     gap = model.NewIntVar(0, num_days, f"gap_{n}")
+    #     model.Add(gap == maxC - minC)
+    #     allowed_gap = model.NewIntVar(-1, num_days, f"allowed_gap_{n}")
+    #     model.Add(allowed_gap == gap - 2)
+
+    #     # only penalize the amount above 1
+    #     over_gap = model.NewIntVar(0, num_days, f"over_gap_{n}")
+    #     model.AddMaxEquality(over_gap, [allowed_gap, 0])
+    #     # model.AddHint(allowed_gap, 0)
+    #     low_priority_penalty.append(gap * IMBALANCE_PENALTY)
+
     # === Add RL assignment hints (warm start) ===
     if rl_assignment is not None:
         add_rl_hints(model, work, nurse_names, num_days, rl_assignment, add_zero_hints=False)
@@ -609,6 +638,8 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     solver.parameters.random_seed = 42
     solver.parameters.relative_gap_limit = 0.01
     solver.parameters.num_search_workers = 8
+    solver.parameters.randomize_search = True 
+    solver.parameters.log_search_progress = False
 
     status1 = solver.Solve(model)
     logger.info(f"⏱ Solve time: {solver.WallTime():.2f} seconds")
@@ -656,7 +687,8 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
     # === Phase 2: maximize preferences under that penalty bound ===
     # only run phase 2 if shift preferences exist
-    if any(shift_preferences.values()):
+    # if any(shift_preferences.values()):
+    if low_priority_penalty:
         logger.info("🚀 Phase 2: maximizing preferences…")
         # 2. Freeze the penalty sum at its optimum
         model.Add(sum(high_priority_penalty) <= int(high1))
@@ -675,10 +707,14 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
         # 4. Re-solve (you can reset your time budget)
         solver = cp_model.CpSolver()
+        for (n, d, s), val in cached_values.items():
+            model.AddHint(work[n, d, s], val)
         solver.parameters.max_time_in_seconds = 180.0
         solver.parameters.random_seed = 42
         solver.parameters.relative_gap_limit = 0.01
-        solver.parameters.num_workers = 8
+        solver.parameters.num_search_workers = 8
+        solver.parameters.randomize_search = True
+        solver.parameters.log_search_progress = True
 
         status2 = solver.Solve(model)
         logger.info(f"⏱ Solve time: {solver.WallTime():.2f} seconds")
@@ -837,4 +873,6 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                 logger.info(f"   - {item}")
 
     logger.info("📁 Schedule and summary generated.")
-    return pd.DataFrame.from_dict(schedule, orient='index', columns=headers), pd.DataFrame(summary)
+    schedule_df = pd.DataFrame.from_dict(schedule, orient='index', columns=headers).reindex(og_nurse_names)
+    summary_df = pd.DataFrame(summary).set_index("Nurse").reindex(og_nurse_names).reset_index()
+    return schedule_df, summary_df
