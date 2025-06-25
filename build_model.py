@@ -596,27 +596,28 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
     # 5. Balance in number of each shift type assigned to nurse
     # IMBALANCE_PENALTY = 1
-    # for n in nurse_names:
-    #     counts = []
-    #     for s in range(shift_types):
-    #         C_ns = model.NewIntVar(0, num_days, f"count_{n}_shift{s}")
-    #         model.Add(C_ns == sum(work[n, d, s] for d in range(num_days)))
-    #         counts.append(C_ns)
 
+    # # (A) Precompute counts just once
+    # counts: dict[tuple[str,int], cp_model.IntVar] = {}
+    # for n in nurse_names:
+    #     for s in range(shift_types):
+    #         C = model.NewIntVar(0, num_days, f"count_{n}_s{s}")
+    #         model.Add(C == sum(work[n, d, s] for d in range(num_days)))
+    #         counts[(n, s)] = C
+
+    # # (B) For each nurse, build min/max/gap
+    # for n in nurse_names:
+    #     c_vars = [counts[(n, s)] for s in range(shift_types)]
     #     minC = model.NewIntVar(0, num_days, f"min_count_{n}")
     #     maxC = model.NewIntVar(0, num_days, f"max_count_{n}")
-    #     model.AddMinEquality(minC, counts)
-    #     model.AddMaxEquality(maxC, counts)
+
+    #     model.AddMinEquality(minC, c_vars)
+    #     model.AddMaxEquality(maxC, c_vars)
 
     #     gap = model.NewIntVar(0, num_days, f"gap_{n}")
     #     model.Add(gap == maxC - minC)
-    #     allowed_gap = model.NewIntVar(-1, num_days, f"allowed_gap_{n}")
-    #     model.Add(allowed_gap == gap - 2)
 
-    #     # only penalize the amount above 1
-    #     over_gap = model.NewIntVar(0, num_days, f"over_gap_{n}")
-    #     model.AddMaxEquality(over_gap, [allowed_gap, 0])
-    #     # model.AddHint(allowed_gap, 0)
+    #     # soft-penalize any imbalance
     #     low_priority_penalty.append(gap * IMBALANCE_PENALTY)
 
     # === Add RL assignment hints (warm start) ===
@@ -760,7 +761,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     for n in nurse_names:
         row = []
         hours_per_week = [0] * num_weeks
-        counts = [0, 0, 0, 0]  # AM, PM, Night, REST
+        shift_counts = [0, 0, 0, 0]  # AM, PM, Night, REST
         double_shift_days = []
         prefs_met = 0
         prefs_unmet = []
@@ -784,7 +785,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                 match(len(picked)):
                     case 0:
                         shift = "Rest"
-                        counts[3] += 1
+                        shift_counts[3] += 1
                     case 1:
                         shift = SHIFT_LABELS[picked[0]]
                     case 2:
@@ -797,7 +798,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             week_idx = d // DAYS_PER_WEEK
             for p in picked:
                 hours_per_week[week_idx] += int(SHIFT_HOURS[p])
-                counts[p] += 1
+                shift_counts[p] += 1
 
             pref = prefs_by_nurse[n].get(d)
             if pref is not None:
@@ -828,10 +829,10 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             "Nurse": n,
             "MC":   len(mc_sets[n]),
             "EL":   len(el_sets[n]),
-            "Rest": counts[3],
-            "AM":   counts[0],
-            "PM":   counts[1],
-            "Night":counts[2],
+            "Rest": shift_counts[3],
+            "AM":   shift_counts[0],
+            "PM":   shift_counts[1],
+            "Night":shift_counts[2],
             "Double Shifts": len(double_shift_days),
         }
         for w in range(num_weeks):
