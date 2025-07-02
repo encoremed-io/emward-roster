@@ -15,7 +15,7 @@ import logging
 from build_model import build_schedule_model
 from utils.loader import *
 from utils.validate import *
-from utils.constants import MAX_MC_DAYS_PER_WEEK, DAYS_PER_WEEK
+from utils.constants import *
 from utils.shift_utils import get_senior_set
 
 logging.basicConfig(filename="ui_error.log", level=logging.ERROR)
@@ -41,7 +41,7 @@ def download_excel(df, filename):
     )
 
 def show_editable_schedule():
-    st.subheader("📅 Schedule (mark ‘EL’ for emergency leave)")
+    st.subheader("📅 Schedule (Type 'EL' for emergency leave or 'MC' for medical leave)")
     sched_df = st.session_state.sched_df
     if sched_df.empty:
         st.write("No schedule data to show.")
@@ -104,10 +104,66 @@ else:
     num_seniors = st.sidebar.number_input("Number of Senior Nurses", min_value=1)
     num_juniors = st.sidebar.number_input("Number of Junior Nurses", min_value=1)
 
-prefs_file = st.sidebar.file_uploader("Upload nurse_preferences.xlsx (Optional)", type=["xlsx"])
+prefs_file = st.sidebar.file_uploader(
+    "Upload nurse_preferences.xlsx (Optional)", 
+    type=["xlsx"],
+    help=(
+        "• If uploading profiles, ensure nurse names match in both files.\n\n"
+        "• For manual entry, the number of seniors and juniors must match your input above.\n\n"
+        "• Preferences file only applies to specified dates in file."
+    )
+)
 start_date = st.sidebar.date_input("Schedule start date", value=date.today())
-num_days = st.sidebar.slider("Number of days", 7, 28, 14)
-use_rl = st.sidebar.checkbox("Warm-start with RL policy", value=True)
+end_date = st.sidebar.date_input("Schedule end date", value=date.today())
+# num_days = st.sidebar.slider("Number of days", 7, 28, 14)
+num_days = (end_date - start_date).days + 1
+if num_days < 1:
+    st.error("End date must be after start date.")
+    st.stop()
+use_rl = st.sidebar.checkbox("Warm-start with RL policy", value=False)
+
+
+# --- Add dynamic scheduling parameters here ---
+st.sidebar.markdown("### Schedule Parameters")
+min_nurses_per_shift = st.sidebar.number_input(
+    "Minimum nurses per shift", min_value=1, value=MIN_NURSES_PER_SHIFT
+)
+min_seniors_per_shift = st.sidebar.number_input(
+    "Minimum seniors per shift", min_value=1, value=MIN_SENIORS_PER_SHIFT
+)
+max_weekly_hours = st.sidebar.number_input(
+    "Max weekly hours", min_value=1, value=MAX_WEEKLY_HOURS,
+    help="The maximum number of hours a nurse can be scheduled to work in a week. MC and EL days reduce this cap."
+)
+preferred_weekly_hours = st.sidebar.number_input(
+    "Preferred weekly hours", min_value=1, value=PREFERRED_WEEKLY_HOURS,
+    help="The ideal number of hours a nurse should work per week. The model tries to meet this, but may assign less if needed. MC and EL days reduce this cap."
+)
+min_acceptable_weekly_hours = st.sidebar.number_input(
+    "Min acceptable weekly hours", min_value=1, value=MIN_ACCEPTABLE_WEEKLY_HOURS,
+    help="The minimum number of hours a nurse must be scheduled for each week. MC and EL days reduce this cap."
+)
+am_coverage_min_percent = st.sidebar.slider(
+    "AM coverage min percent", min_value=0, max_value=100, value=AM_COVERAGE_MIN_PERCENT,
+    help="Aim for this % of shifts as AM. If not possible, will try 10% and 20% lower. If all fail, AM must outnumber PM and Night."
+)
+am_senior_min_percent = st.sidebar.slider(
+    "AM senior min percent", min_value=0, max_value=100, value=AM_SENIOR_MIN_PERCENT,
+    help="Aim for this % of senior shifts as AM. If not possible, will try 10% and 20% lower. If all fail, AM senior shifts must outnumber PM and Night."
+)
+weekend_rest = st.sidebar.checkbox(
+    "Enforce weekend rest (rest after weekend work)", value=True,
+    help="If checked, nurses who work on a weekend must rest the same day next weekend."
+)
+back_to_back_shift = st.sidebar.checkbox(
+    "Allow back-to-back shifts", value=False,
+    help="If checked, nurses may be scheduled for consecutive shifts (e.g., Night followed by AM)."
+)
+use_sliding_window = st.sidebar.checkbox(
+    "Use sliding window for weekly hours",
+    value=False,
+    help="If checked, the maximum weekly hours is enforced over any consecutive 7-day window, not just calendar weeks. This provides stricter control over nurse workload."
+)
 
 # Store core state
 for key, default in {
@@ -159,8 +215,6 @@ if st.sidebar.button("Generate Schedule"):
                 "Title": titles,
                 "YearsExperience": years_exp
             })
-            # st.write(df_profiles)
-            # st.write("Detected seniors:", get_senior_set(df_profiles))
 
         if prefs_file:    
             df_prefs = load_shift_preferences(prefs_file)
@@ -229,15 +283,26 @@ if st.sidebar.button("Generate Schedule"):
                     st.info("🔁 Using fallback without warm start ...")
                     break
 
-
-        sched, summ = build_schedule_model(
+        sched, summ, violations = build_schedule_model(
             df_profiles, df_prefs,
-            pd.to_datetime(start_date), num_days,
+            pd.to_datetime(start_date), 
+            num_days,
+            min_nurses_per_shift=min_nurses_per_shift,
+            min_seniors_per_shift=min_seniors_per_shift,
+            max_weekly_hours=max_weekly_hours,
+            preferred_weekly_hours=preferred_weekly_hours,
+            min_acceptable_weekly_hours=min_acceptable_weekly_hours,
+            am_coverage_min_percent=am_coverage_min_percent,
+            am_senior_min_percent=am_senior_min_percent,
+            weekend_rest=weekend_rest,
+            back_to_back_shift=back_to_back_shift,
+            use_sliding_window=use_sliding_window,
             rl_assignment=st.session_state.rl_assignment,
             fixed_assignments=st.session_state.fixed
         )
         st.session_state.sched_df = sched
         st.session_state.summary_df = summ
+        st.session_state.violations = violations
         st.session_state.original_sched_df = sched.copy()
 
         st.session_state.show_schedule_expanded = False
@@ -266,6 +331,7 @@ if st.session_state.sched_df is not None:
 
     if st.session_state.show_schedule_expanded:
         show_editable_schedule()
+        
 
         if st.button("🔁 Regenerate with All Overrides"):
             el_overrides = st.session_state.get("all_el_overrides") or {}
@@ -343,7 +409,7 @@ if st.session_state.sched_df is not None:
                 st.session_state.fixed = fixed
 
                 # re-solve starting from earliest EL day (included)
-                sched2, summ2 = build_schedule_model(
+                sched2, summ2, violations2 = build_schedule_model(
                     st.session_state.df_profiles,
                     st.session_state.df_prefs,
                     st.session_state.start_date,
@@ -353,6 +419,7 @@ if st.session_state.sched_df is not None:
                 )
                 st.session_state.sched_df   = sched2
                 st.session_state.summary_df = summ2
+                st.session_state.violations = violations2
 
                 st.success(f"Re-solved from day {w0} onward.")
                 st.session_state.show_schedule_expanded = False
@@ -364,6 +431,33 @@ if st.session_state.sched_df is not None:
     st.subheader("📊 Final Summary Metrics")
     st.dataframe(st.session_state.summary_df, use_container_width=True)
 
-    st.markdown("**Download results:**")
+    violations = st.session_state.get("violations", {})
+    if violations:
+        st.subheader("⚠️ Violations Summary")
+        st.caption("These are soft constraint violations that the model tried to minimize.")
+
+        for category, items in violations.items():
+            # Determine count presentation
+            match category:
+                case "Preference_Unmet":
+                    total_unmet = sum(s["Prefs_Unmet"] for s in st.session_state.summary_df.to_dict(orient="records"))
+                    st.markdown(f"🔸 **{category}**: {total_unmet} unmet preferences across {len(items)} nurse{'s' if len(items)!=1 else ''}")
+                case "Fairness_Gap":
+                    value = f"{items}%" if isinstance(items, (int, float)) else f"{len(items)}%"
+                    st.markdown(f"🔸 **{category}**: {value} gap")
+                case _:
+                    count = len(items) if hasattr(items, "__len__") and not isinstance(items, str) else items
+                    st.markdown(f"🔸 **{category}**: {count} case{'s' if count != 1 else ''}")
+
+            # List items if they exist
+            if isinstance(items, list) and items:
+                with st.expander(f"Details for {category}"):
+                    for item in items:
+                        st.markdown(f"- {item}")
+            elif isinstance(items, str):
+                st.markdown(f"- {items}")
+
+    st.markdown("---")
+    st.subheader("📥 Download results")
     download_excel(st.session_state.sched_df, "nurse_schedule.xlsx")
     download_excel(st.session_state.summary_df, "nurse_summary.xlsx")

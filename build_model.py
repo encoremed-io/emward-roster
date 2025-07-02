@@ -223,12 +223,22 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                          preferences_df: pd.DataFrame,
                          start_date: pd.Timestamp | dt_date,
                          num_days: int,
+                         min_nurses_per_shift: int = MIN_NURSES_PER_SHIFT,
+                         min_seniors_per_shift: int = MIN_SENIORS_PER_SHIFT,
+                         max_weekly_hours: int = MAX_WEEKLY_HOURS,
+                         preferred_weekly_hours: int = PREFERRED_WEEKLY_HOURS,
+                         min_acceptable_weekly_hours: int = MIN_ACCEPTABLE_WEEKLY_HOURS,
+                         am_coverage_min_percent: int = AM_COVERAGE_MIN_PERCENT,
+                         am_senior_min_percent: int = AM_SENIOR_MIN_PERCENT,
+                         weekend_rest: bool = True,
+                         back_to_back_shift: bool = False,
+                         use_sliding_window: bool = USE_SLIDING_WINDOW,
                          rl_assignment=None,
                          fixed_assignments: Optional[Dict[Tuple[str,int], str]] = None
-                         ) -> tuple[pd.DataFrame, pd.DataFrame]:
+                         ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """
     Builds a nurse schedule satisfying hard constraints and optimizing soft preferences.
-    Returns a schedule DataFrame and a summary DataFrame.
+    Returns a schedule DataFrame, a summary DataFrame, and a violations dictionary.
     """
     # === Validate inputs ===
     missing, extra = validate_nurse_data(profiles_df, preferences_df)
@@ -292,9 +302,6 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     total_satisfied = {}
     high_priority_penalty = []
     low_priority_penalty = []
-
-    # False by default. If true, max working hours enforced over any consecutive 7 day window
-    USE_SLIDING_WINDOW = False
 
     # === Hard Constraints ===
 
@@ -369,7 +376,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         num_weeks = (num_days + DAYS_PER_WEEK - 1) // DAYS_PER_WEEK
 
         # Precompute daily‑hours expressions if using sliding window
-        if USE_SLIDING_WINDOW:
+        if use_sliding_window:
             hours_by_day = [
                 sum(work[n, d, s] * int(SHIFT_HOURS[s]) for s in range(shift_types))
                 for d in range(num_days)
@@ -383,17 +390,17 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                     mc_count = sum(1 for i in window if i in mc)
                     el_count = sum(1 for i in window if i in el)
                     adj = (mc_count + el_count) * AVG_HOURS                  # MC & EL hours deducted from max/pref/min hours
-                    eff_max_hours = max(0, MAX_WEEKLY_HOURS - adj)           # <= 42 - x
+                    eff_max_hours = max(0, max_weekly_hours - adj)           # <= 42 - x
                     model.Add(window_hours <= eff_max_hours)
 
         # Full‑week minimum at each 7‑day boundary (e.g. Day 6, then Day 13, etc.)
         for w in range(num_weeks):
             days = range(w * DAYS_PER_WEEK, min((w + 1) * DAYS_PER_WEEK, num_days))
 
-            if not USE_SLIDING_WINDOW and len(days) < DAYS_PER_WEEK:
+            if not use_sliding_window and len(days) < DAYS_PER_WEEK:
                 continue  # Skip incomplete weeks for extra days if not using sliding window
 
-            if USE_SLIDING_WINDOW:
+            if use_sliding_window:
                 weekly_hours = sum(hours_by_day[i] for i in days)
             else:
                 weekly_hours = sum(
@@ -405,12 +412,12 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             el_count = sum(1 for i in days if i in el)
             adj = (mc_count + el_count) * AVG_HOURS
 
-            eff_pref_hours = max(0, PREFERRED_WEEKLY_HOURS - adj)        # >= 40 - x
-            eff_min_hours = max(0, MIN_ACCEPTABLE_WEEKLY_HOURS - adj)    # >= 30 - x
+            eff_pref_hours = max(0, preferred_weekly_hours - adj)        # >= 40 - x
+            eff_min_hours = max(0, min_acceptable_weekly_hours - adj)    # >= 30 - x
 
             model.Add(weekly_hours >= eff_min_hours)
             if not USE_SLIDING_WINDOW:
-                eff_max_hours = max(0, MAX_WEEKLY_HOURS - adj)           # <= 42 - x 
+                eff_max_hours = max(0, max_weekly_hours - adj)           # <= 42 - x 
                 model.Add(weekly_hours <= eff_max_hours)    
 
             if eff_pref_hours > eff_min_hours:
@@ -423,19 +430,21 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     # 3. Each shift must have at least 4 nurses and at least 1 senior
     for d in range(num_days):
         for s in range(shift_types):
-            model.Add(sum(work[n, d, s] for n in nurse_names) >= MIN_NURSES_PER_SHIFT)
-            model.Add(sum(work[n, d, s] for n in senior_names) >= MIN_SENIORS_PER_SHIFT)
+            model.Add(sum(work[n, d, s] for n in nurse_names) >= min_nurses_per_shift)
+            model.Add(sum(work[n, d, s] for n in senior_names) >= min_seniors_per_shift)
 
     # 4. Weekend work requires rest on the same day next weekend
-    for n in nurse_names:
-        for d1, d2 in weekend_pairs:
-            model.Add(sum(work[n, d1, s] for s in range(shift_types)) + 
-                       sum(work[n, d2, s] for s in range(shift_types)) <= 1)
+    if weekend_rest:
+        for n in nurse_names:
+            for d1, d2 in weekend_pairs:
+                model.Add(sum(work[n, d1, s] for s in range(shift_types)) + 
+                        sum(work[n, d2, s] for s in range(shift_types)) <= 1)
             
     # 5. Night shift will never be followed by AM shift
-    for n in nurse_names:
-        for d in range(1, num_days):
-            model.AddImplication(work[n, d - 1, 2], work[n, d, 0].Not())
+    if not back_to_back_shift:
+        for n in nurse_names:
+            for d in range(1, num_days):
+                model.AddImplication(work[n, d - 1, 2], work[n, d, 0].Not())
 
     # 6. MC days: cannot assign any shift
     for n in nurse_names:
@@ -460,11 +469,11 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
     # === Soft Constraints ===
     # Coverage level flags
-    am_lvl1 = AM_COVERAGE_MIN_PERCENT          # typically 60
+    am_lvl1 = am_coverage_min_percent          # typically 60
     am_lvl2 = max(am_lvl1 - 10, 0)              # 50
     am_lvl3 = max(am_lvl1 - 20, 0)              # 40
 
-    senior_lvl1 = AM_SENIOR_MIN_PERCENT            # typically 60
+    senior_lvl1 = am_senior_min_percent            # typically 60
     senior_lvl2 = max(senior_lvl1 - 10, 0)              # 50
     senior_lvl3 = max(senior_lvl1 - 20, 0)              # 40
 
@@ -660,9 +669,9 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             el_sets,
             num_days,
             len(SHIFT_LABELS),
-            MIN_NURSES_PER_SHIFT,
-            MIN_SENIORS_PER_SHIFT,
-            MIN_ACCEPTABLE_WEEKLY_HOURS,
+            min_nurses_per_shift,
+            min_seniors_per_shift,
+            min_acceptable_weekly_hours,
             DAYS_PER_WEEK,
             SHIFT_HOURS
         )
@@ -818,7 +827,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                 continue  # skip incomplete weeks
             mc_count_week = len(mc_sets[n] & set(days))
             el_count_week = len(el_sets[n] & set(days))
-            eff_pref_hours = max(0, PREFERRED_WEEKLY_HOURS - (mc_count_week + el_count_week) * AVG_HOURS)
+            eff_pref_hours = max(0, preferred_weekly_hours - (mc_count_week + el_count_week) * AVG_HOURS)
 
             if hours_per_week[w] < eff_pref_hours:
                 violations["Low_Hours_Nurses"].append(f"{n} Week {w+1}: {hours_per_week[w]}h; pref {eff_pref_hours}")
@@ -831,13 +840,13 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
         schedule[n] = row
         summary_row = {
-            "Nurse": n,
-            "MC":   len(mc_sets[n]),
-            "EL":   len(el_sets[n]),
-            "Rest": shift_counts[3],
-            "AM":   shift_counts[0],
-            "PM":   shift_counts[1],
-            "Night":shift_counts[2],
+            "Nurse":    n,
+            "MC":       len(mc_sets[n]),
+            "EL":       len(el_sets[n]),
+            "Rest":     shift_counts[3],
+            "AM":       shift_counts[0],
+            "PM":       shift_counts[1],
+            "Night":    shift_counts[2],
             "Double Shifts": len(double_shift_days),
         }
         for w in range(num_weeks):
@@ -859,9 +868,9 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             total_n = sum(solver.Value(work[n, d, s]) for n in nurse_names for s in range(shift_types))
             am_snr = sum(solver.Value(work[n, d, 0]) for n in senior_names)
 
-        if total_n and am_n / total_n < (AM_COVERAGE_MIN_PERCENT / 100):
+        if total_n and am_n / total_n < (am_coverage_min_percent / 100):
             violations["Low_AM_Days"].append(f"{dates[d].strftime('%a %Y-%m-%d')} ({am_n/total_n:.0%})")
-        if am_n and am_snr / am_n < (AM_SENIOR_MIN_PERCENT / 100):
+        if am_n and am_snr / am_n < (am_senior_min_percent / 100):
             violations["Low_Senior_AM_Days"].append(f"{dates[d].strftime('%a %Y-%m-%d')} (Seniors {am_snr/am_n:.0%})")
 
     logger.info("\n⚠️ Soft Constraint Violations Summary:")
@@ -881,4 +890,4 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     logger.info("📁 Schedule and summary generated.")
     schedule_df = pd.DataFrame.from_dict(schedule, orient='index', columns=headers).reindex(og_nurse_names)
     summary_df = pd.DataFrame(summary).set_index("Nurse").reindex(og_nurse_names).reset_index()
-    return schedule_df, summary_df
+    return schedule_df, summary_df, violations
