@@ -90,7 +90,7 @@ def make_schedule(req: ScheduleRequest):
                 raise HTTPException(400, "Overrides currently only support type='EL' or 'MC")
             fixed[(name, day_idx)] = typ
 
-        sched_df, summ_df = build_schedule_model(
+        sched_df, summ_df, violations = build_schedule_model(
             profiles,
             prefs,
             pd.to_datetime(req.start_date),
