@@ -16,9 +16,17 @@ from build_model import build_schedule_model
 from utils.loader import *
 from utils.validate import *
 from utils.constants import *
-from utils.shift_utils import get_senior_set
+from exceptions.custom_errors import *
 
 logging.basicConfig(filename="ui_error.log", level=logging.ERROR)
+
+CUSTOM_ERRORS = (
+    NoFeasibleSolutionError,
+    InvalidMCError,
+    InvalidALError,
+    ConsecutiveMCError,
+    ConsecutiveALError,
+)
 
 st.set_page_config(page_title="Nurse Roster Scheduler", layout="wide")
 st.title("🩺 Nurse Roster Scheduler")
@@ -308,7 +316,9 @@ if st.sidebar.button("Generate Schedule"):
         st.session_state.show_schedule_expanded = False
         st.session_state["editable_toggle"] = "Hide"
         st.rerun()
-
+    except CUSTOM_ERRORS as e:
+        st.error(str(e))
+        st.stop()
     except Exception as e:
         tb = traceback.format_exc()
         st.error(f"Error: {e}")
@@ -443,8 +453,11 @@ if st.session_state.sched_df is not None:
                     total_unmet = sum(s["Prefs_Unmet"] for s in st.session_state.summary_df.to_dict(orient="records"))
                     st.markdown(f"🔸 **{category}**: {total_unmet} unmet preferences across {len(items)} nurse{'s' if len(items)!=1 else ''}")
                 case "Fairness_Gap":
-                    value = f"{items}%" if isinstance(items, (int, float)) else f"{len(items)}%"
-                    st.markdown(f"🔸 **{category}**: {value} gap")
+                    if items == "N/A":
+                        st.markdown(f"🔸 **{category}**: N/A")
+                    else:
+                        value = f"{items}%" if isinstance(items, (int, float)) else str(items)
+                        st.markdown(f"🔸 **{category}**: {value} gap")
                 case _:
                     count = len(items) if hasattr(items, "__len__") and not isinstance(items, str) else items
                     st.markdown(f"🔸 **{category}**: {count} case{'s' if count != 1 else ''}")
@@ -454,7 +467,7 @@ if st.session_state.sched_df is not None:
                 with st.expander(f"Details for {category}"):
                     for item in items:
                         st.markdown(f"- {item}")
-            elif isinstance(items, str):
+            elif isinstance(items, str) and items != "N/A":
                 st.markdown(f"- {items}")
 
     st.markdown("---")

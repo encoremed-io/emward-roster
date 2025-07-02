@@ -8,6 +8,7 @@ from utils.constants import *       # import all constants
 from utils.validate import *
 from utils.shift_utils import *
 from utils.hint_utils import *
+from exceptions.custom_errors import *
 
 LOG_PATH = Path(__file__).parent / "schedule_run.log"
 
@@ -243,10 +244,10 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     # === Validate inputs ===
     missing, extra = validate_nurse_data(profiles_df, preferences_df)
     if missing or extra:
-        raise ValueError(
+        raise InputMismatchError(
             f"Mismatch between nurse profiles and preferences:\n"
             f" • Not found in preferences: {sorted(missing)}\n"
-            f" • Not found in profiles: {sorted(extra)}"
+            f" • Not found in profiles: {sorted(extra)}\n"
         )
 
     # === Model setup ===
@@ -273,13 +274,15 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     )
 
     # === Preferences and MC days ===
-    shift_preferences, mc_days = (
+    shift_preferences, mc_days, al_days = (
         get_shift_preferences(preferences_df, profiles_df, date_start, num_days, SHIFT_LABELS),
-        get_mc_days(preferences_df, profiles_df, date_start, num_days)
+        get_mc_days(preferences_df, profiles_df, date_start, num_days),
+        get_al_days(preferences_df, profiles_df, date_start, num_days)
     )
 
     # === Precompute per-nurse lookups ===
     mc_sets = {n: mc_days.get(n, set()) for n in nurse_names}
+    al_sets = {n: al_days.get(n, set()) for n in nurse_names}
     el_sets = get_el_days(fixed_assignments, nurse_names)
     days_with_el = {d for days in el_sets.values() for d in days}
     prefs_by_nurse = {n: shift_preferences.get(n, {}) for n in nurse_names}
@@ -310,13 +313,15 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         label = shift_label.strip().upper()
 
         # Fix MC, REST, EL as no work
-        if label in {"EL", "MC", "REST"}:
+        if label in {"EL", "MC", "AL", "REST"}:
             # Block all shifts
             for s in range(shift_types):
                 model.Add(work[nurse, day_idx, s] == 0)
             # Record MC overrides
             if label == "MC":
                 mc_sets[nurse].add(day_idx)
+            if label == "AL":
+                al_sets[nurse].add(day_idx)
             # EL already recorded in el_sets
 
         # handle double-shifts, e.g. "AM/PM*"
@@ -372,6 +377,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     # 2. Each nurse works <= 42 hours/week (hard), adjustable based on MC; ideally min 40 (soft), at least 30 (hard)
     for n in nurse_names:
         mc = mc_sets[n]
+        al = al_sets[n]
         el = el_sets[n]
         num_weeks = (num_days + DAYS_PER_WEEK - 1) // DAYS_PER_WEEK
 
@@ -388,8 +394,9 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                     window = range(d - (DAYS_PER_WEEK - 1), d + 1)
                     window_hours = sum(hours_by_day[i] for i in window)
                     mc_count = sum(1 for i in window if i in mc)
+                    al_count = sum(1 for i in window if i in al)
                     el_count = sum(1 for i in window if i in el)
-                    adj = (mc_count + el_count) * AVG_HOURS                  # MC & EL hours deducted from max/pref/min hours
+                    adj = (mc_count + al_count + el_count) * AVG_HOURS                  # MC & EL hours deducted from max/pref/min hours
                     eff_max_hours = max(0, max_weekly_hours - adj)           # <= 42 - x
                     model.Add(window_hours <= eff_max_hours)
 
@@ -409,8 +416,9 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                 )
 
             mc_count = sum(1 for i in days if i in mc)
+            al_count = sum(1 for i in days if i in al)
             el_count = sum(1 for i in days if i in el)
-            adj = (mc_count + el_count) * AVG_HOURS
+            adj = (mc_count + al_count + el_count) * AVG_HOURS
 
             eff_pref_hours = max(0, preferred_weekly_hours - adj)        # >= 40 - x
             eff_min_hours = max(0, min_acceptable_weekly_hours - adj)    # >= 30 - x
@@ -446,26 +454,46 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             for d in range(1, num_days):
                 model.AddImplication(work[n, d - 1, 2], work[n, d, 0].Not())
 
-    # 6. MC days: cannot assign any shift
+    # 6. MC/AL days: cannot assign any shift
     for n in nurse_names:
-        for d in mc_sets[n]:
+        for d in mc_sets[n] | al_sets[n]:
             model.Add(sum(work[n, d, s] for s in range(shift_types)) == 0)
 
-    # 7. Max 2 MC days/week and no more than 2 consecutive MC days
+    # 7. Max 2 MC/AL days per week and no more than 2 consecutive MC/AL days
     for n in nurse_names:
         mc = mc_sets[n]
+        al = al_sets[n]
         num_weeks = (num_days + DAYS_PER_WEEK - 1) // DAYS_PER_WEEK
 
         for w in range(num_weeks):
             days = range(w * DAYS_PER_WEEK, min((w + 1) * DAYS_PER_WEEK, num_days))
-            mc_in_week = sum(1 for d in days if d in mc)
-            if mc_in_week > MAX_MC_DAYS_PER_WEEK:
-                raise ValueError(f"❌ Nurse {n} has more than {MAX_MC_DAYS_PER_WEEK} MCs in week {w+1}.\n")
+            mc_in_week = [d for d in days if d in mc]
+            al_in_week = [d for d in days if d in al]
+            if len(mc_in_week) > MAX_MC_DAYS_PER_WEEK:
+                raise InvalidMCError(
+                    f"❌ Nurse {n} has more than {MAX_MC_DAYS_PER_WEEK} MCs in week {w+1}.\n"
+                    f"Days: {sorted(mc_in_week)}"
+                )
+            if len(al_in_week) > MAX_AL_DAYS_PER_WEEK:
+                raise InvalidALError(
+                    f"❌ Nurse {n} has more than {MAX_AL_DAYS_PER_WEEK} ALs in week {w+1}.\n"
+                    f"Days: {sorted(al_in_week)}"
+                )
 
         sorted_mc = sorted(mc)
-        for i in range(len(sorted_mc) - 2):
-            if sorted_mc[i + 2] - sorted_mc[i] == 2:
-                raise ValueError(f"❌ Nurse {n} has more than 2 consecutive MC days: {sorted_mc[i]}, {sorted_mc[i+1]}, {sorted_mc[i+2]}.\n")
+        sorted_al = sorted(al)
+        for i in range(len(sorted_mc) - MAX_CONSECUTIVE_MC):
+            if sorted_mc[i + 2] - sorted_mc[i] == MAX_CONSECUTIVE_MC:
+                raise ConsecutiveMCError(
+                    f"❌ Nurse {n} has more than 2 consecutive MC days: "
+                    f"{sorted_mc[i]}, {sorted_mc[i+1]}, {sorted_mc[i+2]}"
+                )
+        for i in range(len(sorted_al) - MAX_CONSECUTIVE_AL):
+            if sorted_al[i + 2] - sorted_al[i] == MAX_CONSECUTIVE_AL:
+                raise ConsecutiveALError(
+                    f"❌ Nurse {n} has more than 2 consecutive AL days: "
+                    f"{sorted_al[i]}, {sorted_al[i+1]}, {sorted_al[i+2]}.\n"
+                )
 
     # === Soft Constraints ===
     # Coverage level flags
@@ -678,7 +706,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         
         error_msg = "❌ No feasible solution. Identified issues:\n\n"
         error_msg += "\n".join(reasons)
-        raise RuntimeError(error_msg)
+        raise NoFeasibleSolutionError(error_msg)
 
     # save "best" solution found
     cached_values = {}
@@ -785,6 +813,8 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             
             if d in mc_sets[n]:
                 shift = "MC"
+            elif d in al_sets[n]:
+                shift = "AL"
             elif (n, d) in fixed_assignments and fixed_assignments[(n, d)].strip().upper() == "EL":
                 shift = "EL"
             else:
@@ -841,6 +871,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         schedule[n] = row
         summary_row = {
             "Nurse":    n,
+            "AL":       len(al_sets[n]),
             "MC":       len(mc_sets[n]),
             "EL":       len(el_sets[n]),
             "Rest":     shift_counts[3],

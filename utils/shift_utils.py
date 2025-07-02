@@ -40,6 +40,31 @@ def get_mc_days(
     return mc_days
 
 
+def get_al_days(
+    preferences_df: pd.DataFrame,
+    profiles_df: pd.DataFrame,
+    start_date: Union[pd.Timestamp, dt_date],
+    active_days: int
+) -> Dict[str, Set[int]]:
+    """
+    Returns nurse_name -> set of AL day-indices (0..active_days-1).
+    """
+    date_start = start_date.date() if isinstance(start_date, pd.Timestamp) else start_date
+    nurse_names = [n.strip().upper() for n in profiles_df['Name']]
+    al_days: Dict[str, Set[int]] = {n: set() for n in nurse_names}
+
+    for nurse, row in preferences_df.iterrows():
+        nm = str(nurse).strip().upper()
+        if nm not in al_days:
+            continue
+        for label, val in row.items():
+            if pd.notna(val) and str(val).strip().upper() == 'AL':
+                offset = compute_label_offset(label, date_start)
+                if 0 <= offset < active_days:
+                    al_days[nm].add(offset)
+    return al_days
+
+
 def get_shift_preferences(
     preferences_df: pd.DataFrame,
     profiles_df: pd.DataFrame,
