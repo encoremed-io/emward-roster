@@ -16,6 +16,7 @@ from build_model import build_schedule_model
 from utils.loader import *
 from utils.validate import *
 from utils.constants import MAX_MC_DAYS_PER_WEEK, DAYS_PER_WEEK
+from utils.shift_utils import get_senior_set
 
 logging.basicConfig(filename="ui_error.log", level=logging.ERROR)
 
@@ -89,8 +90,21 @@ def show_editable_schedule():
 
 # Sidebar inputs
 st.sidebar.header("Inputs")
-profiles_file = st.sidebar.file_uploader("Upload nurse_profiles.xlsx", type=["xlsx"])
-prefs_file = st.sidebar.file_uploader("Upload nurse_preferences.xlsx", type=["xlsx"])
+profile_input_mode = st.sidebar.radio(
+    "Nurse Profiles Input Method",
+    options=["Upload File", "Manual Entry"],
+    index=0
+)
+
+if profile_input_mode == "Upload File":
+    profiles_file = st.sidebar.file_uploader("Upload nurse_profiles.xlsx", type=["xlsx"])
+    num_seniors = num_juniors = None
+else:
+    profiles_file = None
+    num_seniors = st.sidebar.number_input("Number of Senior Nurses", min_value=1)
+    num_juniors = st.sidebar.number_input("Number of Junior Nurses", min_value=1)
+
+prefs_file = st.sidebar.file_uploader("Upload nurse_preferences.xlsx (Optional)", type=["xlsx"])
 start_date = st.sidebar.date_input("Schedule start date", value=date.today())
 num_days = st.sidebar.slider("Number of days", 7, 28, 14)
 use_rl = st.sidebar.checkbox("Warm-start with RL policy", value=True)
@@ -120,22 +134,47 @@ if st.sidebar.button("Generate Schedule"):
     st.session_state.all_el_overrides = {}
     st.session_state.all_mc_overrides = {}
 
-    if not profiles_file or not prefs_file:
-        st.error("Please upload both the profiles and preferences Excel files.")
+    if profile_input_mode == "Upload File" and not profiles_file:
+        st.error("Please upload a valid profiles excel file.")
         st.stop()
 
     try:
         # Load profiles
-        df_profiles = load_nurse_profiles(profiles_file)
-        df_prefs = load_shift_preferences(prefs_file)
+        if profile_input_mode == "Upload File":
+            if not profiles_file:
+                st.error("Please upload the nurse profiles Excel file.")
+                st.stop()
+            df_profiles = load_nurse_profiles(profiles_file)
+        else:
+            # Generate DataFrame for seniors and juniors
+            senior_count = int(num_seniors) if num_seniors is not None else 0
+            junior_count = int(num_juniors) if num_juniors is not None else 0
+            senior_names = [f"S{str(i).zfill(2)}" for i in range(senior_count)]
+            junior_names = [f"J{str(i).zfill(2)}" for i in range(junior_count)]
+            names = senior_names + junior_names
+            titles = ["Senior"] * senior_count + ["Junior"] * junior_count
+            years_exp = [3] * senior_count + [0] * junior_count  # Example: seniors have ≥3 years, juniors 0
+            df_profiles = pd.DataFrame({
+                "Name": names,
+                "Title": titles,
+                "YearsExperience": years_exp
+            })
+            # st.write(df_profiles)
+            # st.write("Detected seniors:", get_senior_set(df_profiles))
 
-        missing, extra = validate_nurse_data(df_profiles, df_prefs)
-        if missing or extra:
-            msg = "⚠️ Mismatch between nurse profiles and preferences:\n\n"
-            if missing: msg += f"Not found in preferences: {sorted(missing)}\n"
-            if extra: msg += f"Not found in profiles: {sorted(extra)}"
-            st.error(msg)
-            st.stop()
+        if prefs_file:    
+            df_prefs = load_shift_preferences(prefs_file)
+
+            missing, extra = validate_nurse_data(df_profiles, df_prefs)
+            if missing or extra:
+                msg = "⚠️ Mismatch between nurse profiles and preferences:\n\n"
+                if missing: msg += f"Not found in preferences: {sorted(missing)}\n"
+                if extra: msg += f"Not found in profiles: {sorted(extra)}"
+                st.error(msg)
+                st.stop()
+
+        else:
+            df_prefs = pd.DataFrame(index=df_profiles["Name"])
 
         st.session_state.df_profiles = df_profiles
         st.session_state.df_prefs = df_prefs

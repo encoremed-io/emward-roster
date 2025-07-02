@@ -431,13 +431,18 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         for d1, d2 in weekend_pairs:
             model.Add(sum(work[n, d1, s] for s in range(shift_types)) + 
                        sum(work[n, d2, s] for s in range(shift_types)) <= 1)
+            
+    # 5. Night shift will never be followed by AM shift
+    for n in nurse_names:
+        for d in range(1, num_days):
+            model.AddImplication(work[n, d - 1, 2], work[n, d, 0].Not())
 
-    # 5. MC days: cannot assign any shift
+    # 6. MC days: cannot assign any shift
     for n in nurse_names:
         for d in mc_sets[n]:
             model.Add(sum(work[n, d, s] for s in range(shift_types)) == 0)
 
-    # 6. Max 2 MC days/week and no more than 2 consecutive MC days
+    # 7. Max 2 MC days/week and no more than 2 consecutive MC days
     for n in nurse_names:
         mc = mc_sets[n]
         num_weeks = (num_days + DAYS_PER_WEEK - 1) // DAYS_PER_WEEK
@@ -715,7 +720,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         solver.parameters.relative_gap_limit = 0.01
         solver.parameters.num_search_workers = 8
         solver.parameters.randomize_search = True
-        solver.parameters.log_search_progress = True
+        solver.parameters.log_search_progress = False
 
         status2 = solver.Solve(model)
         logger.info(f"⏱ Solve time: {solver.WallTime():.2f} seconds")
