@@ -24,195 +24,147 @@ logger = logging.getLogger(__name__)
 
 # == ANALYSE INFEASIBILITY ==
 def analyze_infeasibility(
-    nurse_names, 
-    senior_names, 
-    mc_days, 
-    el_days_per_nurse, 
-    num_days, 
-    shift_types,
-    min_nurses_per_shift,
-    min_seniors_per_shift,
-    min_weekly_hours,
-    days_per_week,
-    shift_hours
-):
-    """Diagnoses scheduling conflicts by verifying hard constraint feasibility"""
-    reasons = []
-    
-    # Validate inputs
-    if min_nurses_per_shift <= 0 or min_seniors_per_shift <= 0:
-        reasons.append("❌ Must have at least 1 nurse and 1 senior in input.\n")
-        return reasons
+    nurse_names: list[str],
+    senior_names: set[str],
+    mc_sets: dict[str, set[int]],
+    el_sets: dict[str, set[int]],
+    al_sets: dict[str, set[int]],
+    num_days: int,
+    shift_types: int,
+    min_nurses_per_shift: int,
+    min_seniors_per_shift: int,
+    max_weekly_hours: int,
+    min_acceptable_weekly_hours: int,
+    weekend_pairs: list[tuple[int,int]],
+    back_to_back_shift: bool,
+    DAYS_PER_WEEK: int,
+    SHIFT_HOURS: list[int],
+) -> list[str]:
+    """
+    Returns a list of human-readable reasons why no feasible solution exists,
+    checking every hard constraint in isolation.
+    """
+    reasons: list[str] = []
+    # Precompute blocked days
+    blocked = {
+        n: mc_sets.get(n, set()) | el_sets.get(n, set()) | al_sets.get(n, set())
+        for n in nurse_names
+    }
 
-    # Constants for calculations
-    max_shift_hours = max(shift_hours)
-    avg_shift_hours = sum(shift_hours) / len(shift_hours)
-    two_largest_hours = sum(sorted(shift_hours, reverse=True)[:2])
-    
-    # Core staffing constraints
-    total_shifts_required = min_nurses_per_shift * num_days * shift_types
-    senior_shifts_required = min_seniors_per_shift * num_days * shift_types
-    
-    # 1. Global staffing capacity
-    total_available_shifts = 0
-    for name in nurse_names:
-        mc_days_count = len(mc_days.get(name, set()))
-        el_days_count = len(el_days_per_nurse.get(name, set()))
-        total_available_shifts += (num_days - mc_days_count - el_days_count) * 1 + el_days_count  # Count 1 shift/day when available
-        # EL days add potential for double shifts from other nurses
-        
-    if total_available_shifts < total_shifts_required:
-        deficit = total_shifts_required - total_available_shifts
-        reasons.append(f"❌ Global staffing shortage: {total_available_shifts} available shifts "
-                      f"< {total_shifts_required} required ({deficit} deficit)\n")
-
-    # 2. Senior coverage
-    senior_available_shifts = 0
-    for name in senior_names:
-        mc_days_count = len(mc_days.get(name, set()))
-        el_days_count = len(el_days_per_nurse.get(name, set()))
-        senior_available_shifts += (num_days - mc_days_count - el_days_count) * 1 + el_days_count
-        
-    if senior_available_shifts < senior_shifts_required:
-        deficit = senior_shifts_required - senior_available_shifts
-        reasons.append(f"❌ Senior coverage gap: {len(senior_names)} seniors can only provide "
-                      f"{senior_available_shifts} shifts < {senior_shifts_required} required ({deficit} deficit)\n")
-
-    # 3. Daily coverage feasibility
-    critical_days = []
-    for day in range(num_days):
-        # Track availability
-        available_nurses = set()
-        senior_avail = set()
-        el_nurses_on_day = set()
-        
-        # Identify any EL nurse on this day (for double-shift allowance)
-        any_el_day = any(day in el_days_per_nurse.get(name, set()) for name in nurse_names)
-        
-        # Calculate availability
-        for name in nurse_names:
-            if day in mc_days.get(name, set()):
-                continue  # Skip MC nurses
-                
-            if day in el_days_per_nurse.get(name, set()):
-                el_nurses_on_day.add(name)  # Track EL nurses
-                continue  # EL nurses don't work
-                
-            available_nurses.add(name)
-            if name in senior_names:
-                senior_avail.add(name)
-        
-        # Calculate effective capacity for regular nurses
-        if any_el_day:
-            # EL day allows other nurses to work double shifts
-            max_assignable_nurses = len(available_nurses) * 2
-            max_assignable_seniors = len(senior_avail) * 2
-        else:
-            # Non-EL day - each nurse works max 1 shift
-            max_assignable_nurses = len(available_nurses)
-            max_assignable_seniors = len(senior_avail)
-        
-        # Calculate total shifts needed per day
-        total_shifts_needed = min_nurses_per_shift * shift_types
-        total_senior_shifts_needed = min_seniors_per_shift * shift_types
-        
-        # Check if we can meet requirements
-        if max_assignable_nurses < total_shifts_needed:
-            critical_days.append(
-                f"Day {day+1}: {max_assignable_nurses} nurse slots < "
-                f"{total_shifts_needed} required\n"
-            )
-            
-        if max_assignable_seniors < total_senior_shifts_needed:
-            critical_days.append(
-                f"Day {day+1}: {max_assignable_seniors} senior slots < "
-                f"{total_senior_shifts_needed} required\n"
-            )
-    
-    # Format critical days output
-    if critical_days:
-        reasons.append("🚨 Critical daily staffing shortages:\n")
-        reasons.extend([f"   • {day}\n" for day in critical_days[:20]])  # Show first 20 issues
-        if len(critical_days) > 20:
-            reasons.append(f"   • ... and {len(critical_days) - 20} more\n")
-
-    # 4. Weekly hours feasibility
-    num_weeks = (num_days + days_per_week - 1) // days_per_week
-    hourly_issues = {week: [] for week in range(num_weeks)}
-    
-    for name in nurse_names:
-        weekly_mc = [0] * num_weeks
-        weekly_el = [0] * num_weeks
-        
-        # Precompute leaves per week
-        for day in range(num_days):
-            week_idx = day // days_per_week
-            if day in mc_days.get(name, set()):
-                weekly_mc[week_idx] += 1
-            if day in el_days_per_nurse.get(name, set()):
-                weekly_el[week_idx] += 1
-                
-        # Check each week
-        for week in range(num_weeks):
-            total_leaves = weekly_mc[week] + weekly_el[week]
-            work_days = days_per_week - total_leaves
-            
-            # Calculate min required hours
-            adjusted_min = max(0, min_weekly_hours - total_leaves * avg_shift_hours)
-            
-            # Calculate max possible hours
-            max_normal_hours = work_days * max_shift_hours
-            max_el_hours = weekly_el[week] * two_largest_hours
-            max_possible = max_normal_hours + max_el_hours
-            
-            if adjusted_min > max_possible:
-                hourly_issues[week].append(
-                    f"{name}: needs {adjusted_min:.1f}h, max {max_possible:.1f}h\n"
-                    f"(MC:{weekly_mc[week]} EL:{weekly_el[week]})\n"
+    # 1) Per-day, per-shift coverage (nurses & seniors)
+    for d in range(num_days):
+        for s in range(shift_types):
+            avail = [n for n in nurse_names if d not in blocked[n]]
+            if len(avail) < min_nurses_per_shift:
+                reasons.append(
+                    f"Coverage: Day {d+1}, shift {s} has only {len(avail)} nurses available < required {min_nurses_per_shift}.\n\n"
                 )
-                
-    # Format hourly issues
-    for week, nurses in hourly_issues.items():
-        if nurses:
-            week_start = week * days_per_week + 1
-            week_end = min((week + 1) * days_per_week, num_days)
-            reasons.append(f"⭕ Week {week+1} (Days {week_start}-{week_end}) hour shortages:\n")
-            reasons.extend([f"   • {n}\n" for n in nurses[:3]])
-            if len(nurses) > 3:
-                reasons.append(f"   • ... and {len(nurses) - 3} more nurses\n")
+            avail_snr = [n for n in avail if n in senior_names]
+            if len(avail_snr) < min_seniors_per_shift:
+                reasons.append(
+                    f"Senior coverage: Day {d+1}, shift {s} has only {len(avail_snr)} seniors < required {min_seniors_per_shift}.\n\n"
+                )
 
-    # 5. Consecutive leave constraint
-    for name in nurse_names:
-        all_leaves = sorted(set(mc_days.get(name, set())) | set(el_days_per_nurse.get(name, set())))
-        consecutive = 0
-        prev_day = -10  # Initialize with impossible value
-        
-        for day in sorted(all_leaves):
-            if day == prev_day + 1:  # Consecutive to previous day
-                consecutive += 1
-            else:
-                consecutive = 1  # Reset for new sequence
-                
-            prev_day = day
-            
-            if consecutive >= 3:  # 3+ consecutive days
-                reasons.append(f"⚠️ {name} has {consecutive}+ consecutive leave days\n")
+    # 2) Weekly‐hours max & min
+    num_weeks = (num_days + DAYS_PER_WEEK - 1) // DAYS_PER_WEEK
+    for n in nurse_names:
+        for w in range(num_weeks):
+            week_days = range(w * DAYS_PER_WEEK,
+                              min((w + 1) * DAYS_PER_WEEK, num_days))
+            open_days = [d for d in week_days if d not in blocked[n]]
+            # Max possible: work every shift slot on every open day
+            max_hours = sum(SHIFT_HOURS) * len(open_days)
+            if max_hours < min_acceptable_weekly_hours:
+                reasons.append(
+                    f"Weekly-min hours: Nurse {n}, week {w+1} max_possible {max_hours}h < min_accept {min_acceptable_weekly_hours}h.\n\n"
+                )
+            # Min possible: rest every open day = 0h
+            if 0 > max_weekly_hours:
+                reasons.append(
+                    f"Weekly-max hours: Nurse {n}, week {w+1} min_possible 0h > max_allowed {max_weekly_hours}h.\n\n"
+                )
+
+    # 3) Weekend rest
+    for d1, d2 in weekend_pairs:
+        # For each weekend pair, check if coverage on both days requires the same nurse
+        for n in nurse_names:
+            # if n blocked on one side, weekend rest doesn't apply
+            if d1 in blocked[n] or d2 in blocked[n]:
+                continue
+            # count others who could cover day1 & day2
+            others1 = sum(1 for m in nurse_names if m != n and d1 not in blocked[m])
+            others2 = sum(1 for m in nurse_names if m != n and d2 not in blocked[m])
+            if others1 < min_nurses_per_shift or others2 < min_nurses_per_shift:
+                reasons.append(
+                    f"Weekend-rest: to staff days {d1+1}&{d2+1}, nurse {n} would have to work both.\n\n"
+                )
                 break
 
-    # Provide fallback if no clear issues found
-    if not reasons:
-        reasons.append("🟠 No obvious constraint violations detected. Possible causes:\n")
-        reasons.append("   - Shift pattern conflicts\n")
-        reasons.append("   - Weekend rest rule violations\n")
-        reasons.append("   - Complex preference interactions\n")
+    # 4) Back-to-back prohibition (Night→AM)
+    if not back_to_back_shift:
+        for n in nurse_names:
+            for d in range(1, num_days):
+                # if nurse is open for both slots…
+                if d-1 not in blocked[n] and d not in blocked[n]:
+                    # count others for Night(d-1) & AM(d)
+                    others_night = sum(1 for m in nurse_names 
+                                       if m != n and d-1 not in blocked[m])
+                    others_am    = sum(1 for m in nurse_names 
+                                       if m != n and d   not in blocked[m])
+                    if others_night < min_nurses_per_shift and others_am < min_nurses_per_shift:
+                        reasons.append(
+                            f"Back-to-back: Nurse {n} must do Night on day {d} and AM on day {d+1}.\n\n"
+                        )
+                        break
 
+    # 5) Fixed‐assignment validity (MC/AL/EL days already enforced in normalize_fixed_assignments)
+    # 6) "≤1 shift per day (≤2 if EL)" is inherently subsumed in coverage checks above.
+
+    # 7) AM coverage for nurses and seniors
+    for d in range(num_days):
+        # who is free on day d?
+        avail = [n for n in nurse_names if d not in blocked[n]]
+        A = len(avail)
+        # for pure coverage we already check A >= min_nurses_per_shift,
+        # now check it can also satisfy the fallback:
+        needed = 2 * min_nurses_per_shift + 1
+        if A < needed:
+            reasons.append(
+                f"AM-coverage fallback: Day {d+1} only {A} available nurses, "
+                f"but need ≥ 2 × {min_nurses_per_shift}+1={needed} to ensure AM > PM and AM > Night.\n\n"
+            )
+
+        # and same for seniors on AM (they must do the > comparison):
+        avail_snr = [n for n in avail if n in senior_names]
+        S = len(avail_snr)
+        needed_s = 2 * min_seniors_per_shift + 1
+        if S < needed_s:
+            reasons.append(
+                f"Senior-AM fallback: Day {d+1} only {S} available seniors, "
+                f"but need ≥ 2 × {min_seniors_per_shift}+1={needed_s} to ensure AM seniors > PM seniors and > Night seniors.\n\n"
+            )
+
+    if reasons:
+        reasons.insert(0, "🟠 Hard constraints violated:\n\n")
+    else:
+        reasons.append(
+            "🟠 No single hard constraint violation was flagged, but the solver is still infeasible.\n\n"
+            "  This typically means two or more rules conflict in combination. Likely culprits:\n\n"
+            "    • AM-coverage fallback vs. weekly hours caps\n\n"
+            "    • Weekend-rest across back-to-back weekends\n\n"
+            "    • Complex MC/AL/EL patterns fragmenting open days\n\n"
+            "    • Fixed overrides colliding with back-to-back restrictions\n\n"
+            "➡️ Try relaxing one hard constraint at a time or adjusting leave patterns.\n\n"
+        )
+        
     # Add staffing summary
-    total_mc = sum(len(s) for s in mc_days.values())
-    total_el = sum(len(s) for s in el_days_per_nurse.values())
-    reasons.insert(0, "\n📊 Staffing Overview:\n")
+    total_mc = sum(len(s) for s in mc_sets.values())
+    total_al = sum(len(s) for s in al_sets.values())
+    total_el = sum(len(s) for s in el_sets.values())
+    reasons.append("\n\n📊 Staffing Overview:\n")
     reasons.append(f"   • Nurses: {len(nurse_names)} ({len(senior_names)} seniors)\n")
     reasons.append(f"   • Schedule: {num_days} days, {shift_types} shifts/day\n")
-    reasons.append(f"   • Leaves: {total_mc} MC + {total_el} EL days\n")
+    reasons.append(f"   • Leaves: {total_mc} MC + {total_al} AL + {total_el} EL\n")
     reasons.append(f"   • Coverage: {min_nurses_per_shift} nurses/shift ({min_seniors_per_shift} seniors)\n")
 
     return reasons
@@ -379,7 +331,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         el = el_sets[n]
         num_weeks = (num_days + DAYS_PER_WEEK - 1) // DAYS_PER_WEEK
 
-        # Precompute daily‑hours expressions if using sliding window
+        # Precompute daily-hours expressions if using sliding window
         if use_sliding_window:
             hours_by_day = [
                 sum(work[n, d, s] * int(SHIFT_HOURS[s]) for s in range(shift_types))
@@ -398,7 +350,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                     eff_max_hours = max(0, max_weekly_hours - adj)           # <= 42 - x
                     model.Add(window_hours <= eff_max_hours)
 
-        # Full‑week minimum at each 7‑day boundary (e.g. Day 6, then Day 13, etc.)
+        # Full-week minimum at each 7-day boundary (e.g. Day 6, then Day 13, etc.)
         for w in range(num_weeks):
             days = range(w * DAYS_PER_WEEK, min((w + 1) * DAYS_PER_WEEK, num_days))
 
@@ -689,11 +641,15 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             senior_names,
             mc_sets,
             el_sets,
+            al_sets,
             num_days,
             len(SHIFT_LABELS),
             min_nurses_per_shift,
             min_seniors_per_shift,
+            max_weekly_hours,
             min_acceptable_weekly_hours,
+            weekend_pairs,
+            back_to_back_shift,
             DAYS_PER_WEEK,
             SHIFT_HOURS
         )
