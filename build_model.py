@@ -7,7 +7,6 @@ import logging
 from utils.constants import *       # import all constants
 from utils.validate import *
 from utils.shift_utils import *
-from utils.hint_utils import *
 from exceptions.custom_errors import *
 
 LOG_PATH = Path(__file__).parent / "schedule_run.log"
@@ -234,7 +233,6 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                          weekend_rest: bool = True,
                          back_to_back_shift: bool = False,
                          use_sliding_window: bool = USE_SLIDING_WINDOW,
-                         rl_assignment=None,
                          fixed_assignments: Optional[Dict[Tuple[str,int], str]] = None
                          ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """
@@ -661,10 +659,6 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
     #     # soft-penalize any imbalance
     #     low_priority_penalty.append(gap * IMBALANCE_PENALTY)
-
-    # === Add RL assignment hints (warm start) ===
-    if rl_assignment is not None:
-        add_rl_hints(model, work, nurse_names, num_days, rl_assignment, add_zero_hints=False)
 
     # === Objective ===
     # === Phase 1: minimize total penalties ===

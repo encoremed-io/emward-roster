@@ -6,7 +6,6 @@ import streamlit as st
 from io import BytesIO
 from datetime import date
 from st_aggrid import GridOptionsBuilder, AgGrid, GridUpdateMode
-from nurse_env import NurseRosteringEnv
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
 from collections import Counter, defaultdict
@@ -128,8 +127,6 @@ num_days = (end_date - start_date).days + 1
 if num_days < 1:
     st.error("End date must be after start date.")
     st.stop()
-use_rl = st.sidebar.checkbox("Warm-start with RL policy", value=False)
-
 
 # --- Add dynamic scheduling parameters here ---
 st.sidebar.markdown("### Schedule Parameters")
@@ -176,7 +173,6 @@ use_sliding_window = st.sidebar.checkbox(
 # Store core state
 for key, default in {
     "fixed": {},
-    "rl_assignment": None,
     "sched_df": None,
     "summary_df": None,
     "df_profiles": None,
@@ -192,7 +188,6 @@ for key, default in {
 # Generate Schedule
 if st.sidebar.button("Generate Schedule"):
     st.session_state.fixed.clear()
-    st.session_state.rl_assignment = None
     st.session_state.start_date = pd.to_datetime(start_date)
     st.session_state.num_days = num_days
     st.session_state.all_el_overrides = {}
@@ -241,56 +236,6 @@ if st.sidebar.button("Generate Schedule"):
         st.session_state.df_profiles = df_profiles
         st.session_state.df_prefs = df_prefs
 
-        # RL warm start
-        if use_rl:
-            for h in (7, 14, 28):
-                if h >= num_days and os.path.exists(f"models/ppo_nurse_{h}d/phase1/best_model.zip") and os.path.exists(f"models/ppo_nurse_{h}d/phase2/best_model.zip"):
-                    # 1) Phase 1 rollout to minimize high-priority penalties
-                    env1 = NurseRosteringEnv(
-                        st.session_state.df_profiles,
-                        st.session_state.df_prefs,
-                        st.session_state.start_date,
-                        active_days=st.session_state.num_days,
-                        phase=1,
-                        hp_baseline=None
-                    )
-                    vec1 = DummyVecEnv([lambda: env1])
-                    model1 = PPO.load(f"models/ppo_nurse_{h}d/phase1/best_model.zip", env=vec1)
-                    obs = env1.reset()[0]            # unpack (obs,info)
-                    done = False
-                    while not done:
-                        action, _ = model1.predict(obs, deterministic=True)
-                        obs, _, done, _, _ = env1.step(int(action))
-                    # at the end of rollout, env1.cum_hp holds the minimized HP baseline
-                    hp_baseline = env1.cum_hp
-
-                    # 2) Phase 2 rollout to honor HP ≤ baseline, then optimize LP
-                    env2 = NurseRosteringEnv(
-                        st.session_state.df_profiles,
-                        st.session_state.df_prefs,
-                        st.session_state.start_date,
-                        active_days=st.session_state.num_days,
-                        phase=2,
-                        hp_baseline=hp_baseline
-                    )
-                    vec2 = DummyVecEnv([lambda: env2])
-                    model2 = PPO.load(f"models/ppo_nurse_{h}d/phase2/best_model.zip", env=vec2)
-                    obs = env2.reset()[0]
-                    done = False
-                    while not done:
-                        action, _ = model2.predict(obs, deterministic=True)
-                        obs, _, done, _, _ = env2.step(int(action))
-
-                    # 3) extract the final assignment as flat list for CP-SAT warm start
-                    #    (obs is a flattened vector of 0/1 assignments)
-                    st.session_state.rl_assignment = obs.tolist()
-                    st.sidebar.success(f"🔁 RL warm-start from {h}-day model")
-                    break
-                else:
-                    st.sidebar.error(f"⚠️ No matching RL model found!")
-                    st.info("🔁 Using fallback without warm start ...")
-                    break
-
         sched, summ, violations = build_schedule_model(
             df_profiles, df_prefs,
             pd.to_datetime(start_date), 
@@ -305,7 +250,6 @@ if st.sidebar.button("Generate Schedule"):
             weekend_rest=weekend_rest,
             back_to_back_shift=back_to_back_shift,
             use_sliding_window=use_sliding_window,
-            rl_assignment=st.session_state.rl_assignment,
             fixed_assignments=st.session_state.fixed
         )
         st.session_state.sched_df = sched
@@ -424,7 +368,6 @@ if st.session_state.sched_df is not None:
                     st.session_state.df_prefs,
                     st.session_state.start_date,
                     st.session_state.num_days,
-                    rl_assignment=st.session_state.rl_assignment,
                     fixed_assignments=fixed
                 )
                 st.session_state.sched_df   = sched2
