@@ -8,6 +8,7 @@ from utils.constants import *       # import all constants
 from utils.validate import *
 from utils.shift_utils import *
 from exceptions.custom_errors import *
+from core.hard_rules import define_hard_rules
 
 LOG_PATH = Path(__file__).parent / "schedule_run.log"
 
@@ -210,6 +211,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     random.shuffle(nurse_names)                   # Shuffle order for random shift assignments for nurses
     senior_names = get_senior_set(profiles_df)    # Assume senior nurses have ≥3 years experience
     shift_str_to_idx = {label.upper(): i for i, label in enumerate(SHIFT_LABELS)}
+    hard_rules = define_hard_rules(model)         # Track hard constraint violations
 
     if isinstance(start_date, pd.Timestamp):
         date_start: dt_date = start_date.date()
@@ -346,9 +348,9 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                     mc_count = sum(1 for i in window if i in mc)
                     al_count = sum(1 for i in window if i in al)
                     el_count = sum(1 for i in window if i in el)
-                    adj = (mc_count + al_count + el_count) * AVG_HOURS                  # MC & EL hours deducted from max/pref/min hours
-                    eff_max_hours = max(0, max_weekly_hours - adj)           # <= 42 - x
-                    model.Add(window_hours <= eff_max_hours)
+                    adj = (mc_count + al_count + el_count) * AVG_HOURS              # MC & EL hours deducted from max/pref/min hours
+                    eff_max_hours = max(0, max_weekly_hours - adj)                  # <= 42 - x
+                    model.Add(window_hours <= eff_max_hours).OnlyEnforceIf(hard_rules["Max weekly hours"].flag)
 
         # Full-week minimum at each 7-day boundary (e.g. Day 6, then Day 13, etc.)
         for w in range(num_weeks):
@@ -373,10 +375,10 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             eff_pref_hours = max(0, preferred_weekly_hours - adj)        # >= 40 - x
             eff_min_hours = max(0, min_acceptable_weekly_hours - adj)    # >= 30 - x
 
-            model.Add(weekly_hours >= eff_min_hours)
+            model.Add(weekly_hours >= eff_min_hours).OnlyEnforceIf(hard_rules["Min weekly hours"].flag)
             if not USE_SLIDING_WINDOW:
                 eff_max_hours = max(0, max_weekly_hours - adj)           # <= 42 - x 
-                model.Add(weekly_hours <= eff_max_hours)    
+                model.Add(weekly_hours <= eff_max_hours).OnlyEnforceIf(hard_rules["Max weekly hours"].flag)
 
             if eff_pref_hours > eff_min_hours:
                 flag = model.NewBoolVar(f'pref_{n}_w{w}')
@@ -388,28 +390,28 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     # 3. Each shift must have at least 4 nurses and at least 1 senior
     for d in range(num_days):
         for s in range(shift_types):
-            model.Add(sum(work[n, d, s] for n in nurse_names) >= min_nurses_per_shift)
-            model.Add(sum(work[n, d, s] for n in senior_names) >= min_seniors_per_shift)
+            model.Add(sum(work[n, d, s] for n in nurse_names) >= min_nurses_per_shift).OnlyEnforceIf(hard_rules["Min nurses"].flag)
+            model.Add(sum(work[n, d, s] for n in senior_names) >= min_seniors_per_shift).OnlyEnforceIf(hard_rules["Min seniors"].flag)
 
     # 4. Weekend work requires rest on the same day next weekend
     if weekend_rest:
         for n in nurse_names:
             for d1, d2 in weekend_pairs:
                 model.Add(sum(work[n, d1, s] for s in range(shift_types)) + 
-                        sum(work[n, d2, s] for s in range(shift_types)) <= 1)
+                        sum(work[n, d2, s] for s in range(shift_types)) <= 1).OnlyEnforceIf(hard_rules["Weekend rest"].flag)
             
     # 5. Night shift will never be followed by AM shift
     if not back_to_back_shift:
         for n in nurse_names:
             for d in range(1, num_days):
-                model.AddImplication(work[n, d - 1, 2], work[n, d, 0].Not())
+                model.AddImplication(work[n, d - 1, 2], work[n, d, 0].Not()).OnlyEnforceIf(hard_rules["No b2b"].flag)
 
     # 6. MC/AL days: cannot assign any shift
     for n in nurse_names:
         for d in mc_sets[n] | al_sets[n]:
             model.Add(sum(work[n, d, s] for s in range(shift_types)) == 0)
 
-    # 7. Max 2 MC/AL days per week and no more than 2 consecutive MC/AL days
+    # 7. Max 2 MC days per week and no more than 2 consecutive MC days
     for n in nurse_names:
         mc = mc_sets[n]
         al = al_sets[n]
@@ -418,31 +420,18 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         for w in range(num_weeks):
             days = range(w * DAYS_PER_WEEK, min((w + 1) * DAYS_PER_WEEK, num_days))
             mc_in_week = [d for d in days if d in mc]
-            al_in_week = [d for d in days if d in al]
             if len(mc_in_week) > MAX_MC_DAYS_PER_WEEK:
                 raise InvalidMCError(
                     f"❌ Nurse {n} has more than {MAX_MC_DAYS_PER_WEEK} MCs in week {w+1}.\n"
                     f"Days: {sorted(mc_in_week)}"
                 )
-            if len(al_in_week) > MAX_AL_DAYS_PER_WEEK:
-                raise InvalidALError(
-                    f"❌ Nurse {n} has more than {MAX_AL_DAYS_PER_WEEK} ALs in week {w+1}.\n"
-                    f"Days: {sorted(al_in_week)}"
-                )
 
         sorted_mc = sorted(mc)
-        sorted_al = sorted(al)
         for i in range(len(sorted_mc) - MAX_CONSECUTIVE_MC):
             if sorted_mc[i + 2] - sorted_mc[i] == MAX_CONSECUTIVE_MC:
                 raise ConsecutiveMCError(
                     f"❌ Nurse {n} has more than 2 consecutive MC days: "
                     f"{sorted_mc[i]}, {sorted_mc[i+1]}, {sorted_mc[i+2]}"
-                )
-        for i in range(len(sorted_al) - MAX_CONSECUTIVE_AL):
-            if sorted_al[i + 2] - sorted_al[i] == MAX_CONSECUTIVE_AL:
-                raise ConsecutiveALError(
-                    f"❌ Nurse {n} has more than 2 consecutive AL days: "
-                    f"{sorted_al[i]}, {sorted_al[i+1]}, {sorted_al[i+2]}.\n"
                 )
 
     # === Soft Constraints ===
@@ -485,8 +474,8 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         night_shift_nurses = sum(work[n, d, 2] for n in nurse_names)
 
         # Enforce AM > PM and AM > Night if all levels fail (hard constraint)
-        model.Add(am_shifts > pm_shift_nurses).OnlyEnforceIf(all_levels_failed)
-        model.Add(am_shifts > night_shift_nurses).OnlyEnforceIf(all_levels_failed)
+        model.Add(am_shifts > pm_shift_nurses).OnlyEnforceIf(all_levels_failed).OnlyEnforceIf(hard_rules["AM cov PM"].flag)
+        model.Add(am_shifts > night_shift_nurses).OnlyEnforceIf(all_levels_failed).OnlyEnforceIf(hard_rules["AM cov Night"].flag)
 
         # Penalties for failing soft levels
         high_priority_penalty.append(
@@ -525,8 +514,8 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         night_shift_seniors = sum(work[n, d, 2] for n in senior_names)
 
         # Enforce AM seniors > PM seniors and AM seniors > Night seniors if all levels fail (hard constraint)
-        model.Add(am_seniors > pm_shift_seniors).OnlyEnforceIf(senior_all_levels_failed)
-        model.Add(am_seniors > night_shift_seniors).OnlyEnforceIf(senior_all_levels_failed)
+        model.Add(am_seniors > pm_shift_seniors).OnlyEnforceIf(senior_all_levels_failed).OnlyEnforceIf(hard_rules["AM snr PM"].flag)
+        model.Add(am_seniors > night_shift_seniors).OnlyEnforceIf(senior_all_levels_failed).OnlyEnforceIf(hard_rules["AM snr Night"].flag)
 
         # Penalties for senior ratio violations
         high_priority_penalty.append(
@@ -614,9 +603,9 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
     # === Objective ===
     # === Phase 1: minimize total penalties ===
-    logger.info("🚀 Phase 1: minimizing penalties…")
+    logger.info("🚀 Phase 1A: checking feasibility...")
     # 1. Tell the model to minimize penalty sum
-    model.Minimize(sum(high_priority_penalty))
+    model.Maximize(sum(r.flag for r in hard_rules.values()))
 
     # debug: print model size
     proto = model.Proto()
@@ -630,33 +619,38 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     solver.parameters.randomize_search = True 
     solver.parameters.log_search_progress = False
 
-    status1 = solver.Solve(model)
+    status1a = solver.Solve(model)
+    total_hards = len(hard_rules)
+    satisfied_hards = int(solver.ObjectiveValue())
     logger.info(f"⏱ Solve time: {solver.WallTime():.2f} seconds")
-    logger.info(f"High Priority Penalty Phase 1: {solver.ObjectiveValue()}")
-    logger.info(f"Low Priority Penalty Phase 1: {solver.Value(sum(low_priority_penalty))}")
-    if status1 not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        # Detailed infeasibility analysis
-        reasons = analyze_infeasibility(
-            nurse_names,
-            senior_names,
-            mc_sets,
-            el_sets,
-            al_sets,
-            num_days,
-            len(SHIFT_LABELS),
-            min_nurses_per_shift,
-            min_seniors_per_shift,
-            max_weekly_hours,
-            min_acceptable_weekly_hours,
-            weekend_pairs,
-            back_to_back_shift,
-            DAYS_PER_WEEK,
-            SHIFT_HOURS
-        )
-        
+    if satisfied_hards != total_hards or status1a not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        dropped = [r.message for r in hard_rules.values() if solver.Value(r.flag) == 0]
         error_msg = "❌ No feasible solution. Identified issues:\n\n"
-        error_msg += "\n".join(reasons)
+        error_msg += "\n".join(f"     • {m}" for m in dropped)
+        logger.info("⚠️ No feasible solution found with minimal constraints.")
         raise NoFeasibleSolutionError(error_msg)
+    
+    logger.info("✅ Feasible solution found with minimal constraints.")
+    logger.info("🚀 Phase 1B: minimising penalties...")
+    model.Add(sum(r.flag for r in hard_rules.values()) == total_hards)
+    model.minimize(sum(high_priority_penalty))
+
+    # debug: print model size
+    proto = model.Proto()
+    logger.info(f"→ #constraints_p1 = {len(proto.constraints)},  #bool_vars = {len(proto.variables)}")
+
+    solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = 180.0  # tunable
+    solver.parameters.random_seed = 42
+    solver.parameters.relative_gap_limit = 0.01
+    solver.parameters.num_search_workers = 8
+    solver.parameters.randomize_search = True 
+    solver.parameters.log_search_progress = False
+
+    status1b = solver.Solve(model)
+    logger.info(f"⏱ Solve time: {solver.WallTime():.2f} seconds")
+    logger.info(f"High Priority Penalty Phase 1B: {solver.ObjectiveValue()}")
+    logger.info(f"Low Priority Penalty Phase 1B: {solver.Value(sum(low_priority_penalty))}")
 
     # save "best" solution found
     cached_values = {}
