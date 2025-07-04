@@ -128,16 +128,25 @@ max_weekly_hours = st.sidebar.number_input(
     help="The maximum number of hours a nurse can be scheduled to work in a week. MC and EL days reduce this cap.",
     key="max_weekly_hours"
 )
-preferred_weekly_hours = st.sidebar.number_input(
-    "Preferred weekly hours", min_value=1, value=PREFERRED_WEEKLY_HOURS,
-    help="The ideal number of hours a nurse should work per week. The model tries to meet this, but may assign less if needed. MC and EL days reduce this cap.",
-    key="preferred_weekly_hours"
-)
 min_acceptable_weekly_hours = st.sidebar.number_input(
     "Min acceptable weekly hours", min_value=1, value=MIN_ACCEPTABLE_WEEKLY_HOURS,
     help="The minimum number of hours a nurse must be scheduled for each week. MC and EL days reduce this cap.",
     key="min_acceptable_weekly_hours"
 )
+min_weekly_hours_hard = st.sidebar.checkbox(
+    "Min acceptable weekly hours is a hard constraint",
+    value=False,
+    help="If checked, the minimum weekly hours is enforced strictly.",
+    key="min_weekly_hours_hard"
+)
+preferred_weekly_hours = st.sidebar.number_input(
+    "Preferred weekly hours", min_value=1, value=PREFERRED_WEEKLY_HOURS,
+    help="The ideal number of hours a nurse should work per week. The model tries to meet this, but may assign less if needed. MC and EL days reduce this cap.",
+    key="preferred_weekly_hours",
+    disabled=min_weekly_hours_hard
+)
+if min_weekly_hours_hard:
+    preferred_weekly_hours = min_acceptable_weekly_hours    # Set to minimum acceptable hours if hard constraint is enabled
 am_coverage_min_percent = st.sidebar.slider(
     "AM coverage min percent", min_value=0, max_value=100, value=AM_COVERAGE_MIN_PERCENT,
     help="Aim for this % of shifts as AM. If not possible, will try 10% and 20% lower. If all fail, AM must outnumber PM and Night.",
@@ -149,7 +158,7 @@ am_senior_min_percent = st.sidebar.slider(
     key="am_senior_min_percent"
 )
 weekend_rest = st.sidebar.checkbox(
-    "Enforce weekend rest (rest after weekend work)", value=True,
+    "Enforce alternating weekend rest", value=True,
     help="If checked, nurses who work on a weekend must rest the same day next weekend.",
     key="weekend_rest"
 )
@@ -179,6 +188,7 @@ for key, default in {
     "max_weekly_hours": max_weekly_hours,
     "preferred_weekly_hours": preferred_weekly_hours,
     "min_acceptable_weekly_hours": min_acceptable_weekly_hours,
+    "min_weekly_hours_hard": min_weekly_hours_hard,
     "am_coverage_min_percent": am_coverage_min_percent,
     "am_senior_min_percent": am_senior_min_percent,
     "weekend_rest": weekend_rest,
@@ -245,7 +255,7 @@ if st.sidebar.button("Generate Schedule", type="primary"):
         st.session_state.df_profiles = df_profiles
         st.session_state.df_prefs = df_prefs
 
-        sched, summ, violations = build_schedule_model(
+        sched, summ, violations, metrics = build_schedule_model(
             df_profiles, df_prefs,
             pd.to_datetime(start_date), 
             num_days,
@@ -254,6 +264,7 @@ if st.sidebar.button("Generate Schedule", type="primary"):
             max_weekly_hours=st.session_state.max_weekly_hours,
             preferred_weekly_hours=st.session_state.preferred_weekly_hours,
             min_acceptable_weekly_hours=st.session_state.min_acceptable_weekly_hours,
+            min_weekly_hours_hard=st.session_state.min_weekly_hours_hard,
             am_coverage_min_percent=st.session_state.am_coverage_min_percent,
             am_senior_min_percent=st.session_state.am_senior_min_percent,
             weekend_rest=st.session_state.weekend_rest,
@@ -264,6 +275,7 @@ if st.sidebar.button("Generate Schedule", type="primary"):
         st.session_state.sched_df = sched
         st.session_state.summary_df = summ
         st.session_state.violations = violations
+        st.session_state.metrics = metrics
         st.session_state.original_sched_df = sched.copy()
 
         st.session_state.show_schedule_expanded = False
@@ -372,7 +384,7 @@ if st.session_state.sched_df is not None:
                 st.session_state.fixed = fixed
 
                 # re-solve starting from earliest EL day (included)
-                sched2, summ2, violations2 = build_schedule_model(
+                sched2, summ2, violations2, metrics2 = build_schedule_model(
                     st.session_state.df_profiles,
                     st.session_state.df_prefs,
                     st.session_state.start_date,
@@ -382,6 +394,7 @@ if st.session_state.sched_df is not None:
                     st.session_state.max_weekly_hours,
                     st.session_state.preferred_weekly_hours,
                     st.session_state.min_acceptable_weekly_hours,
+                    st.session_state.min_weekly_hours_hard,
                     st.session_state.am_coverage_min_percent,
                     st.session_state.am_senior_min_percent,
                     st.session_state.weekend_rest,
@@ -392,6 +405,7 @@ if st.session_state.sched_df is not None:
                 st.session_state.sched_df   = sched2
                 st.session_state.summary_df = summ2
                 st.session_state.violations = violations2
+                st.session_state.metrics = metrics2
 
                 st.success(f"Re-solved from day {w0} onward.")
                 st.session_state.show_schedule_expanded = False
@@ -409,7 +423,22 @@ if st.session_state.sched_df is not None:
         st.caption("These are soft constraint violations that the model tried to minimize.")
 
         for category, items in violations.items():
-            # Determine count presentation
+            count = len(items) if hasattr(items, "__len__") and not isinstance(items, str) else items
+            st.markdown(f"🔸 **{category}**: {count} case{'s' if count != 1 else ''}")
+
+            # List items if they exist
+            if isinstance(items, list) and items:
+                with st.expander(f"Details for {category}"):
+                    for item in items:
+                        st.markdown(f"- {item}")
+            elif isinstance(items, str) and items != "N/A":
+                st.markdown(f"- {items}")
+
+    metrics = st.session_state.get("metrics", {})
+    if metrics:
+        st.subheader("📈 Metrics Summary")
+        st.caption("These are indicators of preferences satisfaction and fairness of the schedule.")
+        for category, items in metrics.items():
             match category:
                 case "Preference_Unmet":
                     total_unmet = sum(s["Prefs_Unmet"] for s in st.session_state.summary_df.to_dict(orient="records"))
@@ -421,11 +450,6 @@ if st.session_state.sched_df is not None:
                         value = f"{items}%" if isinstance(items, (int, float)) else str(items)
                         st.markdown(f"🔸 **{category}**: {value} gap")
                         st.caption("🛈 Shows the percentage difference of preferences met between the most and least satisfied nurse. Smaller gap = fairer distribution of meeting preferences.")
-                case _:
-                    count = len(items) if hasattr(items, "__len__") and not isinstance(items, str) else items
-                    st.markdown(f"🔸 **{category}**: {count} case{'s' if count != 1 else ''}")
-
-            # List items if they exist
             if isinstance(items, list) and items:
                 with st.expander(f"Details for {category}"):
                     for item in items:

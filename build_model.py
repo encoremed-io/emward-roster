@@ -181,13 +181,14 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                          max_weekly_hours: int = MAX_WEEKLY_HOURS,
                          preferred_weekly_hours: int = PREFERRED_WEEKLY_HOURS,
                          min_acceptable_weekly_hours: int = MIN_ACCEPTABLE_WEEKLY_HOURS,
+                         min_weekly_hours_hard: bool = False,
                          am_coverage_min_percent: int = AM_COVERAGE_MIN_PERCENT,
                          am_senior_min_percent: int = AM_SENIOR_MIN_PERCENT,
                          weekend_rest: bool = True,
                          back_to_back_shift: bool = False,
                          use_sliding_window: bool = USE_SLIDING_WINDOW,
                          fixed_assignments: Optional[Dict[Tuple[str,int], str]] = None
-                         ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+                         ) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict]:
     """
     Builds a nurse schedule satisfying hard constraints and optimizing soft preferences.
     Returns a schedule DataFrame, a summary DataFrame, and a violations dictionary.
@@ -258,13 +259,13 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     high_priority_penalty = []
     low_priority_penalty = []
 
-    # === Hard Constraints ===
+    # === Phase 1 Constraints ===
 
-    # === Fix MC, REST as no work ===
+    # === Handle special assignments ===
     for (nurse, day_idx), shift_label in fixed_assignments.items():
         label = shift_label.strip().upper()
 
-        # Fix MC, REST, EL as no work
+        # Fix MC, REST, AL, EL as no work
         if label in {"EL", "MC", "AL", "REST"}:
             # Block all shifts
             for s in range(shift_types):
@@ -372,20 +373,21 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             el_count = sum(1 for i in days if i in el)
             adj = (mc_count + al_count + el_count) * AVG_HOURS
 
-            eff_pref_hours = max(0, preferred_weekly_hours - adj)        # >= 40 - x
             eff_min_hours = max(0, min_acceptable_weekly_hours - adj)    # >= 30 - x
 
             model.Add(weekly_hours >= eff_min_hours).OnlyEnforceIf(hard_rules["Min weekly hours"].flag)
-            if not USE_SLIDING_WINDOW:
+            if not use_sliding_window:
                 eff_max_hours = max(0, max_weekly_hours - adj)           # <= 42 - x 
                 model.Add(weekly_hours <= eff_max_hours).OnlyEnforceIf(hard_rules["Max weekly hours"].flag)
+            
+            if not min_weekly_hours_hard:
+                eff_pref_hours = max(0, preferred_weekly_hours - adj)        # >= 40 - x
+                if eff_pref_hours > eff_min_hours:
+                    flag = model.NewBoolVar(f'pref_{n}_w{w}')
+                    model.Add(weekly_hours >= eff_pref_hours).OnlyEnforceIf(flag)
+                    model.Add(weekly_hours < eff_pref_hours).OnlyEnforceIf(flag.Not())
 
-            if eff_pref_hours > eff_min_hours:
-                flag = model.NewBoolVar(f'pref_{n}_w{w}')
-                model.Add(weekly_hours >= eff_pref_hours).OnlyEnforceIf(flag)
-                model.Add(weekly_hours < eff_pref_hours).OnlyEnforceIf(flag.Not())
-
-                high_priority_penalty.append(flag.Not() * PREF_HOURS_PENALTY)
+                    high_priority_penalty.append(flag.Not() * PREF_HOURS_PENALTY)
 
     # 3. Each shift must have at least 4 nurses and at least 1 senior
     for d in range(num_days):
@@ -434,7 +436,6 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                     f"{sorted_mc[i]}, {sorted_mc[i+1]}, {sorted_mc[i+2]}"
                 )
 
-    # === Soft Constraints ===
     # Coverage level flags
     am_lvl1 = am_coverage_min_percent          # typically 60
     am_lvl2 = max(am_lvl1 - 10, 0)              # 50
@@ -444,7 +445,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     senior_lvl2 = max(senior_lvl1 - 10, 0)              # 50
     senior_lvl3 = max(senior_lvl1 - 20, 0)              # 40
 
-    # 1. AM coverage per day should be >=60%, ideally
+    # 8. AM coverage per day should be >=60%, ideally
     for d in range(num_days):
         total_shifts = sum(work[n, d, s] for n in nurse_names for s in range(shift_types))
         am_shifts = sum(work[n, d, 0] for n in nurse_names)
@@ -484,7 +485,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             am_lvl3_ok.Not() * AM_COVERAGE_PENALTIES[2]
         )
 
-    # 2) Seniors coverage on AM shift should be >= 60%, ideally
+    # 9) Seniors coverage on AM shift should be >= 60%, ideally
     for d in range(num_days):
         am_shifts = sum(work[n, d, 0] for n in nurse_names)
         am_seniors = sum(work[n, d, 0] for n in senior_names)
@@ -524,8 +525,9 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             senior_lvl3_ok.Not() * AM_SENIOR_PENALTIES[2]
         )
 
+    # === Phase 2 Constraints ===
 
-    # 3. Preference satisfaction
+    # 1. Preference satisfaction
     for n in nurse_names:
         prefs = prefs_by_nurse[n]
         satisfied_list = []
@@ -548,7 +550,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         total_satisfied[n] = model.NewIntVar(0, num_days, f'total_sat_{n}')
         model.Add(total_satisfied[n] == sum(satisfied_list))
 
-    # 4. Fairness constraint on preference satisfaction gap
+    # 2. Fairness constraint on preference satisfaction gap
     pct_sat = {}
     for n, prefs in prefs_by_nurse.items():
         count = len(prefs)
@@ -575,7 +577,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         model.AddMaxEquality(over_gap, [gap_pct - FAIRNESS_GAP_THRESHOLD, 0])
         low_priority_penalty.append(gap_pct * FAIRNESS_GAP_PENALTY)
 
-    # 5. Balance in number of each shift type assigned to nurse
+    # 3. Balance in number of each shift type assigned to nurse
     # IMBALANCE_PENALTY = 1
 
     # # (A) Precompute counts just once
@@ -673,8 +675,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     logger.info(f"▶️ Phase 1 complete: best total penalty = {best_penalty}; best fairness gap = {cached_gap}")
 
     # === Phase 2: maximize preferences under that penalty bound ===
-    # only run phase 2 if shift preferences exist
-    # if any(shift_preferences.values()):
+    # only run phase 2 if low priority penalty exists, which means shifts preferences exist
     if low_priority_penalty:
         logger.info("🚀 Phase 2: maximizing preferences…")
         # 2. Freeze the penalty sum at its optimum
@@ -742,7 +743,13 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     num_weeks = (num_days + DAYS_PER_WEEK - 1) // DAYS_PER_WEEK     # number of weeks in the schedule
     schedule = {}
     summary = []
-    violations = {"Double Shifts": [], "Low_AM_Days": [], "Low_Senior_AM_Days": [], "Low_Hours_Nurses": [], "Preference_Unmet": [], "Fairness_Gap": cached_gap if use_fallback or 'gap_pct' not in locals() else solver.Value(gap_pct)}
+    violations = {"Double Shifts": [], "Low_AM_Days": [], "Low_Senior_AM_Days": []}
+    if not min_weekly_hours_hard:
+        violations["Low_Hours_Nurses"] = []
+    metrics = {}
+    has_shift_prefs = any(shift_preferences.values())
+    if has_shift_prefs:
+        metrics = {"Preference_Unmet": [], "Fairness_Gap": cached_gap if use_fallback or 'gap_pct' not in locals() else solver.Value(gap_pct)}
 
     for n in nurse_names:
         row = []
@@ -795,22 +802,24 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                 else:
                     prefs_unmet.append(f"{dates[d].strftime('%a %Y-%m-%d')} (wanted {SHIFT_LABELS[pref]})")
 
-        for w in range(num_weeks):
-            days = range(w * DAYS_PER_WEEK, min((w + 1) * DAYS_PER_WEEK, num_days))
-            if len(days) < DAYS_PER_WEEK:
-                continue  # skip incomplete weeks
-            mc_count_week = len(mc_sets[n] & set(days))
-            el_count_week = len(el_sets[n] & set(days))
-            eff_pref_hours = max(0, preferred_weekly_hours - (mc_count_week + el_count_week) * AVG_HOURS)
+        if not min_weekly_hours_hard:
+            for w in range(num_weeks):
+                days = range(w * DAYS_PER_WEEK, min((w + 1) * DAYS_PER_WEEK, num_days))
+                if len(days) < DAYS_PER_WEEK:
+                    continue  # skip incomplete weeks
+                mc_count_week = len(mc_sets[n] & set(days))
+                el_count_week = len(el_sets[n] & set(days))
+                al_count_week = len(al_sets[n] & set(days))
+                eff_pref_hours = max(0, preferred_weekly_hours - (mc_count_week + el_count_week + al_count_week) * AVG_HOURS)
 
-            if hours_per_week[w] < eff_pref_hours:
-                violations["Low_Hours_Nurses"].append(f"{n} Week {w+1}: {hours_per_week[w]}h; pref {eff_pref_hours}")
-
-        if prefs_unmet:
-            violations["Preference_Unmet"].append(f"{n}: {'; '.join(prefs_unmet)}")
-
+                if hours_per_week[w] < eff_pref_hours:
+                    violations["Low_Hours_Nurses"].append(f"{n} Week {w+1}: {hours_per_week[w]}h; pref {eff_pref_hours}")        
+        
         if double_shift_days:
             violations["Double Shifts"].append(f"{n}: {'; '.join(double_shift_days)}")
+
+        if prefs_unmet:
+            metrics["Preference_Unmet"].append(f"{n}: {'; '.join(prefs_unmet)}")
 
         schedule[n] = row
         summary_row = {
@@ -850,19 +859,22 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
     logger.info("\n⚠️ Soft Constraint Violations Summary:")
     for key, items in violations.items():
-        match key:
-            case "Preference_Unmet":
-                total_unmet = sum(s["Prefs_Unmet"] for s in summary)
-                logger.info(f"🔸 {key}: {total_unmet} unmet preferences across {len(items)} nurses")
-            case "Fairness_Gap":
-                logger.info(f"🔸 {key}: {len(items) if isinstance(items, list) else items} %")
-            case _:
-                logger.info(f"🔸 {key}: {len(items) if isinstance(items, list) else items} cases")
+        logger.info(f"🔸 {key}: {len(items) if isinstance(items, list) else items} cases")
         if isinstance(items, list):
             for item in items:
                 logger.info(f"   - {item}")
 
+    if has_shift_prefs:
+        logger.info("\n📊 Preferences Satisfaction and Fairness Summary:")
+        total_unmet = sum(s["Prefs_Unmet"] for s in summary)
+        logger.info(f"🔸 Preference_Unmet: {total_unmet} unmet preferences across {len(metrics['Preference_Unmet'])} nurses")
+        logger.info(f"🔸 Fairness_Gap: {metrics['Fairness_Gap']}%")
+        for key, items in metrics.items():
+            if isinstance(items, list):
+                for item in items:
+                    logger.info(f"   - {item}")
+
     logger.info("📁 Schedule and summary generated.")
     schedule_df = pd.DataFrame.from_dict(schedule, orient='index', columns=headers).reindex(og_nurse_names)
     summary_df = pd.DataFrame(summary).set_index("Nurse").reindex(og_nurse_names).reset_index()
-    return schedule_df, summary_df, violations
+    return schedule_df, summary_df, violations, metrics
