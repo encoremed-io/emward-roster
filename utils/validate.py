@@ -1,5 +1,16 @@
 import pandas as pd
-from utils.shift_utils import get_senior_set
+from utils.nurse_utils import get_senior_set
+
+def validate_data(profiles_df: pd.DataFrame, preferences_df: pd.DataFrame):
+    """ Validate that the nurse profiles and preferences match. """
+    missing, extra = validate_nurse_data(profiles_df, preferences_df)
+    if missing or extra:
+        raise ValueError(
+            f"Mismatch between nurse profiles and preferences:\n"
+            f" • Not found in preferences: {sorted(missing)}\n"
+            f" • Not found in profiles: {sorted(extra)}\n"
+        )
+    
 
 def validate_nurse_data(profiles_df: pd.DataFrame, preferences_df: pd.DataFrame):
     """ Validate that the nurse profiles and preferences match. """

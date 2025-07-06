@@ -429,7 +429,7 @@ if st.session_state.sched_df is not None:
             # List items if they exist
             if isinstance(items, list) and items:
                 with st.expander(f"Details for {category}"):
-                    for item in items:
+                    for item in sorted(items):
                         st.markdown(f"- {item}")
             elif isinstance(items, str) and items != "N/A":
                 st.markdown(f"- {items}")
@@ -452,7 +452,7 @@ if st.session_state.sched_df is not None:
                         st.caption("🛈 Shows the percentage difference of preferences met between the most and least satisfied nurse. Smaller gap = fairer distribution of meeting preferences.")
             if isinstance(items, list) and items:
                 with st.expander(f"Details for {category}"):
-                    for item in items:
+                    for item in sorted(items):
                         st.markdown(f"- {item}")
             elif isinstance(items, str) and items != "N/A":
                 st.markdown(f"- {items}")

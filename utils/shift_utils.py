@@ -1,5 +1,5 @@
 import pandas as pd
-from datetime import date as dt_date
+from datetime import timedelta, date as dt_date
 from collections import defaultdict
 from typing import Any, Dict, Set, List, Union, Optional, Tuple
 
@@ -13,6 +13,11 @@ def compute_label_offset(label: Any, date_start: dt_date) -> int:
     else:
         d = pd.to_datetime(str(label)).date()
     return (d - date_start).days
+
+
+def make_shift_index(shift_labels: List[str]) -> Dict[str, int]:
+    """Map shift code → int index for your decision variables."""
+    return {label.upper(): i for i, label in enumerate(shift_labels)}
 
 
 def get_mc_days(
@@ -94,13 +99,11 @@ def get_shift_preferences(
     return shift_prefs
 
 
-def get_senior_set(profiles_df):
-    """Get set of senior nurses."""
-    return {
-        str(row["Name"]).strip().upper()
-        for _, row in profiles_df.iterrows()
-        if row.get("Title", "").upper() == "SENIOR"
-    }
+def extract_prefs_info(preferences_df, profiles_df, date_start, nurse_names, num_days, shift_labels):
+    """ Extracts preferences information and each nurse's preferences from the preferences DataFrame. """
+    shift_preferences = get_shift_preferences(preferences_df, profiles_df, date_start, num_days, shift_labels)
+    prefs_by_nurse = {n: shift_preferences.get(n, {}) for n in nurse_names}
+    return shift_preferences, prefs_by_nurse
 
 
 def get_el_days(fixed_assignments, nurse_names):
@@ -110,6 +113,27 @@ def get_el_days(fixed_assignments, nurse_names):
         if label.strip().upper() == "EL":
             el_days[nurse].add(d)
     return el_days
+
+
+def extract_leave_days(profiles_df, preferences_df, nurse_names,start_date, num_days, fixed_assignments):
+    """
+    Extracts leave information from profiles and preferences DataFrames.
+    
+    Returns mc_sets, al_sets, el_sets
+    """
+    mc_days = get_mc_days(preferences_df, profiles_df, start_date, num_days)
+    al_days = get_al_days(preferences_df, profiles_df, start_date, num_days)
+
+    mc_sets = {n: mc_days.get(n, set()) for n in nurse_names}
+    al_sets = {n: al_days.get(n, set()) for n in nurse_names}
+    el_sets = get_el_days(fixed_assignments, nurse_names)
+
+    return mc_sets, al_sets, el_sets
+
+
+def get_days_with_el(el_sets):
+    """Returns a set of all day-indices (0 ... active_days-1) with EL assignments."""
+    return {d for days in el_sets.values() for d in days}
 
 
 def normalize_fixed_assignments(
@@ -129,3 +153,14 @@ def normalize_fixed_assignments(
             raise ValueError(f"Day index {day} out of range for {name}")
         cleaned[(n, day)] = shift.strip().upper()
     return cleaned
+
+
+def make_weekend_pairs(num_days, date_start):
+    weekend_pairs = []
+    for i in range(num_days - 1):
+        if (date_start + timedelta(days=i)).weekday() == 5:  # Saturday
+            if i + 7 < num_days:
+                weekend_pairs.append((i, i + 7))
+            if i + 8 < num_days:                             # Sunday
+                weekend_pairs.append((i + 1, i + 8))
+    return weekend_pairs

@@ -17,6 +17,7 @@ def load_nurse_profiles(
     df['Name'] = df['Name'].str.strip().str.upper()
     return df
 
+
 def load_shift_preferences(
     path_or_buffer: Union[str, bytes, IO, None] = 'data/nurse_preferences.xlsx') -> pd.DataFrame:
     """

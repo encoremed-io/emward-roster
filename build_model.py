@@ -9,6 +9,7 @@ from utils.validate import *
 from utils.shift_utils import *
 from exceptions.custom_errors import *
 from core.hard_rules import define_hard_rules
+from model.setup import *
 
 LOG_PATH = Path(__file__).parent / "schedule_run.log"
 
@@ -21,155 +22,6 @@ logging.basicConfig(
     encoding="utf-8"
 )
 logger = logging.getLogger(__name__)
-
-
-# == ANALYSE INFEASIBILITY ==
-def analyze_infeasibility(
-    nurse_names: list[str],
-    senior_names: set[str],
-    mc_sets: dict[str, set[int]],
-    el_sets: dict[str, set[int]],
-    al_sets: dict[str, set[int]],
-    num_days: int,
-    shift_types: int,
-    min_nurses_per_shift: int,
-    min_seniors_per_shift: int,
-    max_weekly_hours: int,
-    min_acceptable_weekly_hours: int,
-    weekend_pairs: list[tuple[int,int]],
-    back_to_back_shift: bool,
-    DAYS_PER_WEEK: int,
-    SHIFT_HOURS: list[int],
-) -> list[str]:
-    """
-    Returns a list of human-readable reasons why no feasible solution exists,
-    checking every hard constraint in isolation.
-    """
-    reasons: list[str] = []
-    # Precompute blocked days
-    blocked = {
-        n: mc_sets.get(n, set()) | el_sets.get(n, set()) | al_sets.get(n, set())
-        for n in nurse_names
-    }
-
-    # 1) Per-day, per-shift coverage (nurses & seniors)
-    for d in range(num_days):
-        for s in range(shift_types):
-            avail = [n for n in nurse_names if d not in blocked[n]]
-            if len(avail) < min_nurses_per_shift:
-                reasons.append(
-                    f"Coverage: Day {d+1}, shift {s} has only {len(avail)} nurses available < required {min_nurses_per_shift}.\n\n"
-                )
-            avail_snr = [n for n in avail if n in senior_names]
-            if len(avail_snr) < min_seniors_per_shift:
-                reasons.append(
-                    f"Senior coverage: Day {d+1}, shift {s} has only {len(avail_snr)} seniors < required {min_seniors_per_shift}.\n\n"
-                )
-
-    # 2) Weekly‐hours max & min
-    num_weeks = (num_days + DAYS_PER_WEEK - 1) // DAYS_PER_WEEK
-    for n in nurse_names:
-        for w in range(num_weeks):
-            week_days = range(w * DAYS_PER_WEEK,
-                              min((w + 1) * DAYS_PER_WEEK, num_days))
-            open_days = [d for d in week_days if d not in blocked[n]]
-            # Max possible: work every shift slot on every open day
-            max_hours = sum(SHIFT_HOURS) * len(open_days)
-            if max_hours < min_acceptable_weekly_hours:
-                reasons.append(
-                    f"Weekly-min hours: Nurse {n}, week {w+1} max_possible {max_hours}h < min_accept {min_acceptable_weekly_hours}h.\n\n"
-                )
-            # Min possible: rest every open day = 0h
-            if 0 > max_weekly_hours:
-                reasons.append(
-                    f"Weekly-max hours: Nurse {n}, week {w+1} min_possible 0h > max_allowed {max_weekly_hours}h.\n\n"
-                )
-
-    # 3) Weekend rest
-    for d1, d2 in weekend_pairs:
-        # For each weekend pair, check if coverage on both days requires the same nurse
-        for n in nurse_names:
-            # if n blocked on one side, weekend rest doesn't apply
-            if d1 in blocked[n] or d2 in blocked[n]:
-                continue
-            # count others who could cover day1 & day2
-            others1 = sum(1 for m in nurse_names if m != n and d1 not in blocked[m])
-            others2 = sum(1 for m in nurse_names if m != n and d2 not in blocked[m])
-            if others1 < min_nurses_per_shift or others2 < min_nurses_per_shift:
-                reasons.append(
-                    f"Weekend-rest: to staff days {d1+1}&{d2+1}, nurse {n} would have to work both.\n\n"
-                )
-                break
-
-    # 4) Back-to-back prohibition (Night→AM)
-    if not back_to_back_shift:
-        for n in nurse_names:
-            for d in range(1, num_days):
-                # if nurse is open for both slots…
-                if d-1 not in blocked[n] and d not in blocked[n]:
-                    # count others for Night(d-1) & AM(d)
-                    others_night = sum(1 for m in nurse_names 
-                                       if m != n and d-1 not in blocked[m])
-                    others_am    = sum(1 for m in nurse_names 
-                                       if m != n and d   not in blocked[m])
-                    if others_night < min_nurses_per_shift and others_am < min_nurses_per_shift:
-                        reasons.append(
-                            f"Back-to-back: Nurse {n} must do Night on day {d} and AM on day {d+1}.\n\n"
-                        )
-                        break
-
-    # 5) Fixed‐assignment validity (MC/AL/EL days already enforced in normalize_fixed_assignments)
-    # 6) "≤1 shift per day (≤2 if EL)" is inherently subsumed in coverage checks above.
-
-    # 7) AM coverage for nurses and seniors
-    for d in range(num_days):
-        # who is free on day d?
-        avail = [n for n in nurse_names if d not in blocked[n]]
-        A = len(avail)
-        # for pure coverage we already check A >= min_nurses_per_shift,
-        # now check it can also satisfy the fallback:
-        needed = 2 * min_nurses_per_shift + 1
-        if A < needed:
-            reasons.append(
-                f"AM-coverage fallback: Day {d+1} only {A} available nurses, "
-                f"but need ≥ 2 × {min_nurses_per_shift}+1={needed} to ensure AM > PM and AM > Night.\n\n"
-            )
-
-        # and same for seniors on AM (they must do the > comparison):
-        avail_snr = [n for n in avail if n in senior_names]
-        S = len(avail_snr)
-        needed_s = 2 * min_seniors_per_shift + 1
-        if S < needed_s:
-            reasons.append(
-                f"Senior-AM fallback: Day {d+1} only {S} available seniors, "
-                f"but need ≥ 2 × {min_seniors_per_shift}+1={needed_s} to ensure AM seniors > PM seniors and > Night seniors.\n\n"
-            )
-
-    if reasons:
-        reasons.insert(0, "🟠 Hard constraints violated:\n\n")
-    else:
-        reasons.append(
-            "🟠 No single hard constraint violation was flagged, but the solver is still infeasible.\n\n"
-            "  This typically means two or more rules conflict in combination. Likely culprits:\n\n"
-            "    • AM-coverage fallback vs. weekly hours caps\n\n"
-            "    • Weekend-rest across back-to-back weekends\n\n"
-            "    • Complex MC/AL/EL patterns fragmenting open days\n\n"
-            "    • Fixed overrides colliding with back-to-back restrictions\n\n"
-            "➡️ Try relaxing one hard constraint at a time or adjusting leave patterns.\n\n"
-        )
-        
-    # Add staffing summary
-    total_mc = sum(len(s) for s in mc_sets.values())
-    total_al = sum(len(s) for s in al_sets.values())
-    total_el = sum(len(s) for s in el_sets.values())
-    reasons.append("\n\n📊 Staffing Overview:\n")
-    reasons.append(f"   • Nurses: {len(nurse_names)} ({len(senior_names)} seniors)\n")
-    reasons.append(f"   • Schedule: {num_days} days, {shift_types} shifts/day\n")
-    reasons.append(f"   • Leaves: {total_mc} MC + {total_al} AL + {total_el} EL\n")
-    reasons.append(f"   • Coverage: {min_nurses_per_shift} nurses/shift ({min_seniors_per_shift} seniors)\n")
-
-    return reasons
-
 
 # == Build Schedule Model ==
 def build_schedule_model(profiles_df: pd.DataFrame,
@@ -194,67 +46,19 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     Returns a schedule DataFrame, a summary DataFrame, and a violations dictionary.
     """
     # === Validate inputs ===
-    missing, extra = validate_nurse_data(profiles_df, preferences_df)
-    if missing or extra:
-        raise InputMismatchError(
-            f"Mismatch between nurse profiles and preferences:\n"
-            f" • Not found in preferences: {sorted(missing)}\n"
-            f" • Not found in profiles: {sorted(extra)}\n"
-        )
+    validate_data(profiles_df, preferences_df)
 
     # === Model setup ===
-    import random
     logger.info("📋 Building model...")
-    model = cp_model.CpModel()
-    nurses = profiles_df.to_dict(orient='records')
-    nurse_names = [n['Name'].strip().upper() for n in nurses]
-    og_nurse_names = nurse_names.copy()           # Save original order of list
-    random.shuffle(nurse_names)                   # Shuffle order for random shift assignments for nurses
-    senior_names = get_senior_set(profiles_df)    # Assume senior nurses have ≥3 years experience
-    shift_str_to_idx = {label.upper(): i for i, label in enumerate(SHIFT_LABELS)}
-    hard_rules = define_hard_rules(model)         # Track hard constraint violations
-
-    if isinstance(start_date, pd.Timestamp):
-        date_start: dt_date = start_date.date()
-    else:
-        date_start = start_date
-
-    # === Normalise EL days ===
-    fixed_assignments = normalize_fixed_assignments(
-        fixed_assignments,
-        set(nurse_names),
-        num_days
+    model, nurse_names, og_nurse_names, senior_names, shift_str_to_idx, date_start, \
+    hard_rules, shift_preferences, prefs_by_nurse, fixed_assignments, mc_sets, \
+    al_sets, el_sets, weekend_pairs, shift_types, work = setup_model(
+        profiles_df, preferences_df, start_date, num_days, SHIFT_LABELS, fixed_assignments
     )
-
-    # === Preferences and MC days ===
-    shift_preferences, mc_days, al_days = (
-        get_shift_preferences(preferences_df, profiles_df, date_start, num_days, SHIFT_LABELS),
-        get_mc_days(preferences_df, profiles_df, date_start, num_days),
-        get_al_days(preferences_df, profiles_df, date_start, num_days)
-    )
-
-    # === Precompute per-nurse lookups ===
-    mc_sets = {n: mc_days.get(n, set()) for n in nurse_names}
-    al_sets = {n: al_days.get(n, set()) for n in nurse_names}
-    el_sets = get_el_days(fixed_assignments, nurse_names)
-    days_with_el = {d for days in el_sets.values() for d in days}
-    prefs_by_nurse = {n: shift_preferences.get(n, {}) for n in nurse_names}
-
-    weekend_pairs = []
-    for i in range(num_days - 1):
-        if (date_start + timedelta(days=i)).weekday() == 5:  # Saturday
-            if i + 7 < num_days:
-                weekend_pairs.append((i, i + 7))
-            if i + 8 < num_days:                             # Sunday
-                weekend_pairs.append((i + 1, i + 8))
 
     # === Variables ===
-    shift_types = len(SHIFT_LABELS)
-    work = {
-        (n, d, s): model.NewBoolVar(f'work_{n}_{d}_{s}')
-        for n in nurse_names for d in range(num_days) for s in range(shift_types)
-    }
-    satisfied = {}
+    days_with_el = {d for days in el_sets.values() for d in days}
+    is_satisfied = {}
     total_satisfied = {}
     high_priority_penalty = []
     low_priority_penalty = []
@@ -538,13 +342,13 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                 sat = model.NewBoolVar(f'sat_{n}_{d}')
                 model.Add(work[n, d, s] == 1).OnlyEnforceIf(sat)
                 model.Add(work[n, d, s] == 0).OnlyEnforceIf(sat.Not())
-                satisfied[(n, d)] = sat
+                is_satisfied[(n, d)] = sat
                 satisfied_list.append(sat)
                 # Add penalty if preference not satisfied
                 low_priority_penalty.append(sat.Not() * PREF_MISS_PENALTY)
             else:
                 satisfied_const = model.NewConstant(0)
-                satisfied[(n, d)] = satisfied_const
+                is_satisfied[(n, d)] = satisfied_const
                 satisfied_list.append(satisfied_const)
 
         total_satisfied[n] = model.NewIntVar(0, num_days, f'total_sat_{n}')
@@ -861,7 +665,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     for key, items in violations.items():
         logger.info(f"🔸 {key}: {len(items) if isinstance(items, list) else items} cases")
         if isinstance(items, list):
-            for item in items:
+            for item in sorted(items):
                 logger.info(f"   - {item}")
 
     if has_shift_prefs:
@@ -871,7 +675,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         logger.info(f"🔸 Fairness_Gap: {metrics['Fairness_Gap']}%")
         for key, items in metrics.items():
             if isinstance(items, list):
-                for item in items:
+                for item in sorted(items):
                     logger.info(f"   - {item}")
 
     logger.info("📁 Schedule and summary generated.")
