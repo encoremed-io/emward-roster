@@ -1,3 +1,4 @@
+from matplotlib.pyplot import step
 import pandas as pd
 from ortools.sat.python import cp_model
 from datetime import timedelta, date as dt_date
@@ -249,7 +250,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     senior_lvl2 = max(senior_lvl1 - 10, 0)              # 50
     senior_lvl3 = max(senior_lvl1 - 20, 0)              # 40
 
-    # 8. AM coverage per day should be >=60%, ideally
+    # 8. AM coverage per day should be >=60% of total working nurses, ideally
     for d in range(num_days):
         total_shifts = sum(work[n, d, s] for n in nurse_names for s in range(shift_types))
         am_shifts = sum(work[n, d, 0] for n in nurse_names)
@@ -289,45 +290,86 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             am_lvl3_ok.Not() * AM_COVERAGE_PENALTIES[2]
         )
 
-    # 9) Seniors coverage on AM shift should be >= 60%, ideally
+    # 9) Seniors coverage on AM shift should be >= 60% of total AM seniors, ideally
+    # for d in range(num_days):
+    #     am_shifts = sum(work[n, d, 0] for n in nurse_names)
+    #     am_seniors = sum(work[n, d, 0] for n in senior_names)
+
+    #     # Senior ratio level flags
+    #     senior_lvl1_ok = model.NewBoolVar(f'day_{d}_am_senior_lvl1')
+    #     senior_lvl2_ok = model.NewBoolVar(f'day_{d}_am_senior_lvl2')
+    #     senior_lvl3_ok = model.NewBoolVar(f'day_{d}_am_senior_lvl3')
+
+    #     # Soft targets: senior nurses on AM shifts
+    #     model.Add(am_seniors * 100 >= senior_lvl1 * am_shifts).OnlyEnforceIf(senior_lvl1_ok)
+    #     model.Add(am_seniors * 100 <  senior_lvl1 * am_shifts).OnlyEnforceIf(senior_lvl1_ok.Not())
+
+    #     model.Add(am_seniors * 100 >= senior_lvl2 * am_shifts).OnlyEnforceIf(senior_lvl2_ok)
+    #     model.Add(am_seniors * 100 <  senior_lvl2 * am_shifts).OnlyEnforceIf(senior_lvl2_ok.Not())
+
+    #     model.Add(am_seniors * 100 >= senior_lvl3 * am_shifts).OnlyEnforceIf(senior_lvl3_ok)
+    #     model.Add(am_seniors * 100 <  senior_lvl3 * am_shifts).OnlyEnforceIf(senior_lvl3_ok.Not())
+
+    #     # Hard fallback: all levels failed
+    #     senior_all_levels_failed = model.NewBoolVar(f'day_{d}_am_senior_all_levels_failed')
+    #     model.AddBoolAnd([senior_lvl1_ok.Not(), senior_lvl2_ok.Not(), senior_lvl3_ok.Not()]).OnlyEnforceIf(senior_all_levels_failed)
+    #     model.AddBoolOr([senior_lvl1_ok, senior_lvl2_ok, senior_lvl3_ok]).OnlyEnforceIf(senior_all_levels_failed.Not())
+
+    #     # # Explicit PM and Night seniors shift counts
+    #     # pm_shift_seniors = sum(work[n, d, 1] for n in senior_names)
+    #     # night_shift_seniors = sum(work[n, d, 2] for n in senior_names)
+
+    #     # # Enforce AM seniors > PM seniors and AM seniors > Night seniors if all levels fail (hard constraint)
+    #     # model.Add(am_seniors > pm_shift_seniors).OnlyEnforceIf(senior_all_levels_failed).OnlyEnforceIf(hard_rules["AM snr PM"].flag)
+    #     # model.Add(am_seniors > night_shift_seniors).OnlyEnforceIf(senior_all_levels_failed).OnlyEnforceIf(hard_rules["AM snr Night"].flag)
+
+    #     am_juniors = am_shifts - am_seniors     # number of junior nurses on AM shift
+
+    #     # Enforce AM senior >= AM junior if all levels fail (hard constraint)
+    #     model.Add(am_seniors >= am_juniors).OnlyEnforceIf(senior_all_levels_failed).OnlyEnforceIf(hard_rules["AM snr majority"].flag)
+
+    #     # Penalties for senior ratio violations
+    #     high_priority_penalty.append(
+    #         senior_lvl1_ok.Not() * AM_SENIOR_PENALTIES[0] +
+    #         senior_lvl2_ok.Not() * AM_SENIOR_PENALTIES[1] +
+    #         senior_lvl3_ok.Not() * AM_SENIOR_PENALTIES[2]
+    #     )
+
+    step = 5
+    
+    levels = list(range(am_senior_min_percent, 50, -step))
+    penalties = [(i + 1) * 5 for i in range(len(levels))]
+
     for d in range(num_days):
         am_shifts = sum(work[n, d, 0] for n in nurse_names)
         am_seniors = sum(work[n, d, 0] for n in senior_names)
+        am_juniors = am_shifts - am_seniors     # number of junior nurses on AM shift
 
-        # Senior ratio level flags
-        senior_lvl1_ok = model.NewBoolVar(f'day_{d}_am_senior_lvl1')
-        senior_lvl2_ok = model.NewBoolVar(f'day_{d}_am_senior_lvl2')
-        senior_lvl3_ok = model.NewBoolVar(f'day_{d}_am_senior_lvl3')
+        flags = [model.NewBoolVar(f"day_{d}_senior_min_{lvl}") for lvl in levels]
+        fallback = model.NewBoolVar(f"day_{d}_all_levels_failed")
 
-        # Soft targets: senior nurses on AM shifts
-        model.Add(am_seniors * 100 >= senior_lvl1 * am_shifts).OnlyEnforceIf(senior_lvl1_ok)
-        model.Add(am_seniors * 100 <  senior_lvl1 * am_shifts).OnlyEnforceIf(senior_lvl1_ok.Not())
+        for flag, lvl in zip(flags, levels):
+            model.Add(am_seniors * 100 >= lvl * am_shifts).OnlyEnforceIf(flag)
+            model.Add(am_seniors * 100 < lvl * am_shifts).OnlyEnforceIf(flag.Not())
 
-        model.Add(am_seniors * 100 >= senior_lvl2 * am_shifts).OnlyEnforceIf(senior_lvl2_ok)
-        model.Add(am_seniors * 100 <  senior_lvl2 * am_shifts).OnlyEnforceIf(senior_lvl2_ok.Not())
+        model.AddBoolAnd([flag.Not() for flag in flags]).OnlyEnforceIf(fallback)
+        model.AddBoolOr(flags).OnlyEnforceIf(fallback.Not())
 
-        model.Add(am_seniors * 100 >= senior_lvl3 * am_shifts).OnlyEnforceIf(senior_lvl3_ok)
-        model.Add(am_seniors * 100 <  senior_lvl3 * am_shifts).OnlyEnforceIf(senior_lvl3_ok.Not())
+        model.Add(am_seniors >= am_juniors).OnlyEnforceIf(fallback).OnlyEnforceIf(hard_rules["AM snr majority"].flag)
 
-        # Hard fallback: all levels failed
-        senior_all_levels_failed = model.NewBoolVar(f'day_{d}_am_senior_all_levels_failed')
-        model.AddBoolAnd([senior_lvl1_ok.Not(), senior_lvl2_ok.Not(), senior_lvl3_ok.Not()]).OnlyEnforceIf(senior_all_levels_failed)
-        model.AddBoolOr([senior_lvl1_ok, senior_lvl2_ok, senior_lvl3_ok]).OnlyEnforceIf(senior_all_levels_failed.Not())
+        for i, flag in enumerate(flags):
+            penalise = model.NewBoolVar(f"day_{d}_penalise_lvl_{levels[i]}")
+            if i == 0:
+                model.Add(penalise == flag.Not())
+            else:
+                # penalise is true if all previous flags are false and this flag is false
+                model.AddBoolAnd([f.Not() for f in flags[:i]] + [flag.Not()]).OnlyEnforceIf(penalise)
+                # If any previous flag is true or this flag is true, penalise must be false
+                model.AddImplication(flag, penalise.Not())
+                for prev_flag in flags[:i]:
+                    model.AddImplication(prev_flag, penalise.Not())
+            high_priority_penalty.append(penalise * penalties[i])
 
-        # Explicit PM and Night seniors shift counts
-        pm_shift_seniors = sum(work[n, d, 1] for n in senior_names)
-        night_shift_seniors = sum(work[n, d, 2] for n in senior_names)
-
-        # Enforce AM seniors > PM seniors and AM seniors > Night seniors if all levels fail (hard constraint)
-        model.Add(am_seniors > pm_shift_seniors).OnlyEnforceIf(senior_all_levels_failed).OnlyEnforceIf(hard_rules["AM snr PM"].flag)
-        model.Add(am_seniors > night_shift_seniors).OnlyEnforceIf(senior_all_levels_failed).OnlyEnforceIf(hard_rules["AM snr Night"].flag)
-
-        # Penalties for senior ratio violations
-        high_priority_penalty.append(
-            senior_lvl1_ok.Not() * AM_SENIOR_PENALTIES[0] +
-            senior_lvl2_ok.Not() * AM_SENIOR_PENALTIES[1] +
-            senior_lvl3_ok.Not() * AM_SENIOR_PENALTIES[2]
-        )
 
     # === Phase 2 Constraints ===
 
@@ -427,7 +469,9 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
     status1a = solver.Solve(model)
     total_hards = len(hard_rules)
+    logger.info(total_hards)
     satisfied_hards = int(solver.ObjectiveValue())
+    logger.info(satisfied_hards)
     logger.info(f"⏱ Solve time: {solver.WallTime():.2f} seconds")
     if satisfied_hards != total_hards or status1a not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         dropped = [r.message for r in hard_rules.values() if solver.Value(r.flag) == 0]

@@ -154,7 +154,7 @@ am_coverage_min_percent = st.sidebar.slider(
 )
 am_senior_min_percent = st.sidebar.slider(
     "AM senior min percent", min_value=0, max_value=100, value=AM_SENIOR_MIN_PERCENT,
-    help="Aim for this % of senior shifts as AM. If not possible, will try 10% and 20% lower. If all fail, AM senior shifts must outnumber PM and Night.",
+    help="Aim for this % of senior shifts as AM. If not possible, will try 10% and 20% lower. If all fail, AM seniors must outnumber AM juniors.",
     key="am_senior_min_percent"
 )
 weekend_rest = st.sidebar.checkbox(
