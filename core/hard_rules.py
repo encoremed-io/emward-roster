@@ -34,13 +34,9 @@ def define_hard_rules(model: cp_model.CpModel) -> dict[str, HardRule]:
             model.NewBoolVar("assume_am_cov_night"),
             "AM coverage cannot always exceed Night coverage."
         ),
-        "AM snr PM": HardRule(
-            model.NewBoolVar("assume_am_snr_pm"),
-            "AM senior coverage cannot always exceed senior PM coverage."
-        ),
-        "AM snr Night": HardRule(
-            model.NewBoolVar("assume_am_snr_night"),
-            "AM senior coverage cannot always exceed senior Night coverage."
+        "AM snr min": HardRule(
+            model.NewBoolVar("assume_am_snr_min"),
+            "Minimum AM senior coverage cannot be met."
         ),
         "AM snr majority": HardRule(
             model.NewBoolVar("assume_am_snr_majority"),

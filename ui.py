@@ -153,10 +153,27 @@ am_coverage_min_percent = st.sidebar.slider(
     key="am_coverage_min_percent"
 )
 am_senior_min_percent = st.sidebar.slider(
-    "AM senior min percent", min_value=0, max_value=100, value=AM_SENIOR_MIN_PERCENT,
-    help="Aim for this % of senior shifts as AM. If not possible, will try 10% and 20% lower. If all fail, AM seniors must outnumber AM juniors.",
+    "AM senior min percent", min_value=50, max_value=100, value=AM_SENIOR_MIN_PERCENT,
+    help="Aim for at least this % of nurses in AM being seniors.",
     key="am_senior_min_percent"
 )
+am_senior_min_hard = st.sidebar.checkbox(
+    "Minimum AM senior coverage is a hard constraint",
+    value=False,
+    help=(
+        "• If checked, the system strictly applies the senior percentage for AM shifts.\n\n"
+        "• If unchecked, it lowers the target gradually using the step value, but always ensures seniors are not outnumbered by juniors in AM shifts."
+    ),
+    key="am_senior_min_hard"
+)
+am_senior_relax_step = st.sidebar.number_input(
+    "AM senior relax step", min_value=0, max_value=50, value=AM_SENIOR_RELAX_STEP,
+    help="If minimum AM senior coverage is not met, gradually relax by this % of senior nurses for AM shifts.",
+    disabled=am_senior_min_hard,
+    key="am_senior_relax_step"
+)
+if am_senior_min_hard:
+    am_senior_relax_step = 0
 weekend_rest = st.sidebar.checkbox(
     "Enforce alternating weekend rest", value=True,
     help="If checked, nurses who work on a weekend must rest the same day next weekend.",
@@ -191,6 +208,8 @@ for key, default in {
     "min_weekly_hours_hard": min_weekly_hours_hard,
     "am_coverage_min_percent": am_coverage_min_percent,
     "am_senior_min_percent": am_senior_min_percent,
+    "am_senior_min_hard":  am_senior_min_hard,
+    "am_senior_relax_step": am_senior_relax_step,
     "weekend_rest": weekend_rest,
     "back_to_back_shift": back_to_back_shift,
     "use_sliding_window": use_sliding_window,
@@ -267,6 +286,8 @@ if st.sidebar.button("Generate Schedule", type="primary"):
             min_weekly_hours_hard=st.session_state.min_weekly_hours_hard,
             am_coverage_min_percent=st.session_state.am_coverage_min_percent,
             am_senior_min_percent=st.session_state.am_senior_min_percent,
+            am_senior_min_hard=st.session_state.am_senior_min_hard,
+            am_senior_relax_step=st.session_state.am_senior_relax_step,
             weekend_rest=st.session_state.weekend_rest,
             back_to_back_shift=st.session_state.back_to_back_shift,
             use_sliding_window=st.session_state.use_sliding_window,
@@ -397,6 +418,8 @@ if st.session_state.sched_df is not None:
                     st.session_state.min_weekly_hours_hard,
                     st.session_state.am_coverage_min_percent,
                     st.session_state.am_senior_min_percent,
+                    st.session_state.am_senior_min_hard,
+                    st.session_state.am_senior_relax_step,
                     st.session_state.weekend_rest,
                     st.session_state.back_to_back_shift,
                     st.session_state.use_sliding_window,
@@ -440,10 +463,10 @@ if st.session_state.sched_df is not None:
         st.caption("These are indicators of preferences satisfaction and fairness of the schedule.")
         for category, items in metrics.items():
             match category:
-                case "Preference_Unmet":
+                case "Preference Unmet":
                     total_unmet = sum(s["Prefs_Unmet"] for s in st.session_state.summary_df.to_dict(orient="records"))
                     st.markdown(f"🔸 **{category}**: {total_unmet} unmet preferences across {len(items)} nurse{'s' if len(items)!=1 else ''}")
-                case "Fairness_Gap":
+                case "Fairness Gap":
                     if items == "N/A":
                         st.markdown(f"🔸 **{category}**: N/A")
                     else:
