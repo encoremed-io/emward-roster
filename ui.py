@@ -125,12 +125,12 @@ num_days = (end_date - start_date).days + 1
 
 # --- Add dynamic shift durations --- #
 st.sidebar.markdown("### Shift Durations")
-st.sidebar.subheader("☀️ AM Shift")     # 7AM - 3PM
+st.sidebar.subheader("☀️ AM Shift")     # 7AM - 2PM
 am_start = st.sidebar.time_input("AM Start", time(7, 0), key="am_start")
-am_end   = st.sidebar.time_input("AM End",   time(15, 0), key="am_end")
+am_end   = st.sidebar.time_input("AM End",   time(14, 0), key="am_end")
 
-st.sidebar.subheader("🌇 PM Shift")     # 3PM - 9PM
-pm_start = st.sidebar.time_input("PM Start", time(15, 0), key="pm_start")
+st.sidebar.subheader("🌇 PM Shift")     # 2PM - 9PM
+pm_start = st.sidebar.time_input("PM Start", time(14, 0), key="pm_start")
 pm_end   = st.sidebar.time_input("PM End",   time(21, 0), key="pm_end")
 
 st.sidebar.subheader("🌙 Night Shift")  # 9PM - 7AM
