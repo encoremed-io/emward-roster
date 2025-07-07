@@ -3,12 +3,8 @@ import os
 os.environ['STREAMLIT_SERVER_FILE_WATCHER_TYPE'] = 'none'
 
 import streamlit as st
-from io import BytesIO
-from datetime import date
+from datetime import date, time
 from st_aggrid import GridOptionsBuilder, AgGrid, GridUpdateMode
-from nurse_env import NurseRosteringEnv
-from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv
 from collections import Counter, defaultdict
 import traceback
 import logging
@@ -16,9 +12,20 @@ from build_model import build_schedule_model
 from utils.loader import *
 from utils.validate import *
 from utils.constants import *
+from utils.download import download_excel
+from utils.shift_utils import shift_duration_minutes
 from exceptions.custom_errors import *
 
-logging.basicConfig(filename="ui_error.log", level=logging.ERROR)
+LOG_PATH = os.path.join(os.path.dirname(__file__), "ui_error.log")
+
+try:
+    with open(LOG_PATH, "w") as f:
+        pass
+except FileNotFoundError:
+    os.makedirs(os.path.dirname(LOG_PATH))
+    with open(LOG_PATH, "w") as f:
+        pass
+logging.basicConfig(filename=LOG_PATH, level=logging.ERROR)
 
 CUSTOM_ERRORS = (
     NoFeasibleSolutionError,
@@ -31,25 +38,15 @@ CUSTOM_ERRORS = (
 st.set_page_config(page_title="Nurse Roster Scheduler", layout="wide")
 st.title("🩺 Nurse Roster Scheduler")
 st.markdown("""
-Upload your nurse profiles and preferences, choose a start date and horizon,
-then generate a roster. This uses CP-SAT under the hood (with optional RL warm-start).
+Upload your nurse profiles and preferences, choose a start and end date, enter schedule parameters,
+then generate a roster.\n 
+This uses CP-SAT under the hood.
 """)
 
-def download_excel(df, filename):
-    buffer = BytesIO()
-    df.to_excel(buffer,
-                index=not df.index.equals(pd.RangeIndex(len(df))),
-                engine="xlsxwriter")
-    buffer.seek(0)
-    st.download_button(
-        label=f"Download {filename}",
-        data=buffer,
-        file_name=filename,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
 
 def show_editable_schedule():
-    st.subheader("📅 Schedule (Type 'EL' for emergency leave or 'MC' for medical leave)")
+    st.subheader("📅 Editable Schedule")
+    st.caption("Type 'EL' for emergency leave or 'MC' for medical leave")
     sched_df = st.session_state.sched_df
     if sched_df.empty:
         st.write("No schedule data to show.")
@@ -105,7 +102,7 @@ profile_input_mode = st.sidebar.radio(
 )
 
 if profile_input_mode == "Upload File":
-    profiles_file = st.sidebar.file_uploader("Upload nurse_profiles.xlsx", type=["xlsx"])
+    profiles_file = st.sidebar.file_uploader("Upload Nurse Profiles", type=["xlsx"])
     num_seniors = num_juniors = None
 else:
     profiles_file = None
@@ -113,7 +110,7 @@ else:
     num_juniors = st.sidebar.number_input("Number of Junior Nurses", min_value=1)
 
 prefs_file = st.sidebar.file_uploader(
-    "Upload nurse_preferences.xlsx (Optional)", 
+    "Upload Nurse Preferences (Optional)", 
     type=["xlsx"],
     help=(
         "• If uploading profiles, ensure nurse names match in both files.\n\n"
@@ -121,68 +118,154 @@ prefs_file = st.sidebar.file_uploader(
         "• Preferences file only applies to specified dates in file."
     )
 )
-start_date = st.sidebar.date_input("Schedule start date", value=date.today())
-end_date = st.sidebar.date_input("Schedule end date", value=date.today())
+start_date = pd.to_datetime(st.sidebar.date_input("Schedule start date", value=date.today(), key="start_date"))
+end_date = pd.to_datetime(st.sidebar.date_input("Schedule end date", value=date.today(), key="end_date"))
 # num_days = st.sidebar.slider("Number of days", 7, 28, 14)
 num_days = (end_date - start_date).days + 1
-if num_days < 1:
-    st.error("End date must be after start date.")
-    st.stop()
-use_rl = st.sidebar.checkbox("Warm-start with RL policy", value=False)
 
+# --- Add dynamic shift durations --- #
+st.sidebar.markdown("### Shift Durations")
+st.sidebar.subheader("☀️ AM Shift")     # 7AM - 3PM
+am_start = st.sidebar.time_input("AM Start", time(7, 0), key="am_start")
+am_end   = st.sidebar.time_input("AM End",   time(15, 0), key="am_end")
+
+st.sidebar.subheader("🌇 PM Shift")     # 3PM - 9PM
+pm_start = st.sidebar.time_input("PM Start", time(15, 0), key="pm_start")
+pm_end   = st.sidebar.time_input("PM End",   time(21, 0), key="pm_end")
+
+st.sidebar.subheader("🌙 Night Shift")  # 9PM - 7AM
+night_start = st.sidebar.time_input("Night Start", time(21, 0), key="night_start")
+night_end   = st.sidebar.time_input("Night End",   time(7, 0), key="night_end")
+
+shift_durations = [
+    shift_duration_minutes(am_start, am_end),
+    shift_duration_minutes(pm_start, pm_end),
+    shift_duration_minutes(night_start, night_end)
+]
 
 # --- Add dynamic scheduling parameters here ---
 st.sidebar.markdown("### Schedule Parameters")
 min_nurses_per_shift = st.sidebar.number_input(
-    "Minimum nurses per shift", min_value=1, value=MIN_NURSES_PER_SHIFT
+    "Minimum nurses per shift", min_value=1, value=MIN_NURSES_PER_SHIFT,
+    key="min_nurses_per_shift"
 )
 min_seniors_per_shift = st.sidebar.number_input(
-    "Minimum seniors per shift", min_value=1, value=MIN_SENIORS_PER_SHIFT
+    "Minimum seniors per shift", min_value=1, value=MIN_SENIORS_PER_SHIFT,
+    key="min_seniors_per_shift"
 )
 max_weekly_hours = st.sidebar.number_input(
     "Max weekly hours", min_value=1, value=MAX_WEEKLY_HOURS,
-    help="The maximum number of hours a nurse can be scheduled to work in a week. MC and EL days reduce this cap."
-)
-preferred_weekly_hours = st.sidebar.number_input(
-    "Preferred weekly hours", min_value=1, value=PREFERRED_WEEKLY_HOURS,
-    help="The ideal number of hours a nurse should work per week. The model tries to meet this, but may assign less if needed. MC and EL days reduce this cap."
+    help="The maximum number of hours a nurse can be scheduled to work in a week. MC and EL days reduce this cap.",
+    key="max_weekly_hours"
 )
 min_acceptable_weekly_hours = st.sidebar.number_input(
     "Min acceptable weekly hours", min_value=1, value=MIN_ACCEPTABLE_WEEKLY_HOURS,
-    help="The minimum number of hours a nurse must be scheduled for each week. MC and EL days reduce this cap."
+    help="The minimum number of hours a nurse must be scheduled for each week. MC and EL days reduce this cap.",
+    key="min_acceptable_weekly_hours"
 )
+min_weekly_hours_hard = st.sidebar.checkbox(
+    "Min acceptable weekly hours is a hard constraint",
+    value=False,
+    help="If checked, the minimum weekly hours is enforced strictly.",
+    key="min_weekly_hours_hard"
+)
+preferred_weekly_hours = st.sidebar.number_input(
+    "Preferred weekly hours", min_value=1, value=PREFERRED_WEEKLY_HOURS,
+    help="The ideal number of hours a nurse should work per week. The model tries to meet this, but may assign less if needed. MC and EL days reduce this cap.",
+    key="preferred_weekly_hours",
+    disabled=min_weekly_hours_hard
+)
+if min_weekly_hours_hard:
+    preferred_weekly_hours = min_acceptable_weekly_hours    # Set to minimum acceptable hours if hard constraint is enabled
+
 am_coverage_min_percent = st.sidebar.slider(
-    "AM coverage min percent", min_value=0, max_value=100, value=AM_COVERAGE_MIN_PERCENT,
-    help="Aim for this % of shifts as AM. If not possible, will try 10% and 20% lower. If all fail, AM must outnumber PM and Night."
+    "AM coverage min percent", min_value=34, max_value=100, value=AM_COVERAGE_MIN_PERCENT,
+    help="Aim for at least this % of nurses working AM shift.",
+    key="am_coverage_min_percent"
 )
+am_coverage_min_hard = st.sidebar.checkbox(
+    "Minimum AM coverage is a hard constraint",
+    value=False,
+    help=(
+        "• If checked, the system strictly applies the AM nurse percentage.\n\n"
+        "• If unchecked, it lowers the target gradually using the step value, but always ensures AM shifts are not outnumbered by PM or Night shifts."
+    ),
+    key="am_coverage_min_hard"
+)
+am_coverage_relax_step = st.sidebar.number_input(
+    "AM relax step", min_value=1, max_value=66, value=AM_COVERAGE_RELAX_STEP,
+    help="If minimum AM coverage is not met, gradually relax by this % of AM shifts.",
+    disabled=am_coverage_min_hard,
+    key="am_coverage_relax_step"
+)
+if am_coverage_min_hard:
+    am_coverage_relax_step = 0
+
 am_senior_min_percent = st.sidebar.slider(
-    "AM senior min percent", min_value=0, max_value=100, value=AM_SENIOR_MIN_PERCENT,
-    help="Aim for this % of senior shifts as AM. If not possible, will try 10% and 20% lower. If all fail, AM senior shifts must outnumber PM and Night."
+    "AM senior min percent", min_value=50, max_value=100, value=AM_SENIOR_MIN_PERCENT,
+    help="Aim for at least this % of nurses in AM being seniors.",
+    key="am_senior_min_percent"
 )
+am_senior_min_hard = st.sidebar.checkbox(
+    "Minimum AM senior coverage is a hard constraint",
+    value=False,
+    help=(
+        "• If checked, the system strictly applies the senior percentage for AM shifts.\n\n"
+        "• If unchecked, it lowers the target gradually using the step value, but always ensures seniors are not outnumbered by juniors in AM shifts."
+    ),
+    key="am_senior_min_hard"
+)
+am_senior_relax_step = st.sidebar.number_input(
+    "AM senior relax step", min_value=1, max_value=50, value=AM_SENIOR_RELAX_STEP,
+    help="If minimum AM senior coverage is not met, gradually relax by this % of senior nurses for AM shifts.",
+    disabled=am_senior_min_hard,
+    key="am_senior_relax_step"
+)
+if am_senior_min_hard:
+    am_senior_relax_step = 0
+
 weekend_rest = st.sidebar.checkbox(
-    "Enforce weekend rest (rest after weekend work)", value=True,
-    help="If checked, nurses who work on a weekend must rest the same day next weekend."
+    "Enforce alternating weekend rest", value=True,
+    help="If checked, nurses who work on a weekend must rest the same day next weekend.",
+    key="weekend_rest"
 )
 back_to_back_shift = st.sidebar.checkbox(
     "Allow back-to-back shifts", value=False,
-    help="If checked, nurses may be scheduled for consecutive shifts (e.g., Night followed by AM)."
+    help="If checked, nurses may be scheduled for consecutive shifts (e.g., Night followed by AM).",
+    key="back_to_back_shift"
 )
 use_sliding_window = st.sidebar.checkbox(
     "Use sliding window for weekly hours",
     value=False,
-    help="If checked, the maximum weekly hours is enforced over any consecutive 7-day window, not just calendar weeks. This provides stricter control over nurse workload."
+    help="If checked, the maximum weekly hours is enforced over any consecutive 7-day window, not just calendar weeks. This provides stricter control over nurse workload.",
+    key="use_sliding_window"
 )
 
 # Store core state
 for key, default in {
     "fixed": {},
-    "rl_assignment": None,
     "sched_df": None,
     "summary_df": None,
     "df_profiles": None,
     "df_prefs": None,
     "start_date": pd.to_datetime(start_date),
     "num_days": num_days,
+    "shift_durations": shift_durations,
+    "min_nurses_per_shift": min_nurses_per_shift,
+    "min_seniors_per_shift": min_seniors_per_shift,
+    "max_weekly_hours": max_weekly_hours,
+    "preferred_weekly_hours": preferred_weekly_hours,
+    "min_acceptable_weekly_hours": min_acceptable_weekly_hours,
+    "min_weekly_hours_hard": min_weekly_hours_hard,
+    "am_coverage_min_percent": am_coverage_min_percent,
+    "am_coverage_min_hard": am_coverage_min_hard,
+    "am_coverage_relax_step": am_coverage_relax_step,
+    "am_senior_min_percent": am_senior_min_percent,
+    "am_senior_min_hard":  am_senior_min_hard,
+    "am_senior_relax_step": am_senior_relax_step,
+    "weekend_rest": weekend_rest,
+    "back_to_back_shift": back_to_back_shift,
+    "use_sliding_window": use_sliding_window,
     "all_el_overrides": {},
     "all_mc_overrides": {}
 }.items():
@@ -190,10 +273,8 @@ for key, default in {
         st.session_state[key] = default
 
 # Generate Schedule
-if st.sidebar.button("Generate Schedule"):
+if st.sidebar.button("Generate Schedule", type="primary"):
     st.session_state.fixed.clear()
-    st.session_state.rl_assignment = None
-    st.session_state.start_date = pd.to_datetime(start_date)
     st.session_state.num_days = num_days
     st.session_state.all_el_overrides = {}
     st.session_state.all_mc_overrides = {}
@@ -238,79 +319,40 @@ if st.sidebar.button("Generate Schedule"):
         else:
             df_prefs = pd.DataFrame(index=df_profiles["Name"])
 
+        errors = validate_input_params(df_profiles, num_days, min_nurses_per_shift, min_seniors_per_shift, max_weekly_hours, preferred_weekly_hours, min_acceptable_weekly_hours)
+        if errors:
+            st.error("\n".join(errors))
+            st.stop()
+
         st.session_state.df_profiles = df_profiles
         st.session_state.df_prefs = df_prefs
 
-        # RL warm start
-        if use_rl:
-            for h in (7, 14, 28):
-                if h >= num_days and os.path.exists(f"models/ppo_nurse_{h}d/phase1/best_model.zip") and os.path.exists(f"models/ppo_nurse_{h}d/phase2/best_model.zip"):
-                    # 1) Phase 1 rollout to minimize high-priority penalties
-                    env1 = NurseRosteringEnv(
-                        st.session_state.df_profiles,
-                        st.session_state.df_prefs,
-                        st.session_state.start_date,
-                        active_days=st.session_state.num_days,
-                        phase=1,
-                        hp_baseline=None
-                    )
-                    vec1 = DummyVecEnv([lambda: env1])
-                    model1 = PPO.load(f"models/ppo_nurse_{h}d/phase1/best_model.zip", env=vec1)
-                    obs = env1.reset()[0]            # unpack (obs,info)
-                    done = False
-                    while not done:
-                        action, _ = model1.predict(obs, deterministic=True)
-                        obs, _, done, _, _ = env1.step(int(action))
-                    # at the end of rollout, env1.cum_hp holds the minimized HP baseline
-                    hp_baseline = env1.cum_hp
-
-                    # 2) Phase 2 rollout to honor HP ≤ baseline, then optimize LP
-                    env2 = NurseRosteringEnv(
-                        st.session_state.df_profiles,
-                        st.session_state.df_prefs,
-                        st.session_state.start_date,
-                        active_days=st.session_state.num_days,
-                        phase=2,
-                        hp_baseline=hp_baseline
-                    )
-                    vec2 = DummyVecEnv([lambda: env2])
-                    model2 = PPO.load(f"models/ppo_nurse_{h}d/phase2/best_model.zip", env=vec2)
-                    obs = env2.reset()[0]
-                    done = False
-                    while not done:
-                        action, _ = model2.predict(obs, deterministic=True)
-                        obs, _, done, _, _ = env2.step(int(action))
-
-                    # 3) extract the final assignment as flat list for CP-SAT warm start
-                    #    (obs is a flattened vector of 0/1 assignments)
-                    st.session_state.rl_assignment = obs.tolist()
-                    st.sidebar.success(f"🔁 RL warm-start from {h}-day model")
-                    break
-                else:
-                    st.sidebar.error(f"⚠️ No matching RL model found!")
-                    st.info("🔁 Using fallback without warm start ...")
-                    break
-
-        sched, summ, violations = build_schedule_model(
+        sched, summ, violations, metrics = build_schedule_model(
             df_profiles, df_prefs,
             pd.to_datetime(start_date), 
             num_days,
-            min_nurses_per_shift=min_nurses_per_shift,
-            min_seniors_per_shift=min_seniors_per_shift,
-            max_weekly_hours=max_weekly_hours,
-            preferred_weekly_hours=preferred_weekly_hours,
-            min_acceptable_weekly_hours=min_acceptable_weekly_hours,
-            am_coverage_min_percent=am_coverage_min_percent,
-            am_senior_min_percent=am_senior_min_percent,
-            weekend_rest=weekend_rest,
-            back_to_back_shift=back_to_back_shift,
-            use_sliding_window=use_sliding_window,
-            rl_assignment=st.session_state.rl_assignment,
+            shift_durations,
+            min_nurses_per_shift=st.session_state.min_nurses_per_shift,
+            min_seniors_per_shift=st.session_state.min_seniors_per_shift,
+            max_weekly_hours=st.session_state.max_weekly_hours,
+            preferred_weekly_hours=st.session_state.preferred_weekly_hours,
+            min_acceptable_weekly_hours=st.session_state.min_acceptable_weekly_hours,
+            min_weekly_hours_hard=st.session_state.min_weekly_hours_hard,
+            am_coverage_min_percent=st.session_state.am_coverage_min_percent,
+            am_coverage_min_hard=st.session_state.am_coverage_min_hard,
+            am_coverage_relax_step=st.session_state.am_coverage_relax_step,
+            am_senior_min_percent=st.session_state.am_senior_min_percent,
+            am_senior_min_hard=st.session_state.am_senior_min_hard,
+            am_senior_relax_step=st.session_state.am_senior_relax_step,
+            weekend_rest=st.session_state.weekend_rest,
+            back_to_back_shift=st.session_state.back_to_back_shift,
+            use_sliding_window=st.session_state.use_sliding_window,
             fixed_assignments=st.session_state.fixed
         )
         st.session_state.sched_df = sched
         st.session_state.summary_df = summ
         st.session_state.violations = violations
+        st.session_state.metrics = metrics
         st.session_state.original_sched_df = sched.copy()
 
         st.session_state.show_schedule_expanded = False
@@ -335,14 +377,14 @@ if st.session_state.sched_df is not None:
         options=["Hide", "Show"],
         index=1 if st.session_state.show_schedule_expanded else 0,
         horizontal=True,
-        key="editable_toggle"
+        key="editable_toggle",
+        help="Show or hide the editable schedule to indicate MC and EL overrides."
     )
     st.session_state.show_schedule_expanded = (choice == "Show")
 
     if st.session_state.show_schedule_expanded:
         show_editable_schedule()
         
-
         if st.button("🔁 Regenerate with All Overrides"):
             el_overrides = st.session_state.get("all_el_overrides") or {}
             mc_overrides = st.session_state.get("all_mc_overrides") or {}
@@ -419,17 +461,33 @@ if st.session_state.sched_df is not None:
                 st.session_state.fixed = fixed
 
                 # re-solve starting from earliest EL day (included)
-                sched2, summ2, violations2 = build_schedule_model(
+                sched2, summ2, violations2, metrics2 = build_schedule_model(
                     st.session_state.df_profiles,
                     st.session_state.df_prefs,
                     st.session_state.start_date,
                     st.session_state.num_days,
-                    rl_assignment=st.session_state.rl_assignment,
+                    st.session_state.shift_durations,
+                    st.session_state.min_nurses_per_shift,
+                    st.session_state.min_seniors_per_shift,
+                    st.session_state.max_weekly_hours,
+                    st.session_state.preferred_weekly_hours,
+                    st.session_state.min_acceptable_weekly_hours,
+                    st.session_state.min_weekly_hours_hard,
+                    st.session_state.am_coverage_min_percent,
+                    st.session_state.am_coverage_min_hard,
+                    st.session_state.am_coverage_relax_step,
+                    st.session_state.am_senior_min_percent,
+                    st.session_state.am_senior_min_hard,
+                    st.session_state.am_senior_relax_step,
+                    st.session_state.weekend_rest,
+                    st.session_state.back_to_back_shift,
+                    st.session_state.use_sliding_window,
                     fixed_assignments=fixed
                 )
                 st.session_state.sched_df   = sched2
                 st.session_state.summary_df = summ2
                 st.session_state.violations = violations2
+                st.session_state.metrics = metrics2
 
                 st.success(f"Re-solved from day {w0} onward.")
                 st.session_state.show_schedule_expanded = False
@@ -447,25 +505,36 @@ if st.session_state.sched_df is not None:
         st.caption("These are soft constraint violations that the model tried to minimize.")
 
         for category, items in violations.items():
-            # Determine count presentation
+            count = len(items) if hasattr(items, "__len__") and not isinstance(items, str) else items
+            st.markdown(f"🔸 **{category}**: {count} case{'s' if count != 1 else ''}")
+
+            # List items if they exist
+            if isinstance(items, list) and items:
+                with st.expander(f"Details for {category}"):
+                    for item in sorted(items):
+                        st.markdown(f"- {item}")
+            elif isinstance(items, str) and items != "N/A":
+                st.markdown(f"- {items}")
+
+    metrics = st.session_state.get("metrics", {})
+    if metrics:
+        st.subheader("📈 Metrics Summary")
+        st.caption("These are indicators of preferences satisfaction and fairness of the schedule.")
+        for category, items in metrics.items():
             match category:
-                case "Preference_Unmet":
+                case "Preference Unmet":
                     total_unmet = sum(s["Prefs_Unmet"] for s in st.session_state.summary_df.to_dict(orient="records"))
                     st.markdown(f"🔸 **{category}**: {total_unmet} unmet preferences across {len(items)} nurse{'s' if len(items)!=1 else ''}")
-                case "Fairness_Gap":
+                case "Fairness Gap":
                     if items == "N/A":
                         st.markdown(f"🔸 **{category}**: N/A")
                     else:
                         value = f"{items}%" if isinstance(items, (int, float)) else str(items)
                         st.markdown(f"🔸 **{category}**: {value} gap")
-                case _:
-                    count = len(items) if hasattr(items, "__len__") and not isinstance(items, str) else items
-                    st.markdown(f"🔸 **{category}**: {count} case{'s' if count != 1 else ''}")
-
-            # List items if they exist
+                        st.caption("🛈 Shows the percentage difference of preferences met between the most and least satisfied nurse. Smaller gap = fairer distribution of meeting preferences.")
             if isinstance(items, list) and items:
                 with st.expander(f"Details for {category}"):
-                    for item in items:
+                    for item in sorted(items):
                         st.markdown(f"- {item}")
             elif isinstance(items, str) and items != "N/A":
                 st.markdown(f"- {items}")
