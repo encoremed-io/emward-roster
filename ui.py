@@ -158,48 +158,65 @@ max_weekly_hours = st.sidebar.number_input(
     help="The maximum number of hours a nurse can be scheduled to work in a week. MC and EL days reduce this cap.",
     key="max_weekly_hours"
 )
-min_acceptable_weekly_hours = st.sidebar.number_input(
-    "Min acceptable weekly hours", min_value=1, value=MIN_ACCEPTABLE_WEEKLY_HOURS,
-    help="The minimum number of hours a nurse must be scheduled for each week. MC and EL days reduce this cap.",
-    key="min_acceptable_weekly_hours"
-)
-min_weekly_hours_hard = st.sidebar.checkbox(
-    "Min acceptable weekly hours is a hard constraint",
-    value=False,
-    help="If checked, the minimum weekly hours is enforced strictly.",
-    key="min_weekly_hours_hard"
-)
 preferred_weekly_hours = st.sidebar.number_input(
     "Preferred weekly hours", min_value=1, value=PREFERRED_WEEKLY_HOURS,
     help="The ideal number of hours a nurse should work per week. The model tries to meet this, but may assign less if needed. MC and EL days reduce this cap.",
-    key="preferred_weekly_hours",
-    disabled=min_weekly_hours_hard
+    key="preferred_weekly_hours"
 )
-if min_weekly_hours_hard:
-    preferred_weekly_hours = min_acceptable_weekly_hours    # Set to minimum acceptable hours if hard constraint is enabled
-
-am_coverage_min_percent = st.sidebar.slider(
-    "AM coverage min percent", min_value=34, max_value=100, value=AM_COVERAGE_MIN_PERCENT,
-    help="Aim for at least this % of nurses working AM shift.",
-    key="am_coverage_min_percent"
-)
-am_coverage_min_hard = st.sidebar.checkbox(
-    "Minimum AM coverage is a hard constraint",
+pref_weekly_hours_hard = st.sidebar.checkbox(
+    "Preferred weekly hours is a hard constraint",
     value=False,
-    help=(
-        "• If checked, the system strictly applies the AM nurse percentage.\n\n"
-        "• If unchecked, it lowers the target gradually using the step value, but always ensures AM shifts are not outnumbered by PM or Night shifts."
-    ),
-    key="am_coverage_min_hard"
+    help="If checked, the preferred weekly hours is enforced strictly.",
+    key="pref_weekly_hours_hard"
 )
-am_coverage_relax_step = st.sidebar.number_input(
-    "AM relax step", min_value=1, max_value=66, value=AM_COVERAGE_RELAX_STEP,
-    help="If minimum AM coverage is not met, gradually relax by this % of AM shifts.",
-    disabled=am_coverage_min_hard,
-    key="am_coverage_relax_step"
+min_acceptable_weekly_hours = st.sidebar.number_input(
+    "Min acceptable weekly hours", min_value=1, value=MIN_ACCEPTABLE_WEEKLY_HOURS,
+    help="The minimum number of hours a nurse must be scheduled for each week. MC and EL days reduce this cap.",
+    key="min_acceptable_weekly_hours",
+    disabled=pref_weekly_hours_hard
 )
-if am_coverage_min_hard:
-    am_coverage_relax_step = 0
+if pref_weekly_hours_hard:
+    st.caption("Preferred weekly hours would be a hard minimum.")
+    min_acceptable_weekly_hours = preferred_weekly_hours    # Set to preferred weekly  hours if hard constraint is enabled
+
+with st.sidebar.expander("AM Coverage Constraint", expanded=True):
+    activate_am_cov = st.checkbox(
+        "Activate AM Coverage",
+        value=False,
+        help="Activates the minimum AM coverage constraint.",
+        key="activate_am_cov"
+    )
+
+    am_coverage_min_percent = st.slider(
+        "AM coverage min percent", min_value=34, max_value=100, value=AM_COVERAGE_MIN_PERCENT,
+        help="Aim for at least this % of nurses working AM shift.",
+        key="am_coverage_min_percent",
+        disabled=not activate_am_cov
+    )
+
+    am_coverage_min_hard = st.checkbox(
+        "Minimum AM coverage is a hard constraint",
+        value=False,
+        help=(
+            "• If checked, the system strictly applies the AM nurse percentage.\n\n"
+            "• If unchecked, it lowers the target gradually using the step value, "
+            "but always ensures AM shifts are not outnumbered by PM or Night shifts."
+        ),
+        key="am_coverage_min_hard",
+        disabled=not activate_am_cov
+    )
+
+    am_coverage_relax_step = st.number_input(
+        "AM relax step", min_value=1, max_value=66, value=AM_COVERAGE_RELAX_STEP,
+        help="If minimum AM coverage is not met, gradually relax by this % of AM shifts.",
+        disabled=not activate_am_cov or am_coverage_min_hard,
+        key="am_coverage_relax_step"
+    )
+
+    if activate_am_cov and am_coverage_min_hard:
+        am_coverage_relax_step = 0
+        if am_coverage_min_hard:
+            st.caption("AM relax step will be ignored.")
 
 am_senior_min_percent = st.sidebar.slider(
     "AM senior min percent", min_value=50, max_value=100, value=AM_SENIOR_MIN_PERCENT,
@@ -222,6 +239,7 @@ am_senior_relax_step = st.sidebar.number_input(
     key="am_senior_relax_step"
 )
 if am_senior_min_hard:
+    st.caption("AM senior relax step will be ignored.")
     am_senior_relax_step = 0
 
 weekend_rest = st.sidebar.checkbox(
@@ -255,8 +273,9 @@ for key, default in {
     "min_seniors_per_shift": min_seniors_per_shift,
     "max_weekly_hours": max_weekly_hours,
     "preferred_weekly_hours": preferred_weekly_hours,
+    "pref_weekly_hours_hard": pref_weekly_hours_hard,
     "min_acceptable_weekly_hours": min_acceptable_weekly_hours,
-    "min_weekly_hours_hard": min_weekly_hours_hard,
+    "activate_am_cov": activate_am_cov,
     "am_coverage_min_percent": am_coverage_min_percent,
     "am_coverage_min_hard": am_coverage_min_hard,
     "am_coverage_relax_step": am_coverage_relax_step,
@@ -337,7 +356,8 @@ if st.sidebar.button("Generate Schedule", type="primary"):
             max_weekly_hours=st.session_state.max_weekly_hours,
             preferred_weekly_hours=st.session_state.preferred_weekly_hours,
             min_acceptable_weekly_hours=st.session_state.min_acceptable_weekly_hours,
-            min_weekly_hours_hard=st.session_state.min_weekly_hours_hard,
+            pref_weekly_hours_hard=st.session_state.pref_weekly_hours_hard,
+            activate_am_cov=st.session_state.activate_am_cov,
             am_coverage_min_percent=st.session_state.am_coverage_min_percent,
             am_coverage_min_hard=st.session_state.am_coverage_min_hard,
             am_coverage_relax_step=st.session_state.am_coverage_relax_step,
@@ -471,8 +491,9 @@ if st.session_state.sched_df is not None:
                     st.session_state.min_seniors_per_shift,
                     st.session_state.max_weekly_hours,
                     st.session_state.preferred_weekly_hours,
+                    st.session_state.pref_weekly_hours_hard,
                     st.session_state.min_acceptable_weekly_hours,
-                    st.session_state.min_weekly_hours_hard,
+                    st.session_state.activate_am_cov,
                     st.session_state.am_coverage_min_percent,
                     st.session_state.am_coverage_min_hard,
                     st.session_state.am_coverage_relax_step,

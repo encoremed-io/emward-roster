@@ -8,7 +8,7 @@ def load_nurse_profiles(
     allow_missing: bool = False,
 ) -> pd.DataFrame:
     """
-    Load nurse profiles flexibly by matching columns containing 'name', 'title',  'experience'.
+    Load nurse profiles flexibly by matching columns containing 'name', 'title', or 'experience/year'.
 
     Parameters:
         path_or_buffer: Path to Excel file or file-like object.
@@ -23,19 +23,19 @@ def load_nurse_profiles(
     except Exception as e:
         raise ValueError(f"Error loading nurse profiles: {e}")
 
-    # Lowercase map of original column names
     col_map = {col.lower().strip(): col for col in df.columns}
 
-    def find_col(keyword: str) -> str:
+    def find_col(*keywords: str) -> str:
+        """Find column containing any of the keywords."""
         for key, original in col_map.items():
-            if keyword in key:
+            if any(k in key for k in keywords):
                 return original
-        raise ValueError(f"No column found containing '{keyword}'")
+        raise ValueError(f"No column found containing {keywords}")
 
     try:
         name_col = find_col("name")
         title_col = find_col("title")
-        exp_col = find_col("experience") or find_col("year")
+        exp_col = find_col("experience", "year")
     except ValueError as e:
         raise ValueError(f"Missing expected column: {e}")
 
@@ -54,7 +54,6 @@ def load_nurse_profiles(
             raise ValueError("Duplicate nurse names found.")
 
     return df
-
 
 
 def load_shift_preferences(
