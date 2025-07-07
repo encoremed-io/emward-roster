@@ -26,13 +26,13 @@ def define_hard_rules(model: cp_model.CpModel) -> dict[str, HardRule]:
             model.NewBoolVar("assume_min_weekly"),
             "Minimum working hours per week cannot be enforced."
         ),
-        "AM cov PM": HardRule(
-            model.NewBoolVar("assume_am_cov_pm"),
-            "AM coverage cannot always exceed PM coverage."
+        "AM cov min": HardRule(
+            model.NewBoolVar("assume_am_cov_min"),
+            "Minimum AM coverage cannot be met."
         ),
-        "AM cov Night": HardRule(
-            model.NewBoolVar("assume_am_cov_night"),
-            "AM coverage cannot always exceed Night coverage."
+        "AM cov majority": HardRule(
+            model.NewBoolVar("assume_am_cov_majority"),
+            "Number of nurses on AM shift cannot always be more than PM and Night respectively."
         ),
         "AM snr min": HardRule(
             model.NewBoolVar("assume_am_snr_min"),

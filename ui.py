@@ -147,11 +147,30 @@ preferred_weekly_hours = st.sidebar.number_input(
 )
 if min_weekly_hours_hard:
     preferred_weekly_hours = min_acceptable_weekly_hours    # Set to minimum acceptable hours if hard constraint is enabled
+
 am_coverage_min_percent = st.sidebar.slider(
-    "AM coverage min percent", min_value=0, max_value=100, value=AM_COVERAGE_MIN_PERCENT,
-    help="Aim for this % of shifts as AM. If not possible, will try 10% and 20% lower. If all fail, AM must outnumber PM and Night.",
+    "AM coverage min percent", min_value=34, max_value=100, value=AM_COVERAGE_MIN_PERCENT,
+    help="Aim for at least this % of nurses working AM shift.",
     key="am_coverage_min_percent"
 )
+am_coverage_min_hard = st.sidebar.checkbox(
+    "Minimum AM coverage is a hard constraint",
+    value=False,
+    help=(
+        "• If checked, the system strictly applies the AM nurse percentage.\n\n"
+        "• If unchecked, it lowers the target gradually using the step value, but always ensures AM shifts are not outnumbered by PM or Night shifts."
+    ),
+    key="am_coverage_min_hard"
+)
+am_coverage_relax_step = st.sidebar.number_input(
+    "AM relax step", min_value=1, max_value=66, value=AM_COVERAGE_RELAX_STEP,
+    help="If minimum AM coverage is not met, gradually relax by this % of AM shifts.",
+    disabled=am_coverage_min_hard,
+    key="am_coverage_relax_step"
+)
+if am_coverage_min_hard:
+    am_coverage_relax_step = 0
+
 am_senior_min_percent = st.sidebar.slider(
     "AM senior min percent", min_value=50, max_value=100, value=AM_SENIOR_MIN_PERCENT,
     help="Aim for at least this % of nurses in AM being seniors.",
@@ -167,13 +186,14 @@ am_senior_min_hard = st.sidebar.checkbox(
     key="am_senior_min_hard"
 )
 am_senior_relax_step = st.sidebar.number_input(
-    "AM senior relax step", min_value=0, max_value=50, value=AM_SENIOR_RELAX_STEP,
+    "AM senior relax step", min_value=1, max_value=50, value=AM_SENIOR_RELAX_STEP,
     help="If minimum AM senior coverage is not met, gradually relax by this % of senior nurses for AM shifts.",
     disabled=am_senior_min_hard,
     key="am_senior_relax_step"
 )
 if am_senior_min_hard:
     am_senior_relax_step = 0
+
 weekend_rest = st.sidebar.checkbox(
     "Enforce alternating weekend rest", value=True,
     help="If checked, nurses who work on a weekend must rest the same day next weekend.",
@@ -207,6 +227,8 @@ for key, default in {
     "min_acceptable_weekly_hours": min_acceptable_weekly_hours,
     "min_weekly_hours_hard": min_weekly_hours_hard,
     "am_coverage_min_percent": am_coverage_min_percent,
+    "am_coverage_min_hard": am_coverage_min_hard,
+    "am_coverage_relax_step": am_coverage_relax_step,
     "am_senior_min_percent": am_senior_min_percent,
     "am_senior_min_hard":  am_senior_min_hard,
     "am_senior_relax_step": am_senior_relax_step,
@@ -285,6 +307,8 @@ if st.sidebar.button("Generate Schedule", type="primary"):
             min_acceptable_weekly_hours=st.session_state.min_acceptable_weekly_hours,
             min_weekly_hours_hard=st.session_state.min_weekly_hours_hard,
             am_coverage_min_percent=st.session_state.am_coverage_min_percent,
+            am_coverage_min_hard=st.session_state.am_coverage_min_hard,
+            am_coverage_relax_step=st.session_state.am_coverage_relax_step,
             am_senior_min_percent=st.session_state.am_senior_min_percent,
             am_senior_min_hard=st.session_state.am_senior_min_hard,
             am_senior_relax_step=st.session_state.am_senior_relax_step,
@@ -417,6 +441,8 @@ if st.session_state.sched_df is not None:
                     st.session_state.min_acceptable_weekly_hours,
                     st.session_state.min_weekly_hours_hard,
                     st.session_state.am_coverage_min_percent,
+                    st.session_state.am_coverage_min_hard,
+                    st.session_state.am_coverage_relax_step,
                     st.session_state.am_senior_min_percent,
                     st.session_state.am_senior_min_hard,
                     st.session_state.am_senior_relax_step,
