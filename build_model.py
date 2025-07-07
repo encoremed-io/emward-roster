@@ -34,8 +34,9 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                          min_seniors_per_shift: int = MIN_SENIORS_PER_SHIFT,
                          max_weekly_hours: int = MAX_WEEKLY_HOURS,
                          preferred_weekly_hours: int = PREFERRED_WEEKLY_HOURS,
+                         pref_weekly_hours_hard: bool = False,
                          min_acceptable_weekly_hours: int = MIN_ACCEPTABLE_WEEKLY_HOURS,
-                         min_weekly_hours_hard: bool = False,
+                         activate_am_cov: bool = True,
                          am_coverage_min_percent: int = AM_COVERAGE_MIN_PERCENT,
                          am_coverage_min_hard: bool = False,
                          am_coverage_relax_step: int = AM_COVERAGE_RELAX_STEP,
@@ -191,17 +192,19 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
             eff_min_minutes = max(0, min_acceptable_weekly_minutes - adj)    # >= 30 - x
 
-            model.Add(weekly_minutes >= eff_min_minutes).OnlyEnforceIf(hard_rules["Min weekly hours"].flag)
             if not use_sliding_window:
                 eff_max_minutes = max(0, max_weekly_minutes - adj)           # <= 42 - x 
                 model.Add(weekly_minutes <= eff_max_minutes).OnlyEnforceIf(hard_rules["Max weekly hours"].flag)
             
-            if not min_weekly_hours_hard:
-                eff_pref_minutes = max(0, preferred_weekly_minutes - adj)        # >= 40 - x
+            eff_pref_minutes = max(0, preferred_weekly_minutes - adj)        # >= 40 - x
+            if pref_weekly_hours_hard:
+                model.Add(weekly_minutes >= eff_pref_minutes).OnlyEnforceIf(hard_rules["Pref weekly hours"].flag)
+            else:
                 if eff_pref_minutes > eff_min_minutes:
                     flag = model.NewBoolVar(f'pref_{n}_w{w}')
                     model.Add(weekly_minutes >= eff_pref_minutes).OnlyEnforceIf(flag)
                     model.Add(weekly_minutes < eff_pref_minutes).OnlyEnforceIf(flag.Not())
+                    model.Add(weekly_minutes >= eff_min_minutes).OnlyEnforceIf(hard_rules["Min weekly hours"].flag)
 
                     high_priority_penalty.append(flag.Not() * PREF_HOURS_PENALTY)
 
@@ -253,39 +256,40 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                 )
 
     # 8. AM coverage per day should be >=60% of total working nurses, ideally
-    if not am_coverage_min_hard:
-        levels = list(range(am_coverage_min_percent, 34, -am_coverage_relax_step))  # [65, 60, 55] if step = 5
-        penalties = [(i + 1) * AM_COVERAGE_PENALTY for i in range(len(levels))]   # [5, 10, 15]
+    if activate_am_cov:
+        if not am_coverage_min_hard:
+            levels = list(range(am_coverage_min_percent, 34, -am_coverage_relax_step))  # [65, 60, 55] if step = 5
+            penalties = [(i + 1) * AM_COVERAGE_PENALTY for i in range(len(levels))]   # [5, 10, 15]
 
-    for d in range(num_days):
-        total_shifts = sum(work[n, d, s] for n in nurse_names for s in range(shift_types))
-        am_shifts = sum(work[n, d, 0] for n in nurse_names)
-        pm_shifts = sum(work[n, d, 1] for n in nurse_names)
-        night_shifts = sum(work[n, d, 2] for n in nurse_names)
+        for d in range(num_days):
+            total_shifts = sum(work[n, d, s] for n in nurse_names for s in range(shift_types))
+            am_shifts = sum(work[n, d, 0] for n in nurse_names)
+            pm_shifts = sum(work[n, d, 1] for n in nurse_names)
+            night_shifts = sum(work[n, d, 2] for n in nurse_names)
 
-        if am_coverage_min_hard:
-            model.Add(am_shifts * 100 >= am_coverage_min_percent * total_shifts).OnlyEnforceIf(hard_rules["AM cov min"].flag)
+            if am_coverage_min_hard:
+                model.Add(am_shifts * 100 >= am_coverage_min_percent * total_shifts).OnlyEnforceIf(hard_rules["AM cov min"].flag)
 
-        else:
-            flags = [model.NewBoolVar(f"day_{d}_am_min_{lvl}") for lvl in levels]   # flags for each level
-            fallback = model.NewBoolVar(f"day_{d}_all_levels_failed")   # fallback flag
+            else:
+                flags = [model.NewBoolVar(f"day_{d}_am_min_{lvl}") for lvl in levels]   # flags for each level
+                fallback = model.NewBoolVar(f"day_{d}_all_levels_failed")   # fallback flag
 
-            for flag, lvl in zip(flags, levels):
-                model.Add(am_shifts * 100 >= lvl * total_shifts).OnlyEnforceIf(flag)
-                model.Add(am_shifts * 100 < lvl * total_shifts).OnlyEnforceIf(flag.Not())
+                for flag, lvl in zip(flags, levels):
+                    model.Add(am_shifts * 100 >= lvl * total_shifts).OnlyEnforceIf(flag)
+                    model.Add(am_shifts * 100 < lvl * total_shifts).OnlyEnforceIf(flag.Not())
 
-            # Hard fallback: all levels failed
-            model.AddBoolAnd([flag.Not() for flag in flags]).OnlyEnforceIf(fallback)
-            model.AddBoolOr(flags).OnlyEnforceIf(fallback.Not())
-            # Enforce AM > PM and AM > Night if all levels fail (hard constraint)
-            model.Add(am_shifts > pm_shifts).OnlyEnforceIf(fallback).OnlyEnforceIf(hard_rules["AM cov majority"].flag)
-            model.Add(am_shifts > night_shifts).OnlyEnforceIf(fallback).OnlyEnforceIf(hard_rules["AM cov majority"].flag)
+                # Hard fallback: all levels failed
+                model.AddBoolAnd([flag.Not() for flag in flags]).OnlyEnforceIf(fallback)
+                model.AddBoolOr(flags).OnlyEnforceIf(fallback.Not())
+                # Enforce AM > PM and AM > Night if all levels fail (hard constraint)
+                model.Add(am_shifts > pm_shifts).OnlyEnforceIf(fallback).OnlyEnforceIf(hard_rules["AM cov majority"].flag)
+                model.Add(am_shifts > night_shifts).OnlyEnforceIf(fallback).OnlyEnforceIf(hard_rules["AM cov majority"].flag)
 
-            # Penalties for AM ratio violations (only failed levels penalised)
-            for i, lvl in enumerate(levels):
-                penalise = model.NewBoolVar(f"day_{d}_penalise_lvl_{lvl}_am")
-                model.Add(penalise == flags[i].Not())
-                high_priority_penalty.append(penalise * penalties[i])
+                # Penalties for AM ratio violations (only failed levels penalised)
+                for i, lvl in enumerate(levels):
+                    penalise = model.NewBoolVar(f"day_{d}_penalise_lvl_{lvl}_am")
+                    model.Add(penalise == flags[i].Not())
+                    high_priority_penalty.append(penalise * penalties[i])
 
     # 9) Seniors coverage on AM shift should be >= 60% of total AM seniors, ideally
     if not am_senior_min_hard:
@@ -544,9 +548,9 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     violations = {}
     if fixed_assignments:
         violations["Double Shifts"] = []
-    if not min_weekly_hours_hard:
+    if not pref_weekly_hours_hard:
         violations["Low Hours Nurses"] = []
-    if not am_coverage_min_hard:
+    if activate_am_cov and not am_coverage_min_hard:
         violations["Low AM Days"] = []
     if not am_senior_min_hard:
         violations["Low Senior AM Days"] = []
@@ -606,7 +610,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                 else:
                     prefs_unmet.append(f"{dates[d].strftime('%a %Y-%m-%d')} (wanted {SHIFT_LABELS[pref]})")
 
-        if not min_weekly_hours_hard:
+        if not pref_weekly_hours_hard:
             for w in range(num_weeks):
                 days = range(w * DAYS_PER_WEEK, min((w + 1) * DAYS_PER_WEEK, num_days))
                 if len(days) < DAYS_PER_WEEK:
@@ -657,7 +661,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                 total_n = sum(solver.Value(work[n, d, s]) for n in nurse_names for s in range(shift_types))
                 am_snr = sum(solver.Value(work[n, d, 0]) for n in senior_names)
 
-            if not am_coverage_min_hard and total_n and am_n / total_n < (am_coverage_min_percent / 100):
+            if activate_am_cov and not am_coverage_min_hard and total_n and am_n / total_n < (am_coverage_min_percent / 100):
                 violations["Low AM Days"].append(f"{dates[d].strftime('%a %Y-%m-%d')} ({am_n/total_n:.0%})")
             if not am_senior_min_hard and am_n and am_snr / am_n < (am_senior_min_percent / 100):
                 violations["Low Senior AM Days"].append(f"{dates[d].strftime('%a %Y-%m-%d')} (Seniors {am_snr/am_n:.0%})")

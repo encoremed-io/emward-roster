@@ -1,23 +1,58 @@
 import pandas as pd
+import re
 from typing import Union, IO
 
 def load_nurse_profiles(
-    path_or_buffer: Union[str, bytes, IO, None] = 'data/nurse_profiles.xlsx') -> pd.DataFrame:
+    path_or_buffer: Union[str, bytes, IO, None] = 'data/nurse_profiles.xlsx',
+    drop_duplicates: bool = True,
+    allow_missing: bool = False,
+) -> pd.DataFrame:
     """
-    Load nurse profiles from an Excel file.
+    Load nurse profiles flexibly by matching columns containing 'name', 'title', or 'experience/year'.
 
     Parameters:
-        path_or_buffer: Path to the Excel file (str), a file-like object (e.g., Streamlit UploadedFile),
-                        or bytes. Defaults to 'data/nurse_profiles.xlsx'.
+        path_or_buffer: Path to Excel file or file-like object.
+        drop_duplicates: Remove duplicate names if True.
+        allow_missing: Allow rows with missing values if True.
 
     Returns:
-        pd.DataFrame: DataFrame with nurse names standardized (stripped and uppercased).
+        Cleaned DataFrame with standardized columns: Name, Title, Years of experience.
     """
     try:
         df = pd.read_excel(path_or_buffer)
     except Exception as e:
         raise ValueError(f"Error loading nurse profiles: {e}")
-    df['Name'] = df['Name'].str.strip().str.upper()
+
+    col_map = {col.lower().strip(): col for col in df.columns}
+
+    def find_col(*keywords: str) -> str:
+        """Find column containing any of the keywords."""
+        for key, original in col_map.items():
+            if any(k in key for k in keywords):
+                return original
+        raise ValueError(f"No column found containing {keywords}")
+
+    try:
+        name_col = find_col("name")
+        title_col = find_col("title")
+        exp_col = find_col("experience", "year")
+    except ValueError as e:
+        raise ValueError(f"Missing expected column: {e}")
+
+    df = df[[name_col, title_col, exp_col]]
+    df.columns = ["Name", "Title", "Years of experience"]
+
+    df["Name"] = df["Name"].astype(str).str.strip().str.upper()
+
+    if not allow_missing:
+        df.dropna(subset=["Name", "Title", "Years of experience"], inplace=True)
+
+    if drop_duplicates:
+        df.drop_duplicates(subset=["Name"], inplace=True)
+    else:
+        if df.duplicated(subset=["Name"]).any():
+            raise ValueError("Duplicate nurse names found.")
+
     return df
 
 
@@ -37,17 +72,23 @@ def load_shift_preferences(
         df = pd.read_excel(path_or_buffer)
     except Exception as e:
         raise ValueError(f"Error loading nurse preferences: {e}")
+
     df.rename(columns={df.columns[0]: 'Name'}, inplace=True)
     df.set_index('Name', inplace=True)
-    # Parse date columns
-    cleaned = []
+
+    cleaned_cols = []
     for col in df.columns:
-        # Assume format contains YYYY-MM-DD
         try:
-            dt = pd.to_datetime(str(col).strip().split()[-1], format="%Y-%m-%d").date()
-            cleaned.append(dt)
-        except ValueError as e:
+            col_str = str(col).strip()
+
+            # Remove weekday prefix if exists: match "Mon", "Tues", "Thu", etc.
+            col_str = re.sub(r'^[A-Za-z]{3,9}\s+', '', col_str)
+
+            dt = pd.to_datetime(col_str, errors='raise').date()
+            cleaned_cols.append(dt)
+        except Exception as e:
             raise ValueError(f"Invalid date format in column '{col}': {e}")
-    df.columns = cleaned
+
+    df.columns = cleaned_cols
     df.index = df.index.str.strip().str.upper()
     return df

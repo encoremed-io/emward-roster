@@ -22,6 +22,10 @@ def define_hard_rules(model: cp_model.CpModel) -> dict[str, HardRule]:
             model.NewBoolVar("assume_max_weekly"),
             "Maximum working hours per week cannot be guaranteed. Relaxing sliding window may help."
         ),
+        "Pref weekly hours": HardRule(    
+            model.NewBoolVar("assume_pref_weekly"),
+            "Preferred weekly hours per week cannot be enforced."
+        ),
         "Min weekly hours": HardRule(
             model.NewBoolVar("assume_min_weekly"),
             "Minimum working hours per week cannot be enforced."
