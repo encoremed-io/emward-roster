@@ -82,7 +82,7 @@ def show_editable_schedule():
                 new_el[(nurse, day_idx)] = "EL"
             if val == "MC" and old != "MC":
                 day_idx = (pd.to_datetime(col).date() 
-                           - st.session_state.start_date.date()).days
+                           - st.session_state.start_date).days
                 new_mc[(nurse, day_idx)] = "MC"
 
     st.session_state.pending_el = new_el

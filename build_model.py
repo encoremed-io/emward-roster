@@ -541,7 +541,9 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     num_weeks = (num_days + DAYS_PER_WEEK - 1) // DAYS_PER_WEEK     # number of weeks in the schedule
     schedule = {}
     summary = []
-    violations = {"Double Shifts": []}
+    violations = {}
+    if fixed_assignments:
+        violations["Double Shifts"] = []
     if not min_weekly_hours_hard:
         violations["Low Hours Nurses"] = []
     if not am_coverage_min_hard:
@@ -660,12 +662,13 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             if not am_senior_min_hard and am_n and am_snr / am_n < (am_senior_min_percent / 100):
                 violations["Low Senior AM Days"].append(f"{dates[d].strftime('%a %Y-%m-%d')} (Seniors {am_snr/am_n:.0%})")
 
-    logger.info("\n⚠️ Soft Constraint Violations Summary:")
-    for key, items in violations.items():
-        logger.info(f"🔸 {key}: {len(items) if isinstance(items, list) else items} cases")
-        if isinstance(items, list):
-            for item in sorted(items):
-                logger.info(f"   - {item}")
+    if violations:
+        logger.info("\n⚠️ Soft Constraint Violations Summary:")
+        for key, items in violations.items():
+            logger.info(f"🔸 {key}: {len(items) if isinstance(items, list) else items} cases")
+            if isinstance(items, list):
+                for item in sorted(items):
+                    logger.info(f"   - {item}")
 
     if has_shift_prefs:
         logger.info("\n📊 Preferences Satisfaction and Fairness Summary:")
