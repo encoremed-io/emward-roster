@@ -14,7 +14,7 @@ with open(CONSTANTS_PATH, "r", encoding="utf-8") as f:
 
 # Expose constants as variables
 SHIFT_LABELS = _constants["SHIFT_LABELS"]
-SHIFT_HOURS = _constants["SHIFT_HOURS"]
+SHIFT_DURATIONS = _constants["SHIFT_DURATIONS"]
 AVG_HOURS = _constants["AVG_HOURS"]
 DAYS_PER_WEEK = _constants["DAYS_PER_WEEK"]
 

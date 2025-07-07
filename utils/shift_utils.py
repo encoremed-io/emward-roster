@@ -1,6 +1,5 @@
 import pandas as pd
-from datetime import timedelta, date as dt_date
-from collections import defaultdict
+from datetime import datetime, timedelta, time, date as dt_date
 from typing import Any, Dict, Set, List, Union, Optional, Tuple
 
 # --- Utility to convert column label to day-index ---
@@ -164,3 +163,13 @@ def make_weekend_pairs(num_days, date_start):
             if i + 8 < num_days:                             # Sunday
                 weekend_pairs.append((i + 1, i + 8))
     return weekend_pairs
+
+
+def shift_duration_minutes(start: time, end: time) -> int:
+    """ Returns shift duration in minutes. """
+    today = datetime.today().date()
+    dt_start = datetime.combine(today, start)
+    dt_end = datetime.combine(today, end)
+    if dt_end <= dt_start:
+        dt_end += timedelta(days=1)
+    return int((dt_end - dt_start).total_seconds() // 60)

@@ -1,6 +1,6 @@
 {
     "SHIFT_LABELS": ["AM", "PM", "Night"],
-    "SHIFT_HOURS": [7, 7, 10],
+    "SHIFT_DURATIONS": [7, 7, 10],
     "AVG_HOURS": 7,
     "DAYS_PER_WEEK": 7,
 

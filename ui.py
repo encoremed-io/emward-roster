@@ -3,7 +3,7 @@ import os
 os.environ['STREAMLIT_SERVER_FILE_WATCHER_TYPE'] = 'none'
 
 import streamlit as st
-from datetime import date
+from datetime import date, time
 from st_aggrid import GridOptionsBuilder, AgGrid, GridUpdateMode
 from collections import Counter, defaultdict
 import traceback
@@ -13,9 +13,19 @@ from utils.loader import *
 from utils.validate import *
 from utils.constants import *
 from utils.download import download_excel
+from utils.shift_utils import shift_duration_minutes
 from exceptions.custom_errors import *
 
-logging.basicConfig(filename="ui_error.log", level=logging.ERROR)
+LOG_PATH = os.path.join(os.path.dirname(__file__), "ui_error.log")
+
+try:
+    with open(LOG_PATH, "w") as f:
+        pass
+except FileNotFoundError:
+    os.makedirs(os.path.dirname(LOG_PATH))
+    with open(LOG_PATH, "w") as f:
+        pass
+logging.basicConfig(filename=LOG_PATH, level=logging.ERROR)
 
 CUSTOM_ERRORS = (
     NoFeasibleSolutionError,
@@ -112,6 +122,26 @@ start_date = pd.to_datetime(st.sidebar.date_input("Schedule start date", value=d
 end_date = pd.to_datetime(st.sidebar.date_input("Schedule end date", value=date.today(), key="end_date"))
 # num_days = st.sidebar.slider("Number of days", 7, 28, 14)
 num_days = (end_date - start_date).days + 1
+
+# --- Add dynamic shift durations --- #
+st.sidebar.markdown("### Shift Durations")
+st.sidebar.subheader("☀️ AM Shift")     # 7AM - 3PM
+am_start = st.sidebar.time_input("AM Start", time(7, 0), key="am_start")
+am_end   = st.sidebar.time_input("AM End",   time(15, 0), key="am_end")
+
+st.sidebar.subheader("🌇 PM Shift")     # 3PM - 9PM
+pm_start = st.sidebar.time_input("PM Start", time(15, 0), key="pm_start")
+pm_end   = st.sidebar.time_input("PM End",   time(21, 0), key="pm_end")
+
+st.sidebar.subheader("🌙 Night Shift")  # 9PM - 7AM
+night_start = st.sidebar.time_input("Night Start", time(21, 0), key="night_start")
+night_end   = st.sidebar.time_input("Night End",   time(7, 0), key="night_end")
+
+shift_durations = [
+    shift_duration_minutes(am_start, am_end),
+    shift_duration_minutes(pm_start, pm_end),
+    shift_duration_minutes(night_start, night_end)
+]
 
 # --- Add dynamic scheduling parameters here ---
 st.sidebar.markdown("### Schedule Parameters")
@@ -220,6 +250,7 @@ for key, default in {
     "df_prefs": None,
     "start_date": pd.to_datetime(start_date),
     "num_days": num_days,
+    "shift_durations": shift_durations,
     "min_nurses_per_shift": min_nurses_per_shift,
     "min_seniors_per_shift": min_seniors_per_shift,
     "max_weekly_hours": max_weekly_hours,
@@ -300,6 +331,7 @@ if st.sidebar.button("Generate Schedule", type="primary"):
             df_profiles, df_prefs,
             pd.to_datetime(start_date), 
             num_days,
+            shift_durations,
             min_nurses_per_shift=st.session_state.min_nurses_per_shift,
             min_seniors_per_shift=st.session_state.min_seniors_per_shift,
             max_weekly_hours=st.session_state.max_weekly_hours,
@@ -434,6 +466,7 @@ if st.session_state.sched_df is not None:
                     st.session_state.df_prefs,
                     st.session_state.start_date,
                     st.session_state.num_days,
+                    st.session_state.shift_durations,
                     st.session_state.min_nurses_per_shift,
                     st.session_state.min_seniors_per_shift,
                     st.session_state.max_weekly_hours,

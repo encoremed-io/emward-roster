@@ -29,6 +29,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                          preferences_df: pd.DataFrame,
                          start_date: pd.Timestamp | dt_date,
                          num_days: int,
+                         shift_durations: List[int] = SHIFT_DURATIONS,
                          min_nurses_per_shift: int = MIN_NURSES_PER_SHIFT,
                          min_seniors_per_shift: int = MIN_SENIORS_PER_SHIFT,
                          max_weekly_hours: int = MAX_WEEKLY_HOURS,
@@ -137,6 +138,12 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                 high_priority_penalty.append(ts * DOUBLE_SHIFT_PENALTY)
 
     # 2. Each nurse works <= 42 hours/week (hard), adjustable based on MC; ideally min 40 (soft), at least 30 (hard)
+    # Convert to minutes
+    max_weekly_minutes = max_weekly_hours * 60
+    preferred_weekly_minutes = preferred_weekly_hours * 60
+    min_acceptable_weekly_minutes = min_acceptable_weekly_hours * 60
+    avg_minutes = min(shift_durations)
+
     for n in nurse_names:
         mc = mc_sets[n]
         al = al_sets[n]
@@ -145,8 +152,8 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
         # Precompute daily-hours expressions if using sliding window
         if use_sliding_window:
-            hours_by_day = [
-                sum(work[n, d, s] * int(SHIFT_HOURS[s]) for s in range(shift_types))
+            minutes_by_day = [
+                sum(work[n, d, s] * int(shift_durations[s]) for s in range(shift_types))
                 for d in range(num_days)
             ]
 
@@ -154,13 +161,13 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                 # Maximum working hours every 7 day sliding window (exp: Day 0 to Day 6, then Day 1 to Day 7, etc.)
                 if d >= DAYS_PER_WEEK - 1:
                     window = range(d - (DAYS_PER_WEEK - 1), d + 1)
-                    window_hours = sum(hours_by_day[i] for i in window)
+                    window_minutes = sum(minutes_by_day[i] for i in window)
                     mc_count = sum(1 for i in window if i in mc)
                     al_count = sum(1 for i in window if i in al)
                     el_count = sum(1 for i in window if i in el)
-                    adj = (mc_count + al_count + el_count) * AVG_HOURS              # MC & EL hours deducted from max/pref/min hours
-                    eff_max_hours = max(0, max_weekly_hours - adj)                  # <= 42 - x
-                    model.Add(window_hours <= eff_max_hours).OnlyEnforceIf(hard_rules["Max weekly hours"].flag)
+                    adj = (mc_count + al_count + el_count) * avg_minutes              # MC & EL hours deducted from max/pref/min hours
+                    eff_max_minutes = max(0, max_weekly_minutes - adj)                  # <= 42 - x
+                    model.Add(window_minutes <= eff_max_minutes).OnlyEnforceIf(hard_rules["Max weekly hours"].flag)
 
         # Full-week minimum at each 7-day boundary (e.g. Day 6, then Day 13, etc.)
         for w in range(num_weeks):
@@ -170,31 +177,31 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                 continue  # Skip incomplete weeks for extra days if not using sliding window
 
             if use_sliding_window:
-                weekly_hours = sum(hours_by_day[i] for i in days)
+                weekly_minutes = sum(minutes_by_day[i] for i in days)
             else:
-                weekly_hours = sum(
-                    work[n, d, s] * int(SHIFT_HOURS[s])
+                weekly_minutes = sum(
+                    work[n, d, s] * int(shift_durations[s])
                     for d in days for s in range(shift_types)
                 )
 
             mc_count = sum(1 for i in days if i in mc)
             al_count = sum(1 for i in days if i in al)
             el_count = sum(1 for i in days if i in el)
-            adj = (mc_count + al_count + el_count) * AVG_HOURS
+            adj = (mc_count + al_count + el_count) * avg_minutes
 
-            eff_min_hours = max(0, min_acceptable_weekly_hours - adj)    # >= 30 - x
+            eff_min_minutes = max(0, min_acceptable_weekly_minutes - adj)    # >= 30 - x
 
-            model.Add(weekly_hours >= eff_min_hours).OnlyEnforceIf(hard_rules["Min weekly hours"].flag)
+            model.Add(weekly_minutes >= eff_min_minutes).OnlyEnforceIf(hard_rules["Min weekly hours"].flag)
             if not use_sliding_window:
-                eff_max_hours = max(0, max_weekly_hours - adj)           # <= 42 - x 
-                model.Add(weekly_hours <= eff_max_hours).OnlyEnforceIf(hard_rules["Max weekly hours"].flag)
+                eff_max_minutes = max(0, max_weekly_minutes - adj)           # <= 42 - x 
+                model.Add(weekly_minutes <= eff_max_minutes).OnlyEnforceIf(hard_rules["Max weekly hours"].flag)
             
             if not min_weekly_hours_hard:
-                eff_pref_hours = max(0, preferred_weekly_hours - adj)        # >= 40 - x
-                if eff_pref_hours > eff_min_hours:
+                eff_pref_minutes = max(0, preferred_weekly_minutes - adj)        # >= 40 - x
+                if eff_pref_minutes > eff_min_minutes:
                     flag = model.NewBoolVar(f'pref_{n}_w{w}')
-                    model.Add(weekly_hours >= eff_pref_hours).OnlyEnforceIf(flag)
-                    model.Add(weekly_hours < eff_pref_hours).OnlyEnforceIf(flag.Not())
+                    model.Add(weekly_minutes >= eff_pref_minutes).OnlyEnforceIf(flag)
+                    model.Add(weekly_minutes < eff_pref_minutes).OnlyEnforceIf(flag.Not())
 
                     high_priority_penalty.append(flag.Not() * PREF_HOURS_PENALTY)
 
@@ -548,7 +555,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
     for n in nurse_names:
         row = []
-        hours_per_week = [0] * num_weeks
+        minutes_per_week = [0] * num_weeks
         shift_counts = [0, 0, 0, 0]  # AM, PM, Night, REST
         double_shift_days = []
         prefs_met = 0
@@ -587,7 +594,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
             week_idx = d // DAYS_PER_WEEK
             for p in picked:
-                hours_per_week[week_idx] += int(SHIFT_HOURS[p])
+                minutes_per_week[week_idx] += int(shift_durations[p])
                 shift_counts[p] += 1
 
             pref = prefs_by_nurse[n].get(d)
@@ -605,10 +612,10 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                 mc_count_week = len(mc_sets[n] & set(days))
                 el_count_week = len(el_sets[n] & set(days))
                 al_count_week = len(al_sets[n] & set(days))
-                eff_pref_hours = max(0, preferred_weekly_hours - (mc_count_week + el_count_week + al_count_week) * AVG_HOURS)
+                eff_pref_minutes = max(0, preferred_weekly_minutes - (mc_count_week + el_count_week + al_count_week) * avg_minutes)
 
-                if hours_per_week[w] < eff_pref_hours:
-                    violations["Low Hours Nurses"].append(f"{n} Week {w+1}: {hours_per_week[w]}h; pref {eff_pref_hours}")        
+                if minutes_per_week[w] < eff_pref_minutes:
+                    violations["Low Hours Nurses"].append(f"{n} Week {w+1}: {round(minutes_per_week[w] / 60, 1)}h; pref {round(eff_pref_minutes / 60, 1)}")        
         
         if double_shift_days:
             violations["Double Shifts"].append(f"{n}: {'; '.join(double_shift_days)}")
@@ -629,7 +636,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             "Double Shifts": len(double_shift_days),
         }
         for w in range(num_weeks):
-            summary_row[f"Hours_Week{w+1}"] = hours_per_week[w]
+            summary_row[f"Hours_Week{w+1}"] = round(minutes_per_week[w] / 60, 1)
         summary_row.update({
             "Prefs_Met": prefs_met,
             "Prefs_Unmet": len(prefs_unmet),
