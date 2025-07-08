@@ -1,16 +1,14 @@
-from matplotlib.pyplot import step
 import pandas as pd
 from ortools.sat.python import cp_model
 from datetime import timedelta, date as dt_date
-from typing import Optional, Dict, Tuple, Set
+from typing import Optional, Dict, Tuple
 from pathlib import Path
 import logging
 from utils.constants import *       # import all constants
 from utils.validate import *
 from utils.shift_utils import *
 from exceptions.custom_errors import *
-from core.hard_rules import define_hard_rules
-from model.setup import *
+from scheduler.setup import setup_model
 
 LOG_PATH = Path(__file__).parent / "schedule_run.log"
 
@@ -77,14 +75,14 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         label = shift_label.strip().upper()
 
         # Fix MC, REST, AL, EL as no work
-        if label in {"EL", "MC", "AL", "REST"}:
+        if label in NO_WORK_LABELS:     # REST, MC, EL, AL
             # Block all shifts
             for s in range(shift_types):
                 model.Add(work[nurse, day_idx, s] == 0)
             # Record MC overrides
-            if label == "MC":
+            if label == NO_WORK_LABELS[1]:  # MC
                 mc_sets[nurse].add(day_idx)
-            if label == "AL":
+            if label == NO_WORK_LABELS[3]:  # AL
                 al_sets[nurse].add(day_idx)
             # EL already recorded in el_sets
 
@@ -115,8 +113,6 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     # 1. Number of shift per nurse per day
     # If no EL, each nurse can work at most 1 shift per day
     # If EL, allow at most 2 shifts per nurse if cannot satisfy other hard constraints for that day
-    two_shifts = {}  
-
     for n in nurse_names:
         for d in range(num_days):
             if d not in days_with_el:
@@ -125,7 +121,6 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             else:
             # EL day: allow either 1 or 2 shifts
                 ts = model.NewBoolVar(f"two_shifts_{n}_{d}")
-                two_shifts[(n, d)] = ts
 
                 if d in el_sets[n]:     # if nurse has el on that day, explicitly make ts = false for the nurse
                     model.Add(ts == 0)
@@ -334,6 +329,14 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
         for d in range(num_days):
             if d in prefs:
+            # filter out fixed assignments from prefs
+            # Exp: If declare EL/MC after initial schedule generated, any previous preferences will be ignored
+                if fixed_assignments.get((n, d), "").upper() in NO_WORK_LABELS:
+                    sat = model.NewConstant(1)
+                    is_satisfied[(n, d)] = sat
+                    satisfied_list.append(sat)
+                    continue
+
                 s = prefs[d]
                 sat = model.NewBoolVar(f'sat_{n}_{d}')
                 model.Add(work[n, d, s] == 1).OnlyEnforceIf(sat)
@@ -571,11 +574,11 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             picked = []
             
             if d in mc_sets[n]:
-                shift = "MC"
+                shift = NO_WORK_LABELS[1]      # MC
             elif d in al_sets[n]:
-                shift = "AL"
-            elif (n, d) in fixed_assignments and fixed_assignments[(n, d)].strip().upper() == "EL":
-                shift = "EL"
+                shift = NO_WORK_LABELS[3]      # AL
+            elif (n, d) in fixed_assignments and fixed_assignments[(n, d)].strip().upper() == NO_WORK_LABELS[2]:
+                shift = NO_WORK_LABELS[2]      # EL
             else:
                 if use_fallback:
                     picked = [s for s in range(shift_types) if cached_values[(n, d, s)]]
@@ -587,7 +590,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                 
                 match(len(picked)):
                     case 0:
-                        shift = "Rest"
+                        shift = NO_WORK_LABELS[0]   # REST
                         shift_counts[3] += 1
                     case 1:
                         shift = SHIFT_LABELS[picked[0]]
@@ -605,6 +608,9 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
             pref = prefs_by_nurse[n].get(d)
             if pref is not None:
+                if (n, d) in fixed_assignments and fixed_assignments[(n, d)].upper() in NO_WORK_LABELS:
+                    continue
+
                 if len(picked) == 1 and picked[0] == pref:
                     prefs_met += 1
                 else:

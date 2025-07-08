@@ -9,7 +9,7 @@ from utils.shift_utils import (
     normalize_fixed_assignments,
     make_weekend_pairs
 )
-from core.hard_rules import define_hard_rules
+from core.assumption_flags import define_hard_rules
 
 def normalise_date(input_date):
     """ Convert input date to a standard date format. """
