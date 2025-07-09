@@ -78,7 +78,7 @@ def show_editable_schedule():
             old = st.session_state.sched_df.at[nurse, col].strip().upper()
             if val == "EL" and old != "EL":
                 day_idx = (pd.to_datetime(col).date() 
-                           - st.session_state.start_date.date()).days
+                           - st.session_state.start_date).days
                 new_el[(nurse, day_idx)] = "EL"
             if val == "MC" and old != "MC":
                 day_idx = (pd.to_datetime(col).date() 
