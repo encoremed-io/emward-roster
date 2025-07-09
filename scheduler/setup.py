@@ -1,6 +1,5 @@
 import pandas as pd
 from ortools.sat.python import cp_model
-from utils.constants import SHIFT_LABELS
 from utils.nurse_utils import get_senior_set, get_nurse_names, shuffle_order
 from utils.shift_utils import (
     make_shift_index, 
@@ -33,12 +32,12 @@ def make_model():
     return model
 
 
-def setup_model(profiles_df, preferences_df, start_date, num_days, shift_labels, fixed_assignments=None):
+def setup_model(profiles_df, preferences_df, start_date, num_days, shift_labels, no_work_labels, fixed_assignments=None):
     model = make_model()
     nurse_names = get_nurse_names(profiles_df)
     og_nurse_names, shuffled_nurse_names = shuffle_order(nurse_names)
     senior_names = get_senior_set(profiles_df)          # Assume senior nurses have ≥3 years experience
-    shift_str_to_idx = make_shift_index(SHIFT_LABELS)   # Map shift code → int index for your decision variables
+    shift_str_to_idx = make_shift_index(shift_labels)   # Map shift code → int index for your decision variables
     hard_rules = define_hard_rules(model)               # Track hard constraint violations
 
     date_start = normalise_date(start_date)         # Normalize start date to a standard date format
@@ -50,7 +49,7 @@ def setup_model(profiles_df, preferences_df, start_date, num_days, shift_labels,
     )
 
     shift_preferences, prefs_by_nurse = extract_prefs_info(
-        preferences_df, profiles_df, date_start, shuffled_nurse_names, num_days, shift_labels
+        preferences_df, profiles_df, date_start, shuffled_nurse_names, num_days, shift_labels, no_work_labels, fixed_assignments
     )
 
     mc_sets, al_sets, el_sets = extract_leave_days(

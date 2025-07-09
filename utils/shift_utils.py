@@ -98,10 +98,42 @@ def get_shift_preferences(
     return shift_prefs
 
 
-def extract_prefs_info(preferences_df, profiles_df, date_start, nurse_names, num_days, shift_labels):
+def filter_fixed_assignments_from_prefs(
+    shift_preferences: Dict[str, Dict[int, int]],
+    prefs_by_nurse:    Dict[str, Dict[int, int]],
+    no_work_labels:    List[str],
+    fixed_assignments: Optional[Dict[Tuple[str, int], str]] = None
+) -> None:
+    """
+    Remove any (nurse, day) preference from both shift_preferences and prefs_by_nurse
+    if that (nurse, day) is in fixed_assignments with a NO_WORK_LABEL (REST, MC, EL, AL).
+    """
+    if not fixed_assignments:
+        return
+    
+    no_work_label_set: set[str] = set(no_work_labels)     # convert list to set for quick lookup
+
+    for nurse, prefs in shift_preferences.items():
+        # build list of days to drop for this nurse
+        to_drop = [
+            day
+            for day in prefs
+            if fixed_assignments.get((nurse, day), "").upper() in no_work_label_set
+        ]
+
+        for day in to_drop:
+            # remove from the master dict
+            prefs.pop(day, None)
+            # remove from per-nurse view as well
+            if nurse in prefs_by_nurse:
+                prefs_by_nurse[nurse].pop(day, None)
+
+
+def extract_prefs_info(preferences_df, profiles_df, date_start, nurse_names, num_days, shift_labels, no_work_labels, fixed_assignments=None):
     """ Extracts preferences information and each nurse's preferences from the preferences DataFrame. """
     shift_preferences = get_shift_preferences(preferences_df, profiles_df, date_start, num_days, shift_labels)
     prefs_by_nurse = {n: shift_preferences.get(n, {}) for n in nurse_names}
+    filter_fixed_assignments_from_prefs(shift_preferences, prefs_by_nurse, no_work_labels,fixed_assignments)
     return shift_preferences, prefs_by_nurse
 
 

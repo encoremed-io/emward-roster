@@ -25,7 +25,7 @@ except FileNotFoundError:
     os.makedirs(os.path.dirname(LOG_PATH))
     with open(LOG_PATH, "w") as f:
         pass
-logging.basicConfig(filename=LOG_PATH, level=logging.ERROR)
+logging.basicConfig(filename=LOG_PATH, level=logging.DEBUG)
 
 CUSTOM_ERRORS = (
     NoFeasibleSolutionError,

@@ -15,7 +15,7 @@ LOG_PATH = Path(__file__).parent / "schedule_run.log"
 logging.basicConfig(
     filename=LOG_PATH,
     filemode='w',
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s - %(levelname)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
     encoding="utf-8"
@@ -58,7 +58,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     model, nurse_names, og_nurse_names, senior_names, shift_str_to_idx, date_start, \
     hard_rules, shift_preferences, prefs_by_nurse, fixed_assignments, mc_sets, \
     al_sets, el_sets, weekend_pairs, shift_types, work = setup_model(
-        profiles_df, preferences_df, start_date, num_days, SHIFT_LABELS, fixed_assignments
+        profiles_df, preferences_df, start_date, num_days, SHIFT_LABELS, NO_WORK_LABELS, fixed_assignments
     )
 
     # === Variables ===
@@ -329,13 +329,13 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
         for d in range(num_days):
             if d in prefs:
-            # filter out fixed assignments from prefs
-            # Exp: If declare EL/MC after initial schedule generated, any previous preferences will be ignored
-                if fixed_assignments.get((n, d), "").upper() in NO_WORK_LABELS:
-                    sat = model.NewConstant(1)
-                    is_satisfied[(n, d)] = sat
-                    satisfied_list.append(sat)
-                    continue
+            # # filter out fixed assignments from prefs
+            # # Exp: If declare EL/MC after initial schedule generated, any previous preferences will be ignored
+            #     if fixed_assignments.get((n, d), "").upper() in NO_WORK_LABELS:
+            #         sat = model.NewConstant(1)
+            #         is_satisfied[(n, d)] = sat
+            #         satisfied_list.append(sat)
+            #         continue
 
                 s = prefs[d]
                 sat = model.NewBoolVar(f'sat_{n}_{d}')
@@ -361,7 +361,6 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             p = model.NewIntVar(0, 100, f"pct_sat_{n}")
             pct_sat[n] = p
             model.Add(p * count == total_satisfied[n] * 100)
-
         else:
             pct_sat[n] = None
 
@@ -558,7 +557,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     if not am_senior_min_hard:
         violations["Low Senior AM Days"] = []
     metrics = {}
-    has_shift_prefs = any(shift_preferences.values())
+    has_shift_prefs = any(prefs_by_nurse.values())
     if has_shift_prefs:
         metrics = {"Preference Unmet": [], "Fairness Gap": cached_gap if use_fallback or 'gap_pct' not in locals() else solver.Value(gap_pct)}
 
