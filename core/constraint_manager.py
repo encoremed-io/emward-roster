@@ -1,8 +1,7 @@
-from types import SimpleNamespace
 from typing import Callable
 
 class ConstraintManager:
-    def __init__(self, model, state: SimpleNamespace):
+    def __init__(self, model, state):
         self.model = model
         self.state = state
         self.rules: list[Callable] = []

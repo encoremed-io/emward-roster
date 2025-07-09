@@ -48,7 +48,7 @@ def define_hard_rules(model: cp_model.CpModel) -> dict[str, HardRule]:
         ),
         "Weekend rest": HardRule(
             model.NewBoolVar("assume_weekend_rest"),
-            "Alternating weekend rest cannot be guaranteed.\n\n"
+            "Alternating weekend rest cannot be guaranteed.\n"
         ),
         "No b2b": HardRule(
             model.NewBoolVar("assume_no_b2b"),

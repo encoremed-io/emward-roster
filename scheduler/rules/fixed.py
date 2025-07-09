@@ -4,7 +4,7 @@ def handle_fixed_assignments(model, state: ScheduleState):
     for (nurse, day_idx), shift_label in state.fixed_assignments.items():
         label = shift_label.strip().upper()
 
-        # Fix MC, REST, AL, EL as no state.work
+        # Fix MC, REST, AL, EL as no work
         if label in {"EL", "MC", "AL", "REST"}:
             # Block all shifts
             for s in range(state.shift_types):

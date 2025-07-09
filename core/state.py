@@ -7,7 +7,7 @@ class ScheduleState:
     # model inputs
     work: Dict[Tuple[str,int,int], cp_model.IntVar]
     nurse_names: List[str]
-    senior_names: List[str]
+    senior_names: Set[str]
     shift_str_to_idx: Dict[str,int]
     fixed_assignments: Dict[Tuple[str,int], str]
     mc_sets: Dict[str, Set[int]]

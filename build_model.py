@@ -9,6 +9,9 @@ from utils.validate import *
 from utils.shift_utils import *
 from exceptions.custom_errors import *
 from scheduler.setup import setup_model
+from core.state import ScheduleState
+from core.constraint_manager import ConstraintManager
+from scheduler.rules.fixed import handle_fixed_assignments
 
 LOG_PATH = Path(__file__).parent / "schedule_run.log"
 
@@ -68,47 +71,86 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     high_priority_penalty = []
     low_priority_penalty = []
 
+    state = ScheduleState(
+        work=work,
+        nurse_names=nurse_names,
+        senior_names=senior_names,
+        shift_str_to_idx=shift_str_to_idx,
+        fixed_assignments=fixed_assignments,
+        mc_sets=mc_sets,
+        al_sets=al_sets,
+        el_sets=el_sets,
+        weekend_pairs=weekend_pairs,
+        prefs_by_nurse=prefs_by_nurse,
+        num_days=num_days,
+        shift_types=shift_types,
+        shift_durations=shift_durations,
+        min_nurses_per_shift=min_nurses_per_shift,
+        min_seniors_per_shift=min_seniors_per_shift,
+        max_weekly_hours=max_weekly_hours,
+        preferred_weekly_hours=preferred_weekly_hours,
+        pref_weekly_hours_hard=pref_weekly_hours_hard,
+        min_acceptable_weekly_hours=min_acceptable_weekly_hours,
+        activate_am_cov=activate_am_cov,
+        am_coverage_min_percent=am_coverage_min_percent,
+        am_coverage_min_hard=am_coverage_min_hard,
+        am_coverage_relax_step=am_coverage_relax_step,
+        am_senior_min_percent=am_senior_min_percent,
+        am_senior_min_hard=am_senior_min_hard,
+        am_senior_relax_step=am_senior_relax_step,
+        weekend_rest=weekend_rest,
+        back_to_back_shift=back_to_back_shift,
+        use_sliding_window=use_sliding_window,
+        hard_rules=hard_rules,
+        high_priority_penalty=high_priority_penalty,
+        low_priority_penalty=low_priority_penalty
+    )
+
+    cm = ConstraintManager(model, state)
+    cm.add_rule(handle_fixed_assignments)
+    cm.apply_all()
+
     # === Phase 1 Constraints ===
 
     # === Handle special assignments ===
-    for (nurse, day_idx), shift_label in fixed_assignments.items():
-        label = shift_label.strip().upper()
+    # for (nurse, day_idx), shift_label in fixed_assignments.items():
+    #     label = shift_label.strip().upper()
 
-        # Fix MC, REST, AL, EL as no work
-        if label in NO_WORK_LABELS:     # REST, MC, EL, AL
-            # Block all shifts
-            for s in range(shift_types):
-                model.Add(work[nurse, day_idx, s] == 0)
-            # Record MC overrides
-            if label == NO_WORK_LABELS[1]:  # MC
-                mc_sets[nurse].add(day_idx)
-            if label == NO_WORK_LABELS[3]:  # AL
-                al_sets[nurse].add(day_idx)
-            # EL already recorded in el_sets
+    #     # Fix MC, REST, AL, EL as no work
+    #     if label in NO_WORK_LABELS:     # REST, MC, EL, AL
+    #         # Block all shifts
+    #         for s in range(shift_types):
+    #             model.Add(work[nurse, day_idx, s] == 0)
+    #         # Record MC overrides
+    #         if label == NO_WORK_LABELS[1]:  # MC
+    #             mc_sets[nurse].add(day_idx)
+    #         if label == NO_WORK_LABELS[3]:  # AL
+    #             al_sets[nurse].add(day_idx)
+    #         # EL already recorded in el_sets
 
-        # handle double-shifts, e.g. "AM/PM*"
-        elif "/" in label:
-            # remove any trailing "*" and split
-            parts = label.rstrip("*").split("/")
-            # validate
-            try:
-                idxs = [ shift_str_to_idx[p] for p in parts ]
-            except KeyError as e:
-                raise ValueError(f"Unknown shift part '{e.args[0]}' in double-shift '{label}' for {nurse}")
-            # force both component shifts on, others off
-            for s in idxs:
-                model.Add(work[nurse, day_idx, s] == 1)
-            for other_s in set(range(shift_types)) - set(idxs):
-                model.Add(work[nurse, day_idx, other_s] == 0)
+    #     # handle double-shifts, e.g. "AM/PM*"
+    #     elif "/" in label:
+    #         # remove any trailing "*" and split
+    #         parts = label.rstrip("*").split("/")
+    #         # validate
+    #         try:
+    #             idxs = [ shift_str_to_idx[p] for p in parts ]
+    #         except KeyError as e:
+    #             raise ValueError(f"Unknown shift part '{e.args[0]}' in double-shift '{label}' for {nurse}")
+    #         # force both component shifts on, others off
+    #         for s in idxs:
+    #             model.Add(work[nurse, day_idx, s] == 1)
+    #         for other_s in set(range(shift_types)) - set(idxs):
+    #             model.Add(work[nurse, day_idx, other_s] == 0)
 
-        # Force that one shift and turn off the others
-        else:
-            if label not in shift_str_to_idx:
-                raise ValueError(f"Unknown shift '{label}' for {nurse}")
-            s = shift_str_to_idx[label]
-            model.Add(work[nurse, day_idx, s] == 1)
-            for other_s in (set(range(shift_types)) - {s}):
-                model.Add(work[nurse, day_idx, other_s] == 0)
+    #     # Force that one shift and turn off the others
+    #     else:
+    #         if label not in shift_str_to_idx:
+    #             raise ValueError(f"Unknown shift '{label}' for {nurse}")
+    #         s = shift_str_to_idx[label]
+    #         model.Add(work[nurse, day_idx, s] == 1)
+    #         for other_s in (set(range(shift_types)) - {s}):
+    #             model.Add(work[nurse, day_idx, other_s] == 0)
 
     # 1. Number of shift per nurse per day
     # If no EL, each nurse can work at most 1 shift per day

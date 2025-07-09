@@ -1,15 +1,16 @@
 import pandas as pd
 from utils.nurse_utils import get_senior_set
+from exceptions.custom_errors import InputMismatchError
 
 def validate_data(profiles_df: pd.DataFrame, preferences_df: pd.DataFrame):
     """ Validate that the nurse profiles and preferences match. """
     missing, extra = validate_nurse_data(profiles_df, preferences_df)
     if missing or extra:
-        raise ValueError(
-            f"Mismatch between nurse profiles and preferences:\n"
-            f" • Not found in preferences: {sorted(missing)}\n"
-            f" • Not found in profiles: {sorted(extra)}\n"
-        )
+        msg = ["⚠️ Mismatch between nurse profiles and preferences:\n"]
+        if missing: msg.append(f" • Not found in preferences: {', '.join(sorted(missing))}\n")
+        if extra: msg.append(f" • Not found in profiles: {', '.join(sorted(extra))}")
+        msg = "\n".join(msg)
+        raise InputMismatchError(msg)
     
 
 def validate_nurse_data(profiles_df: pd.DataFrame, preferences_df: pd.DataFrame):
