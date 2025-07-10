@@ -4,6 +4,7 @@ from datetime import timedelta, date as dt_date
 from typing import Optional, Dict, Tuple
 from pathlib import Path
 import logging
+import statistics
 from utils.constants import *       # import all constants
 from utils.validate import *
 from utils.shift_utils import *
@@ -11,7 +12,8 @@ from exceptions.custom_errors import *
 from scheduler.setup import setup_model
 from core.state import ScheduleState
 from core.constraint_manager import ConstraintManager
-from scheduler.rules.fixed import handle_fixed_assignments
+from scheduler.rules.fixed import *
+from scheduler.rules.high import *
 
 LOG_PATH = Path(__file__).parent / "schedule_run.log"
 
@@ -65,7 +67,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     )
 
     # === Variables ===
-    days_with_el = {d for days in el_sets.values() for d in days}
+    # days_with_el = {d for days in el_sets.values() for d in days}
     is_satisfied = {}
     total_satisfied = {}
     high_priority_penalty = []
@@ -107,7 +109,18 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     )
 
     cm = ConstraintManager(model, state)
+    # Fixed rules
     cm.add_rule(handle_fixed_assignments)
+    cm.add_rule(leave_rules)
+
+    # High priority rules
+    cm.add_rule(shifts_per_day_rule)
+    cm.add_rule(weekly_working_hours_rules)
+    cm.add_rule(min_staffing_per_shift_rule)
+    cm.add_rule(weekend_rest_rule)
+    cm.add_rule(no_back_to_back_shift_rule)
+    cm.add_rule(am_coverage_rule)
+    cm.add_rule(am_senior_staffing_lvl_rule)
     cm.apply_all()
 
     # === Phase 1 Constraints ===
@@ -152,214 +165,213 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     #         for other_s in (set(range(shift_types)) - {s}):
     #             model.Add(work[nurse, day_idx, other_s] == 0)
 
-    # 1. Number of shift per nurse per day
-    # If no EL, each nurse can work at most 1 shift per day
-    # If EL, allow at most 2 shifts per nurse if cannot satisfy other hard constraints for that day
-    for n in nurse_names:
-        for d in range(num_days):
-            if d not in days_with_el:
-            # no EL here: enforce original rule
-                model.AddAtMostOne(work[n, d, s] for s in range(shift_types))
-            else:
-            # EL day: allow either 1 or 2 shifts
-                ts = model.NewBoolVar(f"two_shifts_{n}_{d}")
+    # # 1. Number of shift per nurse per day
+    # # If no EL, each nurse can work at most 1 shift per day
+    # # If EL, allow at most 2 shifts per nurse if cannot satisfy other hard constraints for that day
+    # for n in nurse_names:
+    #     for d in range(num_days):
+    #         if d not in days_with_el:
+    #         # no EL here: enforce original rule
+    #             model.AddAtMostOne(work[n, d, s] for s in range(shift_types))
+    #         else:
+    #         # EL day: allow either 1 or 2 shifts
+    #             ts = model.NewBoolVar(f"two_shifts_{n}_{d}")
 
-                if d in el_sets[n]:     # if nurse has el on that day, explicitly make ts = false for the nurse
-                    model.Add(ts == 0)
+    #             if d in el_sets[n]:     # if nurse has el on that day, explicitly make ts = false for the nurse
+    #                 model.Add(ts == 0)
 
-                # If ts==False → sum_s work ≤ 1
-                model.Add(sum(work[n, d, s] for s in range(shift_types)) <= 1).OnlyEnforceIf(ts.Not())
-                # If ts==True  → sum_s work ≤ 2
-                model.Add(sum(work[n, d, s] for s in range(shift_types)) <= 2).OnlyEnforceIf(ts)
+    #             # If ts==False → sum_s work ≤ 1
+    #             model.Add(sum(work[n, d, s] for s in range(shift_types)) <= 1).OnlyEnforceIf(ts.Not())
+    #             # If ts==True  → sum_s work ≤ 2
+    #             model.Add(sum(work[n, d, s] for s in range(shift_types)) <= 2).OnlyEnforceIf(ts)
 
-                # If double shift, apply penalty
-                high_priority_penalty.append(ts * DOUBLE_SHIFT_PENALTY)
+    #             # If double shift, apply penalty
+    #             high_priority_penalty.append(ts * DOUBLE_SHIFT_PENALTY)
 
-    # 2. Each nurse works <= 42 hours/week (hard), adjustable based on MC; ideally min 40 (soft), at least 30 (hard)
-    # Convert to minutes
-    max_weekly_minutes = max_weekly_hours * 60
-    preferred_weekly_minutes = preferred_weekly_hours * 60
-    min_acceptable_weekly_minutes = min_acceptable_weekly_hours * 60
-    avg_minutes = min(shift_durations)
+    # # 2. Each nurse works <= 42 hours/week (hard), adjustable based on MC; ideally min 40 (soft), at least 30 (hard)
+    # # Convert to minutes
+    # max_weekly_minutes = max_weekly_hours * 60
+    # preferred_weekly_minutes = preferred_weekly_hours * 60
+    # min_acceptable_weekly_minutes = min_acceptable_weekly_hours * 60
+    # avg_minutes = statistics.mean(shift_durations)
 
-    for n in nurse_names:
-        mc = mc_sets[n]
-        al = al_sets[n]
-        el = el_sets[n]
-        num_weeks = (num_days + DAYS_PER_WEEK - 1) // DAYS_PER_WEEK
+    # for n in nurse_names:
+    #     mc = mc_sets[n]
+    #     al = al_sets[n]
+    #     el = el_sets[n]
+    #     num_weeks = (num_days + DAYS_PER_WEEK - 1) // DAYS_PER_WEEK
 
-        # Precompute daily-hours expressions if using sliding window
-        if use_sliding_window:
-            minutes_by_day = [
-                sum(work[n, d, s] * int(shift_durations[s]) for s in range(shift_types))
-                for d in range(num_days)
-            ]
+    #     # Precompute daily-hours expressions if using sliding window
+    #     if use_sliding_window:
+    #         minutes_by_day = [
+    #             sum(work[n, d, s] * int(shift_durations[s]) for s in range(shift_types))
+    #             for d in range(num_days)
+    #         ]
 
-            for d in range(num_days):
-                # Maximum working hours every 7 day sliding window (exp: Day 0 to Day 6, then Day 1 to Day 7, etc.)
-                if d >= DAYS_PER_WEEK - 1:
-                    window = range(d - (DAYS_PER_WEEK - 1), d + 1)
-                    window_minutes = sum(minutes_by_day[i] for i in window)
-                    mc_count = sum(1 for i in window if i in mc)
-                    al_count = sum(1 for i in window if i in al)
-                    el_count = sum(1 for i in window if i in el)
-                    adj = (mc_count + al_count + el_count) * avg_minutes              # MC & EL hours deducted from max/pref/min hours
-                    eff_max_minutes = max(0, max_weekly_minutes - adj)                  # <= 42 - x
-                    model.Add(window_minutes <= eff_max_minutes).OnlyEnforceIf(hard_rules["Max weekly hours"].flag)
+    #         for d in range(num_days):
+    #             # Maximum working hours every 7 day sliding window (exp: Day 0 to Day 6, then Day 1 to Day 7, etc.)
+    #             if d >= DAYS_PER_WEEK - 1:
+    #                 window = range(d - (DAYS_PER_WEEK - 1), d + 1)
+    #                 window_minutes = sum(minutes_by_day[i] for i in window)
+    #                 mc_count = sum(1 for i in window if i in mc)
+    #                 al_count = sum(1 for i in window if i in al)
+    #                 el_count = sum(1 for i in window if i in el)
+    #                 adj = (mc_count + al_count + el_count) * avg_minutes              # MC & EL hours deducted from max/pref/min hours
+    #                 eff_max_minutes = max(0, max_weekly_minutes - adj)                  # <= 42 - x
+    #                 model.Add(window_minutes <= eff_max_minutes).OnlyEnforceIf(hard_rules["Max weekly hours"].flag)
 
-        # Full-week minimum at each 7-day boundary (e.g. Day 6, then Day 13, etc.)
-        for w in range(num_weeks):
-            days = range(w * DAYS_PER_WEEK, min((w + 1) * DAYS_PER_WEEK, num_days))
+    #     # Full-week minimum at each 7-day boundary (e.g. Day 6, then Day 13, etc.)
+    #     for w in range(num_weeks):
+    #         days = range(w * DAYS_PER_WEEK, min((w + 1) * DAYS_PER_WEEK, num_days))
 
-            if not use_sliding_window and len(days) < DAYS_PER_WEEK:
-                continue  # Skip incomplete weeks for extra days if not using sliding window
+    #         if not use_sliding_window and len(days) < DAYS_PER_WEEK:
+    #             continue  # Skip incomplete weeks for extra days if not using sliding window
 
-            if use_sliding_window:
-                weekly_minutes = sum(minutes_by_day[i] for i in days)
-            else:
-                weekly_minutes = sum(
-                    work[n, d, s] * int(shift_durations[s])
-                    for d in days for s in range(shift_types)
-                )
+    #         if use_sliding_window:
+    #             weekly_minutes = sum(minutes_by_day[i] for i in days)
+    #         else:
+    #             weekly_minutes = sum(
+    #                 work[n, d, s] * int(shift_durations[s])
+    #                 for d in days for s in range(shift_types)
+    #             )
 
-            mc_count = sum(1 for i in days if i in mc)
-            al_count = sum(1 for i in days if i in al)
-            el_count = sum(1 for i in days if i in el)
-            adj = (mc_count + al_count + el_count) * avg_minutes
+    #         mc_count = sum(1 for i in days if i in mc)
+    #         al_count = sum(1 for i in days if i in al)
+    #         el_count = sum(1 for i in days if i in el)
+    #         adj = (mc_count + al_count + el_count) * avg_minutes
 
-            eff_min_minutes = max(0, min_acceptable_weekly_minutes - adj)    # >= 30 - x
+    #         eff_min_minutes = max(0, min_acceptable_weekly_minutes - adj)    # >= 30 - x
 
-            if not use_sliding_window:
-                eff_max_minutes = max(0, max_weekly_minutes - adj)           # <= 42 - x 
-                model.Add(weekly_minutes <= eff_max_minutes).OnlyEnforceIf(hard_rules["Max weekly hours"].flag)
+    #         if not use_sliding_window:
+    #             eff_max_minutes = max(0, max_weekly_minutes - adj)           # <= 42 - x 
+    #             model.Add(weekly_minutes <= eff_max_minutes).OnlyEnforceIf(hard_rules["Max weekly hours"].flag)
             
-            eff_pref_minutes = max(0, preferred_weekly_minutes - adj)        # >= 40 - x
-            if pref_weekly_hours_hard:
-                model.Add(weekly_minutes >= eff_pref_minutes).OnlyEnforceIf(hard_rules["Pref weekly hours"].flag)
-            else:
-                if eff_pref_minutes > eff_min_minutes:
-                    flag = model.NewBoolVar(f'pref_{n}_w{w}')
-                    model.Add(weekly_minutes >= eff_pref_minutes).OnlyEnforceIf(flag)
-                    model.Add(weekly_minutes < eff_pref_minutes).OnlyEnforceIf(flag.Not())
-                    model.Add(weekly_minutes >= eff_min_minutes).OnlyEnforceIf(hard_rules["Min weekly hours"].flag)
+    #         eff_pref_minutes = max(0, preferred_weekly_minutes - adj)        # >= 40 - x
+    #         if pref_weekly_hours_hard:
+    #             model.Add(weekly_minutes >= eff_pref_minutes).OnlyEnforceIf(hard_rules["Pref weekly hours"].flag)
+    #         else:
+    #             if eff_pref_minutes > eff_min_minutes:
+    #                 flag = model.NewBoolVar(f'pref_{n}_w{w}')
+    #                 model.Add(weekly_minutes >= eff_pref_minutes).OnlyEnforceIf(flag)
+    #                 model.Add(weekly_minutes < eff_pref_minutes).OnlyEnforceIf(flag.Not())
+    #                 model.Add(weekly_minutes >= eff_min_minutes).OnlyEnforceIf(hard_rules["Min weekly hours"].flag)
 
-                    high_priority_penalty.append(flag.Not() * PREF_HOURS_PENALTY)
+    #                 high_priority_penalty.append(flag.Not() * PREF_HOURS_PENALTY)
 
-    # 3. Each shift must have at least 4 nurses and at least 1 senior
-    for d in range(num_days):
-        for s in range(shift_types):
-            model.Add(sum(work[n, d, s] for n in nurse_names) >= min_nurses_per_shift).OnlyEnforceIf(hard_rules["Min nurses"].flag)
-            model.Add(sum(work[n, d, s] for n in senior_names) >= min_seniors_per_shift).OnlyEnforceIf(hard_rules["Min seniors"].flag)
+    # # 3. Each shift must have at least 4 nurses and at least 1 senior
+    # for d in range(num_days):
+    #     for s in range(shift_types):
+    #         model.Add(sum(work[n, d, s] for n in nurse_names) >= min_nurses_per_shift).OnlyEnforceIf(hard_rules["Min nurses"].flag)
+    #         model.Add(sum(work[n, d, s] for n in senior_names) >= min_seniors_per_shift).OnlyEnforceIf(hard_rules["Min seniors"].flag)
 
     # 4. Weekend work requires rest on the same day next weekend
-    if weekend_rest:
-        for n in nurse_names:
-            for d1, d2 in weekend_pairs:
-                model.Add(sum(work[n, d1, s] for s in range(shift_types)) + 
-                        sum(work[n, d2, s] for s in range(shift_types)) <= 1).OnlyEnforceIf(hard_rules["Weekend rest"].flag)
+    # if weekend_rest:
+    #     for n in nurse_names:
+    #         for d1, d2 in weekend_pairs:
+    #             model.Add(sum(work[n, d1, s] for s in range(shift_types)) + 
+    #                     sum(work[n, d2, s] for s in range(shift_types)) <= 1).OnlyEnforceIf(hard_rules["Weekend rest"].flag)
             
     # 5. Night shift will never be followed by AM shift
-    if not back_to_back_shift:
-        for n in nurse_names:
-            for d in range(1, num_days):
-                model.AddImplication(work[n, d - 1, 2], work[n, d, 0].Not()).OnlyEnforceIf(hard_rules["No b2b"].flag)
+    # if not back_to_back_shift:
+    #     for n in nurse_names:
+    #         for d in range(1, num_days):
+    #             model.AddImplication(work[n, d - 1, 2], work[n, d, 0].Not()).OnlyEnforceIf(hard_rules["No b2b"].flag)
 
-    # 6. MC/AL days: cannot assign any shift
-    for n in nurse_names:
-        for d in mc_sets[n] | al_sets[n]:
-            model.Add(sum(work[n, d, s] for s in range(shift_types)) == 0)
+    # # 6. MC/AL days: cannot assign any shift
+    # for n in nurse_names:
+    #     for d in mc_sets[n] | al_sets[n]:
+    #         model.Add(sum(work[n, d, s] for s in range(shift_types)) == 0)
 
     # 7. Max 2 MC days per week and no more than 2 consecutive MC days
-    for n in nurse_names:
-        mc = mc_sets[n]
-        al = al_sets[n]
-        num_weeks = (num_days + DAYS_PER_WEEK - 1) // DAYS_PER_WEEK
+    # for n in nurse_names:
+    #     mc = mc_sets[n]
+    #     num_weeks = (num_days + DAYS_PER_WEEK - 1) // DAYS_PER_WEEK
 
-        for w in range(num_weeks):
-            days = range(w * DAYS_PER_WEEK, min((w + 1) * DAYS_PER_WEEK, num_days))
-            mc_in_week = [d for d in days if d in mc]
-            if len(mc_in_week) > MAX_MC_DAYS_PER_WEEK:
-                raise InvalidMCError(
-                    f"❌ Nurse {n} has more than {MAX_MC_DAYS_PER_WEEK} MCs in week {w+1}.\n"
-                    f"Days: {sorted(mc_in_week)}"
-                )
+    #     for w in range(num_weeks):
+    #         days = range(w * DAYS_PER_WEEK, min((w + 1) * DAYS_PER_WEEK, num_days))
+    #         mc_in_week = [d for d in days if d in mc]
+    #         if len(mc_in_week) > MAX_MC_DAYS_PER_WEEK:
+    #             raise InvalidMCError(
+    #                 f"❌ Nurse {n} has more than {MAX_MC_DAYS_PER_WEEK} MCs in week {w+1}.\n"
+    #                 f"Days: {sorted(mc_in_week)}"
+    #             )
 
-        sorted_mc = sorted(mc)
-        for i in range(len(sorted_mc) - MAX_CONSECUTIVE_MC):
-            if sorted_mc[i + 2] - sorted_mc[i] == MAX_CONSECUTIVE_MC:
-                raise ConsecutiveMCError(
-                    f"❌ Nurse {n} has more than 2 consecutive MC days: "
-                    f"{sorted_mc[i]}, {sorted_mc[i+1]}, {sorted_mc[i+2]}"
-                )
+    #     sorted_mc = sorted(mc)
+    #     for i in range(len(sorted_mc) - MAX_CONSECUTIVE_MC):
+    #         if sorted_mc[i + 2] - sorted_mc[i] == MAX_CONSECUTIVE_MC:
+    #             raise ConsecutiveMCError(
+    #                 f"❌ Nurse {n} has more than 2 consecutive MC days: "
+    #                 f"{sorted_mc[i]}, {sorted_mc[i+1]}, {sorted_mc[i+2]}"
+    #             )
 
     # 8. AM coverage per day should be >=60% of total working nurses, ideally
-    if activate_am_cov:
-        if not am_coverage_min_hard:
-            levels = list(range(am_coverage_min_percent, 34, -am_coverage_relax_step))  # [65, 60, 55] if step = 5
-            penalties = [(i + 1) * AM_COVERAGE_PENALTY for i in range(len(levels))]   # [5, 10, 15]
+    # if activate_am_cov:
+    #     if not am_coverage_min_hard:
+    #         levels = list(range(am_coverage_min_percent, 34, -am_coverage_relax_step))  # [65, 60, 55] if step = 5
+    #         penalties = [(i + 1) * AM_COVERAGE_PENALTY for i in range(len(levels))]   # [5, 10, 15]
 
-        for d in range(num_days):
-            total_shifts = sum(work[n, d, s] for n in nurse_names for s in range(shift_types))
-            am_shifts = sum(work[n, d, 0] for n in nurse_names)
-            pm_shifts = sum(work[n, d, 1] for n in nurse_names)
-            night_shifts = sum(work[n, d, 2] for n in nurse_names)
+    #     for d in range(num_days):
+    #         total_shifts = sum(work[n, d, s] for n in nurse_names for s in range(shift_types))
+    #         am_shifts = sum(work[n, d, 0] for n in nurse_names)
+    #         pm_shifts = sum(work[n, d, 1] for n in nurse_names)
+    #         night_shifts = sum(work[n, d, 2] for n in nurse_names)
 
-            if am_coverage_min_hard:
-                model.Add(am_shifts * 100 >= am_coverage_min_percent * total_shifts).OnlyEnforceIf(hard_rules["AM cov min"].flag)
+    #         if am_coverage_min_hard:
+    #             model.Add(am_shifts * 100 >= am_coverage_min_percent * total_shifts).OnlyEnforceIf(hard_rules["AM cov min"].flag)
 
-            else:
-                flags = [model.NewBoolVar(f"day_{d}_am_min_{lvl}") for lvl in levels]   # flags for each level
-                fallback = model.NewBoolVar(f"day_{d}_all_levels_failed")   # fallback flag
+    #         else:
+    #             flags = [model.NewBoolVar(f"day_{d}_am_min_{lvl}") for lvl in levels]   # flags for each level
+    #             fallback = model.NewBoolVar(f"day_{d}_all_levels_failed")   # fallback flag
 
-                for flag, lvl in zip(flags, levels):
-                    model.Add(am_shifts * 100 >= lvl * total_shifts).OnlyEnforceIf(flag)
-                    model.Add(am_shifts * 100 < lvl * total_shifts).OnlyEnforceIf(flag.Not())
+    #             for flag, lvl in zip(flags, levels):
+    #                 model.Add(am_shifts * 100 >= lvl * total_shifts).OnlyEnforceIf(flag)
+    #                 model.Add(am_shifts * 100 < lvl * total_shifts).OnlyEnforceIf(flag.Not())
 
-                # Hard fallback: all levels failed
-                model.AddBoolAnd([flag.Not() for flag in flags]).OnlyEnforceIf(fallback)
-                model.AddBoolOr(flags).OnlyEnforceIf(fallback.Not())
-                # Enforce AM > PM and AM > Night if all levels fail (hard constraint)
-                model.Add(am_shifts > pm_shifts).OnlyEnforceIf(fallback).OnlyEnforceIf(hard_rules["AM cov majority"].flag)
-                model.Add(am_shifts > night_shifts).OnlyEnforceIf(fallback).OnlyEnforceIf(hard_rules["AM cov majority"].flag)
+    #             # Hard fallback: all levels failed
+    #             model.AddBoolAnd([flag.Not() for flag in flags]).OnlyEnforceIf(fallback)
+    #             model.AddBoolOr(flags).OnlyEnforceIf(fallback.Not())
+    #             # Enforce AM > PM and AM > Night if all levels fail (hard constraint)
+    #             model.Add(am_shifts > pm_shifts).OnlyEnforceIf(fallback).OnlyEnforceIf(hard_rules["AM cov majority"].flag)
+    #             model.Add(am_shifts > night_shifts).OnlyEnforceIf(fallback).OnlyEnforceIf(hard_rules["AM cov majority"].flag)
 
-                # Penalties for AM ratio violations (only failed levels penalised)
-                for i, lvl in enumerate(levels):
-                    penalise = model.NewBoolVar(f"day_{d}_penalise_lvl_{lvl}_am")
-                    model.Add(penalise == flags[i].Not())
-                    high_priority_penalty.append(penalise * penalties[i])
+    #             # Penalties for AM ratio violations (only failed levels penalised)
+    #             for i, lvl in enumerate(levels):
+    #                 penalise = model.NewBoolVar(f"day_{d}_penalise_lvl_{lvl}_am")
+    #                 model.Add(penalise == flags[i].Not())
+    #                 high_priority_penalty.append(penalise * penalties[i])
 
     # 9) Seniors coverage on AM shift should be >= 60% of total AM seniors, ideally
-    if not am_senior_min_hard:
-        levels = list(range(am_senior_min_percent, 50, -am_senior_relax_step))  # [65, 60, 55] if step = 5
-        penalties = [(i + 1) * AM_SENIOR_PENALTY for i in range(len(levels))]   # [5, 10, 15]
+    # if not am_senior_min_hard:
+    #     levels = list(range(am_senior_min_percent, 50, -am_senior_relax_step))  # [65, 60, 55] if step = 5
+    #     penalties = [(i + 1) * AM_SENIOR_PENALTY for i in range(len(levels))]   # [5, 10, 15]
 
-    for d in range(num_days):
-        am_shifts = sum(work[n, d, 0] for n in nurse_names)
-        am_seniors = sum(work[n, d, 0] for n in senior_names)
-        am_juniors = am_shifts - am_seniors     # number of junior nurses on AM shift
+    # for d in range(num_days):
+    #     am_shifts = sum(work[n, d, 0] for n in nurse_names)
+    #     am_seniors = sum(work[n, d, 0] for n in senior_names)
+    #     am_juniors = am_shifts - am_seniors     # number of junior nurses on AM shift
 
-        if am_senior_min_hard:
-            model.Add(am_seniors * 100 >= am_senior_min_percent * am_shifts).OnlyEnforceIf(hard_rules["AM snr min"].flag)
+    #     if am_senior_min_hard:
+    #         model.Add(am_seniors * 100 >= am_senior_min_percent * am_shifts).OnlyEnforceIf(hard_rules["AM snr min"].flag)
 
-        else:
-            flags = [model.NewBoolVar(f"day_{d}_senior_min_{lvl}") for lvl in levels]   # flags for each level
-            fallback = model.NewBoolVar(f"day_{d}_all_levels_failed")   # fallback flag
+    #     else:
+    #         flags = [model.NewBoolVar(f"day_{d}_senior_min_{lvl}") for lvl in levels]   # flags for each level
+    #         fallback = model.NewBoolVar(f"day_{d}_all_levels_failed")   # fallback flag
 
-            for flag, lvl in zip(flags, levels):
-                model.Add(am_seniors * 100 >= lvl * am_shifts).OnlyEnforceIf(flag)
-                model.Add(am_seniors * 100 < lvl * am_shifts).OnlyEnforceIf(flag.Not())
+    #         for flag, lvl in zip(flags, levels):
+    #             model.Add(am_seniors * 100 >= lvl * am_shifts).OnlyEnforceIf(flag)
+    #             model.Add(am_seniors * 100 < lvl * am_shifts).OnlyEnforceIf(flag.Not())
 
-            # Hard fallback: all levels failed
-            model.AddBoolAnd([flag.Not() for flag in flags]).OnlyEnforceIf(fallback)
-            model.AddBoolOr(flags).OnlyEnforceIf(fallback.Not())
-            # Enforce AM seniors >= AM junior if all levels fail (hard constraint)
-            model.Add(am_seniors >= am_juniors).OnlyEnforceIf(fallback).OnlyEnforceIf(hard_rules["AM snr majority"].flag)
+    #         # Hard fallback: all levels failed
+    #         model.AddBoolAnd([flag.Not() for flag in flags]).OnlyEnforceIf(fallback)
+    #         model.AddBoolOr(flags).OnlyEnforceIf(fallback.Not())
+    #         # Enforce AM seniors >= AM junior if all levels fail (hard constraint)
+    #         model.Add(am_seniors >= am_juniors).OnlyEnforceIf(fallback).OnlyEnforceIf(hard_rules["AM snr majority"].flag)
 
-            # Penalties for senior ratio violations (only failed levels penalised)
-            for i, lvl in enumerate(levels):
-                penalise = model.NewBoolVar(f"day_{d}_penalise_lvl_{lvl}_snr")
-                model.Add(penalise == flags[i].Not())
-                high_priority_penalty.append(penalise * penalties[i])
+    #         # Penalties for senior ratio violations (only failed levels penalised)
+    #         for i, lvl in enumerate(levels):
+    #             penalise = model.NewBoolVar(f"day_{d}_penalise_lvl_{lvl}_snr")
+    #             model.Add(penalise == flags[i].Not())
+    #             high_priority_penalty.append(penalise * penalties[i])
 
 
     # === Phase 2 Constraints ===
@@ -658,6 +670,8 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                     prefs_unmet.append(f"{dates[d].strftime('%a %Y-%m-%d')} (wanted {SHIFT_LABELS[pref]})")
 
         if not pref_weekly_hours_hard:
+            preferred_weekly_minutes = preferred_weekly_hours * 60
+            avg_minutes = statistics.mean(shift_durations)
             for w in range(num_weeks):
                 days = range(w * DAYS_PER_WEEK, min((w + 1) * DAYS_PER_WEEK, num_days))
                 if len(days) < DAYS_PER_WEEK:

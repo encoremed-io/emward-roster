@@ -1,4 +1,6 @@
 from core.state import ScheduleState
+from utils.constants import *
+from exceptions.custom_errors import InvalidMCError, ConsecutiveMCError
 
 def handle_fixed_assignments(model, state: ScheduleState):
     for (nurse, day_idx), shift_label in state.fixed_assignments.items():
@@ -39,4 +41,46 @@ def handle_fixed_assignments(model, state: ScheduleState):
             model.Add(state.work[nurse, day_idx, s] == 1)
             for other_s in (set(range(state.shift_types)) - {s}):
                 model.Add(state.work[nurse, day_idx, other_s] == 0)
-                
+
+
+def leave_rules(model, state: ScheduleState):
+    define_leave(model, state)
+    max_weekly_leave(state)
+    max_consecutive_leave(state)
+
+
+def define_leave(model, state: ScheduleState):
+    # MC/AL days: cannot assign any shift -> Leave means no work
+    for n in state.nurse_names:
+        for d in state.mc_sets[n] | state.al_sets[n]:
+            model.Add(sum(state.work[n, d, s] for s in range(state.shift_types)) == 0)
+
+
+def max_weekly_leave(state: ScheduleState):
+    # Max 2 MC days per week
+    for n in state.nurse_names:
+        mc = state.mc_sets[n]
+        num_weeks = (state.num_days + DAYS_PER_WEEK - 1) // DAYS_PER_WEEK
+
+        for w in range(num_weeks):
+            days = range(w * DAYS_PER_WEEK, min((w + 1) * DAYS_PER_WEEK, state.num_days))
+            mc_in_week = [d for d in days if d in mc]
+            if len(mc_in_week) > MAX_MC_DAYS_PER_WEEK:
+                raise InvalidMCError(
+                    f"❌ Nurse {n} has more than {MAX_MC_DAYS_PER_WEEK} MCs in week {w+1}.\n"
+                    f"Days: {sorted(mc_in_week)}"
+                )
+            
+
+def max_consecutive_leave(state: ScheduleState):
+    # No more than 2 consecutive MC days
+    for n in state.nurse_names:
+        sorted_mc = sorted(state.mc_sets[n])
+
+        for i in range(len(sorted_mc) - MAX_CONSECUTIVE_MC):
+            if sorted_mc[i + 2] - sorted_mc[i] == MAX_CONSECUTIVE_MC:
+                raise ConsecutiveMCError(
+                    f"❌ Nurse {n} has more than 2 consecutive MC days: "
+                    f"{sorted_mc[i]}, {sorted_mc[i+1]}, {sorted_mc[i+2]}"
+                )
+            
