@@ -14,6 +14,7 @@ from core.state import ScheduleState
 from core.constraint_manager import ConstraintManager
 from scheduler.rules.fixed import *
 from scheduler.rules.high import *
+from scheduler.rules.low import *
 
 LOG_PATH = Path(__file__).parent / "schedule_run.log"
 
@@ -62,16 +63,9 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     logger.info("📋 Building model...")
     model, nurse_names, og_nurse_names, senior_names, shift_str_to_idx, date_start, \
     hard_rules, shift_preferences, prefs_by_nurse, fixed_assignments, mc_sets, \
-    al_sets, el_sets, weekend_pairs, shift_types, work = setup_model(
+    al_sets, el_sets, days_with_el, weekend_pairs, shift_types, work = setup_model(
         profiles_df, preferences_df, start_date, num_days, SHIFT_LABELS, NO_WORK_LABELS, fixed_assignments
     )
-
-    # === Variables ===
-    # days_with_el = {d for days in el_sets.values() for d in days}
-    is_satisfied = {}
-    total_satisfied = {}
-    high_priority_penalty = []
-    low_priority_penalty = []
 
     state = ScheduleState(
         work=work,
@@ -104,8 +98,10 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         back_to_back_shift=back_to_back_shift,
         use_sliding_window=use_sliding_window,
         hard_rules=hard_rules,
-        high_priority_penalty=high_priority_penalty,
-        low_priority_penalty=low_priority_penalty
+        days_with_el=days_with_el,
+        total_satisfied={},
+        high_priority_penalty=[],
+        low_priority_penalty=[]
     )
 
     cm = ConstraintManager(model, state)
@@ -121,6 +117,12 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     cm.add_rule(no_back_to_back_shift_rule)
     cm.add_rule(am_coverage_rule)
     cm.add_rule(am_senior_staffing_lvl_rule)
+
+    # Low priority rules
+    cm.add_rule(preference_rule)
+    cm.add_rule(fairness_gap_rule)
+    # cm.add_rule(shift_balance_rule)
+
     cm.apply_all()
 
     # === Phase 1 Constraints ===
@@ -377,61 +379,61 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     # === Phase 2 Constraints ===
 
     # 1. Preference satisfaction
-    for n in nurse_names:
-        prefs = prefs_by_nurse[n]
-        satisfied_list = []
+    # for n in nurse_names:
+    #     prefs = prefs_by_nurse[n]
+    #     satisfied_list = []
 
-        for d in range(num_days):
-            if d in prefs:
-            # # filter out fixed assignments from prefs
-            # # Exp: If declare EL/MC after initial schedule generated, any previous preferences will be ignored
-            #     if fixed_assignments.get((n, d), "").upper() in NO_WORK_LABELS:
-            #         sat = model.NewConstant(1)
-            #         is_satisfied[(n, d)] = sat
-            #         satisfied_list.append(sat)
-            #         continue
+    #     for d in range(num_days):
+    #         if d in prefs:
+    #         # # filter out fixed assignments from prefs
+    #         # # Exp: If declare EL/MC after initial schedule generated, any previous preferences will be ignored
+    #         #     if fixed_assignments.get((n, d), "").upper() in NO_WORK_LABELS:
+    #         #         sat = model.NewConstant(1)
+    #         #         is_satisfied[(n, d)] = sat
+    #         #         satisfied_list.append(sat)
+    #         #         continue
 
-                s = prefs[d]
-                sat = model.NewBoolVar(f'sat_{n}_{d}')
-                model.Add(work[n, d, s] == 1).OnlyEnforceIf(sat)
-                model.Add(work[n, d, s] == 0).OnlyEnforceIf(sat.Not())
-                is_satisfied[(n, d)] = sat
-                satisfied_list.append(sat)
-                # Add penalty if preference not satisfied
-                low_priority_penalty.append(sat.Not() * PREF_MISS_PENALTY)
-            else:
-                satisfied_const = model.NewConstant(0)
-                is_satisfied[(n, d)] = satisfied_const
-                satisfied_list.append(satisfied_const)
+    #             s = prefs[d]
+    #             sat = model.NewBoolVar(f'sat_{n}_{d}')
+    #             model.Add(work[n, d, s] == 1).OnlyEnforceIf(sat)
+    #             model.Add(work[n, d, s] == 0).OnlyEnforceIf(sat.Not())
+    #             is_satisfied[(n, d)] = sat
+    #             satisfied_list.append(sat)
+    #             # Add penalty if preference not satisfied
+    #             low_priority_penalty.append(sat.Not() * PREF_MISS_PENALTY)
+    #         else:
+    #             satisfied_const = model.NewConstant(0)
+    #             is_satisfied[(n, d)] = satisfied_const
+    #             satisfied_list.append(satisfied_const)
 
-        total_satisfied[n] = model.NewIntVar(0, num_days, f'total_sat_{n}')
-        model.Add(total_satisfied[n] == sum(satisfied_list))
+    #     total_satisfied[n] = model.NewIntVar(0, num_days, f'total_sat_{n}')
+    #     model.Add(total_satisfied[n] == sum(satisfied_list))
 
     # 2. Fairness constraint on preference satisfaction gap
-    pct_sat = {}
-    for n, prefs in prefs_by_nurse.items():
-        count = len(prefs)
-        if count > 0:
-            p = model.NewIntVar(0, 100, f"pct_sat_{n}")
-            pct_sat[n] = p
-            model.Add(p * count == total_satisfied[n] * 100)
-        else:
-            pct_sat[n] = None
+    # pct_sat = {}
+    # for n, prefs in prefs_by_nurse.items():
+    #     count = len(prefs)
+    #     if count > 0:
+    #         p = model.NewIntVar(0, 100, f"pct_sat_{n}")
+    #         pct_sat[n] = p
+    #         model.Add(p * count == state.total_satisfied[n] * 100)
+    #     else:
+    #         pct_sat[n] = None
 
-    valid_pcts = [p for p in pct_sat.values() if p is not None]
-    if valid_pcts:
-        min_pct = model.NewIntVar(0, 100, "min_pct")
-        max_pct = model.NewIntVar(0, 100, "max_pct")
-        model.AddMinEquality(min_pct, valid_pcts)
-        model.AddMaxEquality(max_pct, valid_pcts)
+    # valid_pcts = [p for p in pct_sat.values() if p is not None]
+    # if valid_pcts:
+    #     min_pct = model.NewIntVar(0, 100, "min_pct")
+    #     max_pct = model.NewIntVar(0, 100, "max_pct")
+    #     model.AddMinEquality(min_pct, valid_pcts)
+    #     model.AddMaxEquality(max_pct, valid_pcts)
 
-        gap_pct = model.NewIntVar(0, 100, "gap_pct")
-        model.Add(gap_pct == max_pct - min_pct)
+    #     gap_pct = model.NewIntVar(0, 100, "gap_pct")
+    #     model.Add(gap_pct == max_pct - min_pct)
 
-        # Start penalise fairness when gap_pct >= 60 based on distance from 60
-        over_gap  = model.NewIntVar(0, 100, "over_gap")
-        model.AddMaxEquality(over_gap, [gap_pct - FAIRNESS_GAP_THRESHOLD, 0])
-        low_priority_penalty.append(gap_pct * FAIRNESS_GAP_PENALTY)
+    #     # Start penalise fairness when gap_pct >= 60 based on distance from 60
+    #     over_gap  = model.NewIntVar(0, 100, "over_gap")
+    #     model.AddMaxEquality(over_gap, [gap_pct - FAIRNESS_GAP_THRESHOLD, 0])
+    #     state.low_priority_penalty.append(over_gap * FAIRNESS_GAP_PENALTY)
 
     # 3. Balance in number of each shift type assigned to nurse
     # IMBALANCE_PENALTY = 1
@@ -457,13 +459,13 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     #     model.Add(gap == maxC - minC)
 
     #     # soft-penalize any imbalance
-    #     low_priority_penalty.append(gap * IMBALANCE_PENALTY)
+    #     state.low_priority_penalty.append(gap * IMBALANCE_PENALTY)
 
     # === Objective ===
     # === Phase 1: minimize total penalties ===
     logger.info("🚀 Phase 1A: checking feasibility...")
     # 1. Tell the model to minimize penalty sum
-    model.Maximize(sum(r.flag for r in hard_rules.values()))
+    model.Maximize(sum(r.flag for r in state.hard_rules.values()))
 
     # debug: print model size
     proto = model.Proto()
@@ -478,22 +480,23 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     solver.parameters.log_search_progress = False
 
     status1a = solver.Solve(model)
-    total_hards = len(hard_rules)
+    total_hards = len(state.hard_rules)
     logger.info(total_hards)
     satisfied_hards = int(solver.ObjectiveValue())
     logger.info(satisfied_hards)
     logger.info(f"⏱ Solve time: {solver.WallTime():.2f} seconds")
     if satisfied_hards != total_hards or status1a not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        dropped = [r.message for r in hard_rules.values() if solver.Value(r.flag) == 0]
-        error_msg = "❌ No feasible solution. Identified issues:\n\n"
-        error_msg += "\n".join(f"     • {m}" for m in dropped)
+        dropped = [r.message for r in state.hard_rules.values() if solver.Value(r.flag) == 0]
+        error_msg = ["❌ No feasible solution. Identified issues:\n"]
+        error_msg.append("\n".join(f"    • {m.strip()}" for m in dropped))
+        error_msg = "\n".join(error_msg)
         logger.info("⚠️ No feasible solution found with minimal constraints.")
         raise NoFeasibleSolutionError(error_msg)
     
     logger.info("✅ Feasible solution found with minimal constraints.")
     logger.info("🚀 Phase 1B: minimising penalties...")
-    model.Add(sum(r.flag for r in hard_rules.values()) == total_hards)
-    model.minimize(sum(high_priority_penalty))
+    model.Add(sum(r.flag for r in state.hard_rules.values()) == total_hards)
+    model.minimize(sum(state.high_priority_penalty))
 
     # debug: print model size
     proto = model.Proto()
@@ -510,7 +513,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     status1b = solver.Solve(model)
     logger.info(f"⏱ Solve time: {solver.WallTime():.2f} seconds")
     logger.info(f"High Priority Penalty Phase 1B: {solver.ObjectiveValue()}")
-    logger.info(f"Low Priority Penalty Phase 1B: {solver.Value(sum(low_priority_penalty))}")
+    logger.info(f"Low Priority Penalty Phase 1B: {solver.Value(sum(state.low_priority_penalty))}")
 
     # save "best" solution found
     cached_values = {}
@@ -527,25 +530,25 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             if pref is not None and len(picked) == 1 and pref in picked:
                 cached_total_prefs_met += 1
 
-    cached_gap = solver.Value(gap_pct) if valid_pcts else "N/A"
+    cached_gap = solver.Value(state.gap_pct) if state.gap_pct is not None else "N/A"
     high1 = solver.ObjectiveValue()
-    best_penalty = solver.ObjectiveValue() + solver.Value(sum(low_priority_penalty))
+    best_penalty = solver.ObjectiveValue() + solver.Value(sum(state.low_priority_penalty))
     logger.info(f"▶️ Phase 1 complete: best total penalty = {best_penalty}; best fairness gap = {cached_gap}")
 
     # === Phase 2: maximize preferences under that penalty bound ===
     # only run phase 2 if low priority penalty exists, which means shifts preferences exist
-    if low_priority_penalty:
+    if state.low_priority_penalty:
         logger.info("🚀 Phase 2: maximizing preferences…")
         # 2. Freeze the penalty sum at its optimum
-        model.Add(sum(high_priority_penalty) <= int(high1))
-        if valid_pcts:
-          model.Add(gap_pct <= cached_gap)
+        model.Add(sum(state.high_priority_penalty) <= int(high1))
+        if state.gap_pct is not None:
+            model.Add(state.gap_pct <= cached_gap)
             # model.AddLinearConstraint(gap_pct, 0, T)
 
         # 3. Switch objective to preferences
         # preference_obj = sum(total_satisfied[n] for n in nurse_names)
         # model.Maximize(preference_obj)
-        model.Minimize(sum(low_priority_penalty))
+        model.Minimize(sum(state.low_priority_penalty))
 
         # debug: print model size
         proto = model.Proto()
@@ -564,7 +567,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
         status2 = solver.Solve(model)
         logger.info(f"⏱ Solve time: {solver.WallTime():.2f} seconds")
-        logger.info(f"High Priority Penalty Phase 2: {solver.Value(sum(high_priority_penalty))}")
+        logger.info(f"High Priority Penalty Phase 2: {solver.Value(sum(state.high_priority_penalty))}")
         logger.info(f"Low Priority Penalty Phase 2: {solver.ObjectiveValue()}")
         use_fallback = status2 not in (cp_model.OPTIMAL, cp_model.FEASIBLE)
         if use_fallback:
@@ -572,7 +575,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             logger.info(f"Solver Phase 2 status: {solver.StatusName(status2)}")
         else:
             logger.info(f"▶️ Phase 2 complete")
-            best_penalty = solver.Value(sum(high_priority_penalty)) + solver.ObjectiveValue()
+            best_penalty = solver.Value(sum(state.high_priority_penalty)) + solver.ObjectiveValue()
             new_total_prefs_met = 0
             for n in nurse_names:
                 for d in range(num_days):
@@ -590,8 +593,8 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     logger.info("✅ Done!")
     logger.info(f"📊 Total penalties = {best_penalty}")
     logger.info(f"🔍 Total preferences met = {cached_total_prefs_met if use_fallback else new_total_prefs_met}")
-    if 'gap_pct' in locals():
-        logger.info(f"📈 Preference gap (max - min) = {cached_gap if use_fallback else solver.Value(gap_pct)}")
+    if state.gap_pct is not None:
+        logger.info(f"📈 Preference gap (max - min) = {cached_gap if use_fallback else solver.Value(state.gap_pct)}")
     else:
         logger.info("📈 Preference gap (max - min) = N/A")
 
@@ -613,7 +616,10 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     metrics = {}
     has_shift_prefs = any(prefs_by_nurse.values())
     if has_shift_prefs:
-        metrics = {"Preference Unmet": [], "Fairness Gap": cached_gap if use_fallback or 'gap_pct' not in locals() else solver.Value(gap_pct)}
+        metrics = {
+            "Preference Unmet": [],
+            "Fairness Gap": cached_gap if use_fallback or state.gap_pct is None else solver.Value(state.gap_pct)
+        }
 
     for n in nurse_names:
         row = []

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from ortools.sat.python import cp_model
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, List, Set, Tuple, Optional
 
 @dataclass
 class ScheduleState:
@@ -39,5 +39,9 @@ class ScheduleState:
 
     # collections to fill
     hard_rules: Dict[str, Any]
+    days_with_el: Set[int]
+    total_satisfied: Dict[str, cp_model.IntVar]
     high_priority_penalty: List[Any]
     low_priority_penalty: List[Any]
+    gap_pct: Optional[cp_model.IntVar] = None       # Default to none, will be set in fairness_rule
+

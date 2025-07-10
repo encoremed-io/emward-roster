@@ -3,10 +3,9 @@ from utils.constants import *
 import statistics
 
 def shifts_per_day_rule(model, state: ScheduleState):
-    days_with_el = {d for days in state.el_sets.values() for d in days}
     for n in state.nurse_names:
         for d in range(state.num_days):
-            if d not in days_with_el:
+            if d not in state.el_sets[n]:
             # no EL here: enforce original rule
                 model.AddAtMostOne(state.work[n, d, s] for s in range(state.shift_types))
             else:
@@ -137,8 +136,13 @@ def weekend_rest_rule(model, state: ScheduleState):
 def no_back_to_back_shift_rule(model, state: ScheduleState):
     if not state.back_to_back_shift:
         for n in state.nurse_names:
-            for d in range(1, state.num_days):
-                model.AddImplication(state.work[n, d - 1, 2], state.work[n, d, 0].Not()).OnlyEnforceIf(state.hard_rules["No b2b"].flag)
+            for d in range(state.num_days):
+                # No back-to-back shifts on the same day (double shifts)
+                model.Add(state.work[n, d, 0] + state.work[n, d, 1] <= 1).OnlyEnforceIf(state.hard_rules["No b2b"].flag)  # AM + PM on same day
+                model.Add(state.work[n, d, 1] + state.work[n, d, 2] <= 1).OnlyEnforceIf(state.hard_rules["No b2b"].flag)  # PM + Night on same day
+                if d > 0:
+                    # Night shift on day d cannot be followed by AM shift on day d+1
+                    model.AddImplication(state.work[n, d - 1, 2], state.work[n, d, 0].Not()).OnlyEnforceIf(state.hard_rules["No b2b"].flag) 
 
 
 def am_coverage_rule(model, state: ScheduleState):

@@ -6,7 +6,8 @@ from utils.shift_utils import (
     extract_prefs_info, 
     extract_leave_days, 
     normalize_fixed_assignments,
-    make_weekend_pairs
+    make_weekend_pairs,
+    get_days_with_el
 )
 from core.assumption_flags import define_hard_rules
 
@@ -55,8 +56,9 @@ def setup_model(profiles_df, preferences_df, start_date, num_days, shift_labels,
     mc_sets, al_sets, el_sets = extract_leave_days(
         profiles_df, preferences_df, shuffled_nurse_names, date_start, num_days, fixed_assignments
     )
+    days_with_el = get_days_with_el(el_sets)
     weekend_pairs = make_weekend_pairs(num_days, date_start)
     shift_types = len(shift_labels)
     work = build_variables(model, shuffled_nurse_names, num_days, shift_types)
 
-    return model, shuffled_nurse_names, og_nurse_names, senior_names, shift_str_to_idx, date_start, hard_rules, shift_preferences, prefs_by_nurse, fixed_assignments, mc_sets, al_sets, el_sets, weekend_pairs, shift_types, work
+    return model, shuffled_nurse_names, og_nurse_names, senior_names, shift_str_to_idx, date_start, hard_rules, shift_preferences, prefs_by_nurse, fixed_assignments, mc_sets, al_sets, el_sets, days_with_el, weekend_pairs, shift_types, work

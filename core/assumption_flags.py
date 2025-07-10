@@ -52,7 +52,7 @@ def define_hard_rules(model: cp_model.CpModel) -> dict[str, HardRule]:
         ),
         "No b2b": HardRule(
             model.NewBoolVar("assume_no_b2b"),
-            "Consecutive shift enforcement cannot be done.\n"
+            "Back-to-back shifts cannot be fully prevented across days or within the same day.\n"
         ),
         # Add others as needed
     }
