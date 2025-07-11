@@ -10,14 +10,6 @@ def preference_rule(model, state: ScheduleState):
 
         for d in range(state.num_days):
             if d in prefs:
-            # # filter out fixed assignments from prefs
-            # # Exp: If declare EL/MC after initial schedule generated, any previous preferences will be ignored
-            #     if fixed_assignments.get((n, d), "").upper() in NO_WORK_LABELS:
-            #         sat = model.NewConstant(1)
-            #         is_satisfied[(n, d)] = sat
-            #         satisfied_list.append(sat)
-            #         continue
-
                 s = prefs[d]
                 sat = model.NewBoolVar(f'sat_{n}_{d}')
                 model.Add(state.work[n, d, s] == 1).OnlyEnforceIf(sat)

@@ -10,9 +10,7 @@ from exceptions.custom_errors import *
 from scheduler.setup import setup_model
 from core.state import ScheduleState
 from core.constraint_manager import ConstraintManager
-from scheduler.rules.fixed import *
-from scheduler.rules.high import *
-from scheduler.rules.low import *
+from scheduler.rules import *
 from scheduler.runner import solve_schedule
 
 logging.basicConfig(

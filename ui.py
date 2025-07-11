@@ -8,7 +8,7 @@ from st_aggrid import GridOptionsBuilder, AgGrid, GridUpdateMode
 from collections import Counter, defaultdict
 import traceback
 import logging
-from legacy.build_model import build_schedule_model
+from scheduler.builder import build_schedule_model
 from utils.loader import *
 from utils.validate import *
 from utils.constants import *

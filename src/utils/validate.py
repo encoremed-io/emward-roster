@@ -1,5 +1,5 @@
 import pandas as pd
-from utils.nurse_utils import get_senior_set
+from .nurse_utils import get_senior_set
 from exceptions.custom_errors import InputMismatchError
 
 def validate_data(profiles_df: pd.DataFrame, preferences_df: pd.DataFrame):

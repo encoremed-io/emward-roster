@@ -1,5 +1,5 @@
 import json
-from pathlib import Path
+from config.paths import CONFIG_DIR
 
 """
 Loads configuration constants from config/constants.json and exposes them as module-level variables.
@@ -7,7 +7,7 @@ Edit constants.json to change values; import from utils.constants to use in code
 """
 
 # Build the path to the JSON config file
-CONSTANTS_PATH = Path(__file__).parent.parent / "config" / "constants.json"
+CONSTANTS_PATH = CONFIG_DIR / "constants.json"
 
 with open(CONSTANTS_PATH, "r", encoding="utf-8") as f:
     _constants = json.load(f)

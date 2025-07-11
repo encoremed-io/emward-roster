@@ -1,6 +1,6 @@
 import pandas as pd
 from core.state import ScheduleState
-from scheduler.solver import SolverResult
+from .solver import SolverResult
 from datetime import timedelta
 from utils.constants import NO_WORK_LABELS, SHIFT_LABELS, DAYS_PER_WEEK
 import statistics

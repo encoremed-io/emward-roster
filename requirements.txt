@@ -19,3 +19,4 @@ tensorboard
 torch
 invoke
 xlsxwriter
+python-dotenv
