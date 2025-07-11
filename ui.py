@@ -8,7 +8,7 @@ from st_aggrid import GridOptionsBuilder, AgGrid, GridUpdateMode
 from collections import Counter, defaultdict
 import traceback
 import logging
-from build_model import build_schedule_model
+from legacy.build_model import build_schedule_model
 from utils.loader import *
 from utils.validate import *
 from utils.constants import *
@@ -76,21 +76,24 @@ def show_editable_schedule():
     new_mc = {}
     for nurse in edited.index:
         for col in edited.columns:
-            val = edited.at[nurse, col].strip().upper()
+            val = edited.at[nurse, col]
             old = st.session_state.sched_df.at[nurse, col].strip().upper()
+            if val is None or pd.isna(val):
+                val = None
+            else:
+                val = val.strip().upper()
+
             if val == "EL" and old != "EL":
-                day_idx = (pd.to_datetime(col).date() 
-                           - st.session_state.start_date).days
+                day_idx = (pd.to_datetime(col).date() - st.session_state.start_date).days
                 new_el[(nurse, day_idx)] = "EL"
             if val == "MC" and old != "MC":
-                day_idx = (pd.to_datetime(col).date() 
-                           - st.session_state.start_date).days
+                day_idx = (pd.to_datetime(col).date() - st.session_state.start_date).days
                 new_mc[(nurse, day_idx)] = "MC"
             if val not in {"EL", "MC", old}:
-                invalid.append((nurse, col, val, old))
+                invalid.append((nurse, col, val or "<blank>", old))
 
     if invalid:
-        msg = ["⚠️ Some inputs are invalid (not 'EL', 'MC', or the original shift). Please correct them:\n"]
+        msg = ["⚠️ Some inputs are empty or invalid (not 'EL', 'MC', or the original shift). Please correct them:\n"]
         for nurse, col, val, old in invalid:
             msg.append(f"     • {nurse} on {col}: '{val}' (Original shift: '{old}')\n")
         st.warning("\n".join(msg))

@@ -1,9 +1,11 @@
 import pandas as pd
 import re
 from typing import Union, IO
+from pathlib import Path
+from config.paths import DATA_DIR
 
 def load_nurse_profiles(
-    path_or_buffer: Union[str, bytes, IO, None] = 'data/nurse_profiles.xlsx',
+    path_or_buffer: Union[str, Path, bytes, IO, None] = None,
     drop_duplicates: bool = True,
     allow_missing: bool = False,
 ) -> pd.DataFrame:
@@ -11,13 +13,16 @@ def load_nurse_profiles(
     Load nurse profiles flexibly by matching columns containing 'name', 'title', or 'experience/year'.
 
     Parameters:
-        path_or_buffer: Path to Excel file or file-like object.
+        path_or_buffer: Path to Excel file or file-like object. Defaults to 'data/nurse_profiles.xlsx'.
         drop_duplicates: Remove duplicate names if True.
         allow_missing: Allow rows with missing values if True.
 
     Returns:
         Cleaned DataFrame with standardized columns: Name, Title, Years of experience.
     """
+    if path_or_buffer is None:
+        path_or_buffer = DATA_DIR / "nurse_profiles.xlsx"
+
     try:
         df = pd.read_excel(path_or_buffer)
     except Exception as e:
@@ -57,7 +62,7 @@ def load_nurse_profiles(
 
 
 def load_shift_preferences(
-    path_or_buffer: Union[str, bytes, IO, None] = 'data/nurse_preferences.xlsx') -> pd.DataFrame:
+    path_or_buffer: Union[str, Path, bytes, IO, None] = None) -> pd.DataFrame:
     """
     Load nurse shift preferences from an Excel file.
 
@@ -68,6 +73,9 @@ def load_shift_preferences(
     Returns:
         pd.DataFrame: DataFrame with nurse names as index (stripped and uppercased), and columns as dates.
     """
+    if path_or_buffer is None:
+        path_or_buffer = DATA_DIR / "nurse_preferences.xlsx"
+
     try:
         df = pd.read_excel(path_or_buffer)
     except Exception as e:

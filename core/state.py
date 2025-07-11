@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from ortools.sat.python import cp_model
 from typing import Any, Dict, List, Set, Tuple, Optional
+from datetime import date
 
 @dataclass
 class ScheduleState:
@@ -20,6 +21,7 @@ class ScheduleState:
     num_days: int
     shift_types: int
     shift_durations: List[int]
+    start_date: date
     min_nurses_per_shift: int
     min_seniors_per_shift: int
     max_weekly_hours: int

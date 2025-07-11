@@ -8,7 +8,7 @@ import numpy as np
 from utils.loader import *
 from utils.pen_calc import *
 from utils.validate import *
-from build_model import build_schedule_model
+from legacy.build_model import build_schedule_model
 
 app = FastAPI(title="Nurse Roster Scheduler API")
 
