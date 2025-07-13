@@ -8,7 +8,7 @@ from st_aggrid import GridOptionsBuilder, AgGrid, GridUpdateMode
 from collections import Counter, defaultdict
 import traceback
 import logging
-from build_model import build_schedule_model
+from scheduler.builder import build_schedule_model
 from utils.loader import *
 from utils.validate import *
 from utils.constants import *
@@ -25,7 +25,7 @@ except FileNotFoundError:
     os.makedirs(os.path.dirname(LOG_PATH))
     with open(LOG_PATH, "w") as f:
         pass
-logging.basicConfig(filename=LOG_PATH, level=logging.ERROR)
+logging.basicConfig(filename=LOG_PATH, level=logging.DEBUG)
 
 CUSTOM_ERRORS = (
     NoFeasibleSolutionError,
@@ -33,6 +33,9 @@ CUSTOM_ERRORS = (
     InvalidALError,
     ConsecutiveMCError,
     ConsecutiveALError,
+    InputMismatchError,
+    FileReadingError,
+    FileContentError
 )
 
 st.set_page_config(page_title="Nurse Roster Scheduler", layout="wide")
@@ -68,22 +71,35 @@ def show_editable_schedule():
         key="editable_schedule_grid"
     )
     edited = pd.DataFrame(grid["data"]).set_index("Nurse")
+    invalid = []    # error handling
 
-    # Collect new EL overrides
+    # Collect new EL/MC overrides
     new_el = {}
     new_mc = {}
     for nurse in edited.index:
         for col in edited.columns:
-            val = edited.at[nurse, col].strip().upper()
+            val = edited.at[nurse, col]
             old = st.session_state.sched_df.at[nurse, col].strip().upper()
+            if val is None or pd.isna(val):
+                val = None
+            else:
+                val = val.strip().upper()
+
             if val == "EL" and old != "EL":
-                day_idx = (pd.to_datetime(col).date() 
-                           - st.session_state.start_date).days
+                day_idx = (pd.to_datetime(col).date() - st.session_state.start_date).days
                 new_el[(nurse, day_idx)] = "EL"
             if val == "MC" and old != "MC":
-                day_idx = (pd.to_datetime(col).date() 
-                           - st.session_state.start_date).days
+                day_idx = (pd.to_datetime(col).date() - st.session_state.start_date).days
                 new_mc[(nurse, day_idx)] = "MC"
+            if val not in {"EL", "MC", old}:
+                invalid.append((nurse, col, val or "<blank>", old))
+
+    if invalid:
+        msg = ["⚠️ Some inputs are empty or invalid (not 'EL', 'MC', or the original shift). Please correct them:\n"]
+        for nurse, col, val, old in invalid:
+            msg.append(f"     • {nurse} on {col}: '{val}' (Original shift: '{old}')\n")
+        st.warning("\n".join(msg))
+        st.stop()
 
     st.session_state.pending_el = new_el
     st.session_state.pending_mc = new_mc
@@ -118,6 +134,16 @@ prefs_file = st.sidebar.file_uploader(
         "• Preferences file only applies to specified dates in file."
     )
 )
+
+training_shifts_file = st.sidebar.file_uploader(
+    "Upload Training Shifts (Optional)",
+    type=["xlsx"],
+    help=(
+        "• If provided, these shifts will be excluded for the nurse for the schedule on stated days.\n\n"
+        "• Training Shifts file only appied to specified dates in file."
+    )
+)
+
 start_date = pd.to_datetime(st.sidebar.date_input("Schedule start date", value=date.today(), key="start_date"))
 end_date = pd.to_datetime(st.sidebar.date_input("Schedule end date", value=date.today(), key="end_date"))
 # num_days = st.sidebar.slider("Number of days", 7, 28, 14)
@@ -258,6 +284,11 @@ use_sliding_window = st.sidebar.checkbox(
     help="If checked, the maximum weekly hours is enforced over any consecutive 7-day window, not just calendar weeks. This provides stricter control over nurse workload.",
     key="use_sliding_window"
 )
+shift_balance = st.sidebar.checkbox(
+    "Balance shift assignments", value=False,
+    help="If checked, the system will attempt to balance shift assignments among nurses. May cause longer solve times.",
+    key="shift_balance"
+)
 
 # Store core state
 for key, default in {
@@ -266,6 +297,7 @@ for key, default in {
     "summary_df": None,
     "df_profiles": None,
     "df_prefs": None,
+    "df_train_shifts": None,
     "start_date": pd.to_datetime(start_date),
     "num_days": num_days,
     "shift_durations": shift_durations,
@@ -285,6 +317,7 @@ for key, default in {
     "weekend_rest": weekend_rest,
     "back_to_back_shift": back_to_back_shift,
     "use_sliding_window": use_sliding_window,
+    "shift_balance": shift_balance,
     "all_el_overrides": {},
     "all_mc_overrides": {}
 }.items():
@@ -326,17 +359,15 @@ if st.sidebar.button("Generate Schedule", type="primary"):
 
         if prefs_file:    
             df_prefs = load_shift_preferences(prefs_file)
-
-            missing, extra = validate_nurse_data(df_profiles, df_prefs)
-            if missing or extra:
-                msg = "⚠️ Mismatch between nurse profiles and preferences:\n\n"
-                if missing: msg += f"Not found in preferences: {sorted(missing)}\n"
-                if extra: msg += f"Not found in profiles: {sorted(extra)}"
-                st.error(msg)
-                st.stop()
-
+            validate_data(df_profiles, df_prefs, "profiles", "preferences")
         else:
             df_prefs = pd.DataFrame(index=df_profiles["Name"])
+        
+        if training_shifts_file:
+            df_train_shifts = load_training_shifts(training_shifts_file)
+            validate_data(df_profiles, df_train_shifts, "profiles", "training shifts")
+        else:
+            df_train_shifts = pd.DataFrame(index=df_profiles["Name"])
 
         errors = validate_input_params(df_profiles, num_days, min_nurses_per_shift, min_seniors_per_shift, max_weekly_hours, preferred_weekly_hours, min_acceptable_weekly_hours)
         if errors:
@@ -345,9 +376,10 @@ if st.sidebar.button("Generate Schedule", type="primary"):
 
         st.session_state.df_profiles = df_profiles
         st.session_state.df_prefs = df_prefs
+        st.session_state.df_train_shifts = df_train_shifts
 
         sched, summ, violations, metrics = build_schedule_model(
-            df_profiles, df_prefs,
+            df_profiles, df_prefs, df_train_shifts,
             pd.to_datetime(start_date), 
             num_days,
             shift_durations,
@@ -367,6 +399,7 @@ if st.sidebar.button("Generate Schedule", type="primary"):
             weekend_rest=st.session_state.weekend_rest,
             back_to_back_shift=st.session_state.back_to_back_shift,
             use_sliding_window=st.session_state.use_sliding_window,
+            shift_balance=st.session_state.shift_balance,
             fixed_assignments=st.session_state.fixed
         )
         st.session_state.sched_df = sched
@@ -444,81 +477,96 @@ if st.session_state.sched_df is not None:
                     st.info("Click 'hide' and 'show' to try again")
                     st.stop()
 
-            if not pending_el and not pending_mc:
-                st.info("No overrides to apply.")
+            try:
+                if not pending_el and not pending_mc:
+                    st.info("No overrides to apply.")
 
-            else:
-                # merge pending into cumulative
-                st.session_state.all_el_overrides.update(st.session_state.pending_el)
-                st.session_state.all_mc_overrides.update(st.session_state.pending_mc)
-                el_overrides = st.session_state.all_el_overrides
-                mc_overrides = st.session_state.all_mc_overrides
+                else:
+                    # merge pending into cumulative
+                    st.session_state.all_el_overrides.update(st.session_state.pending_el)
+                    st.session_state.all_mc_overrides.update(st.session_state.pending_mc)
+                    el_overrides = st.session_state.all_el_overrides
+                    mc_overrides = st.session_state.all_mc_overrides
 
-                # find earliest override day across pending overrides
-                all_days = [d for (_,d) in pending_el.keys()] + [d for (_,d) in pending_mc.keys()]
-                w0 = min(all_days)
-                # st.write(w0)
+                    # find earliest override day across pending overrides
+                    all_days = [d for (_,d) in pending_el.keys()] + [d for (_,d) in pending_mc.keys()]
+                    w0 = min(all_days)
+                    # st.write(w0)
 
-                # clear pending
-                st.session_state.pending_el.clear()
-                st.session_state.pending_mc.clear()
+                    # clear pending
+                    st.session_state.pending_el.clear()
+                    st.session_state.pending_mc.clear()
 
-                # build fixed assignments from most updated schedule
-                fixed = {}
-                orig = st.session_state.sched_df.copy()
+                    # build fixed assignments from most updated schedule
+                    fixed = {}
+                    orig = st.session_state.sched_df.copy()
 
-                # freeze all values for days < w0
-                for nurse, row in orig.iterrows():
-                    for i, col in enumerate(orig.columns):
-                        if i >= w0:
-                            break
-                        val = str(row[col]).strip()
-                        fixed[(nurse, i)] = val
+                    # freeze all values for days < w0
+                    for nurse, row in orig.iterrows():
+                        for i, col in enumerate(orig.columns):
+                            if i >= w0:
+                                break
+                            val = str(row[col]).strip()
+                            fixed[(nurse, i)] = val
 
-                # add all of your pending overrides, then store it back to keep growing next time
-                fixed.update(el_overrides)
-                fixed.update(mc_overrides)
-                st.session_state.fixed = fixed
+                    # add all of your pending overrides, then store it back to keep growing next time
+                    fixed.update(el_overrides)
+                    fixed.update(mc_overrides)
+                    st.session_state.fixed = fixed
 
-                # re-solve starting from earliest EL day (included)
-                sched2, summ2, violations2, metrics2 = build_schedule_model(
-                    st.session_state.df_profiles,
-                    st.session_state.df_prefs,
-                    st.session_state.start_date,
-                    st.session_state.num_days,
-                    st.session_state.shift_durations,
-                    st.session_state.min_nurses_per_shift,
-                    st.session_state.min_seniors_per_shift,
-                    st.session_state.max_weekly_hours,
-                    st.session_state.preferred_weekly_hours,
-                    st.session_state.pref_weekly_hours_hard,
-                    st.session_state.min_acceptable_weekly_hours,
-                    st.session_state.activate_am_cov,
-                    st.session_state.am_coverage_min_percent,
-                    st.session_state.am_coverage_min_hard,
-                    st.session_state.am_coverage_relax_step,
-                    st.session_state.am_senior_min_percent,
-                    st.session_state.am_senior_min_hard,
-                    st.session_state.am_senior_relax_step,
-                    st.session_state.weekend_rest,
-                    st.session_state.back_to_back_shift,
-                    st.session_state.use_sliding_window,
-                    fixed_assignments=fixed
-                )
-                st.session_state.sched_df   = sched2
-                st.session_state.summary_df = summ2
-                st.session_state.violations = violations2
-                st.session_state.metrics = metrics2
+                    # re-solve starting from earliest EL day (included)
+                    sched2, summ2, violations2, metrics2 = build_schedule_model(
+                        st.session_state.df_profiles,
+                        st.session_state.df_prefs,
+                        st.session_state.df_train_shifts,
+                        st.session_state.start_date,
+                        st.session_state.num_days,
+                        st.session_state.shift_durations,
+                        st.session_state.min_nurses_per_shift,
+                        st.session_state.min_seniors_per_shift,
+                        st.session_state.max_weekly_hours,
+                        st.session_state.preferred_weekly_hours,
+                        st.session_state.pref_weekly_hours_hard,
+                        st.session_state.min_acceptable_weekly_hours,
+                        st.session_state.activate_am_cov,
+                        st.session_state.am_coverage_min_percent,
+                        st.session_state.am_coverage_min_hard,
+                        st.session_state.am_coverage_relax_step,
+                        st.session_state.am_senior_min_percent,
+                        st.session_state.am_senior_min_hard,
+                        st.session_state.am_senior_relax_step,
+                        st.session_state.weekend_rest,
+                        st.session_state.back_to_back_shift,
+                        st.session_state.use_sliding_window,
+                        st.session_state.shift_balance,
+                        fixed_assignments=fixed
+                    )
+                    st.session_state.sched_df   = sched2
+                    st.session_state.summary_df = summ2
+                    st.session_state.violations = violations2
+                    st.session_state.metrics = metrics2
 
-                st.success(f"Re-solved from day {w0} onward.")
-                st.session_state.show_schedule_expanded = False
-                st.rerun()
+                    st.success(f"Re-solved from day {w0} onward.")
+                    st.session_state.show_schedule_expanded = False
+                    st.rerun()
+            except CUSTOM_ERRORS as e:
+                st.error(str(e))
+                st.stop()
+            except Exception as e:
+                tb = traceback.format_exc()
+                st.error(f"Error: {e}")
+                st.text_area("Traceback", tb, height=200)
+                st.stop()
 
     st.subheader("📅 Final Schedule")
     st.dataframe(st.session_state.sched_df, use_container_width=True)
 
     st.subheader("📊 Final Summary Metrics")
     st.dataframe(st.session_state.summary_df, use_container_width=True)
+    # for row in st.session_state.summary_df.itertuples():
+    #     if row.Unmet_Details:
+    #         with st.expander(f"Unmet Details for {row.Nurse}"):
+    #             st.markdown(row.Unmet_Details)
 
     violations = st.session_state.get("violations", {})
     if violations:

@@ -1,18 +1,14 @@
-from matplotlib.pyplot import step
 import pandas as pd
 from ortools.sat.python import cp_model
 from datetime import timedelta, date as dt_date
 from typing import Optional, Dict, Tuple, Set
-from pathlib import Path
+from config.paths import LOG_PATH
 import logging
 from utils.constants import *       # import all constants
 from utils.validate import *
 from utils.shift_utils import *
 from exceptions.custom_errors import *
-from core.hard_rules import define_hard_rules
-from model.setup import *
-
-LOG_PATH = Path(__file__).parent / "schedule_run.log"
+from core.assumption_flags import define_hard_rules
 
 logging.basicConfig(
     filename=LOG_PATH,
@@ -45,7 +41,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                          am_senior_relax_step: int = AM_SENIOR_RELAX_STEP,
                          weekend_rest: bool = True,
                          back_to_back_shift: bool = False,
-                         use_sliding_window: bool = USE_SLIDING_WINDOW,
+                         use_sliding_window: bool = False,
                          fixed_assignments: Optional[Dict[Tuple[str,int], str]] = None
                          ) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict]:
     """
@@ -53,18 +49,66 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     Returns a schedule DataFrame, a summary DataFrame, and a violations dictionary.
     """
     # === Validate inputs ===
-    validate_data(profiles_df, preferences_df)
+    missing, extra = validate_nurse_data(profiles_df, preferences_df)
+    if missing or extra:
+        raise InputMismatchError(
+            f"Mismatch between nurse profiles and preferences:\n"
+            f" • Not found in preferences: {sorted(missing)}\n"
+            f" • Not found in profiles: {sorted(extra)}\n"
+        )
 
     # === Model setup ===
+    import random
     logger.info("📋 Building model...")
-    model, nurse_names, og_nurse_names, senior_names, shift_str_to_idx, date_start, \
-    hard_rules, shift_preferences, prefs_by_nurse, fixed_assignments, mc_sets, \
-    al_sets, el_sets, weekend_pairs, shift_types, work = setup_model(
-        profiles_df, preferences_df, start_date, num_days, SHIFT_LABELS, fixed_assignments
+    model = cp_model.CpModel()
+    nurses = profiles_df.to_dict(orient='records')
+    nurse_names = [n['Name'].strip().upper() for n in nurses]
+    og_nurse_names = nurse_names.copy()           # Save original order of list
+    random.shuffle(nurse_names)                   # Shuffle order for random shift assignments for nurses
+    senior_names = get_senior_set(profiles_df)    # Assume senior nurses have ≥3 years experience
+    shift_str_to_idx = {label.upper(): i for i, label in enumerate(SHIFT_LABELS)}
+    hard_rules = define_hard_rules(model)         # Track hard constraint violations
+
+    if isinstance(start_date, pd.Timestamp):
+        date_start: dt_date = start_date.date()
+    else:
+        date_start = start_date
+
+    # === Normalise EL days ===
+    fixed_assignments = normalize_fixed_assignments(
+        fixed_assignments,
+        set(nurse_names),
+        num_days
     )
 
-    # === Variables ===
+    # === Preferences and MC days ===
+    shift_preferences, mc_days, al_days = (
+        get_shift_preferences(preferences_df, profiles_df, date_start, num_days, SHIFT_LABELS, NO_WORK_LABELS),
+        get_mc_days(preferences_df, profiles_df, date_start, num_days),
+        get_al_days(preferences_df, profiles_df, date_start, num_days)
+    )
+
+    # === Precompute per-nurse lookups ===
+    mc_sets = {n: mc_days.get(n, set()) for n in nurse_names}
+    al_sets = {n: al_days.get(n, set()) for n in nurse_names}
+    el_sets = get_el_days(fixed_assignments, nurse_names)
     days_with_el = {d for days in el_sets.values() for d in days}
+    prefs_by_nurse = {n: shift_preferences.get(n, {}) for n in nurse_names}
+
+    weekend_pairs = []
+    for i in range(num_days - 1):
+        if (date_start + timedelta(days=i)).weekday() == 5:  # Saturday
+            if i + 7 < num_days:
+                weekend_pairs.append((i, i + 7))
+            if i + 8 < num_days:                             # Sunday
+                weekend_pairs.append((i + 1, i + 8))
+
+    # === Variables ===
+    shift_types = len(SHIFT_LABELS)
+    work = {
+        (n, d, s): model.NewBoolVar(f'work_{n}_{d}_{s}')
+        for n in nurse_names for d in range(num_days) for s in range(shift_types)
+    }
     is_satisfied = {}
     total_satisfied = {}
     high_priority_penalty = []
@@ -77,14 +121,14 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         label = shift_label.strip().upper()
 
         # Fix MC, REST, AL, EL as no work
-        if label in {"EL", "MC", "AL", "REST"}:
+        if label in NO_WORK_LABELS:     # REST, MC, EL, AL
             # Block all shifts
             for s in range(shift_types):
                 model.Add(work[nurse, day_idx, s] == 0)
             # Record MC overrides
-            if label == "MC":
+            if label == NO_WORK_LABELS[1]:  # MC
                 mc_sets[nurse].add(day_idx)
-            if label == "AL":
+            if label == NO_WORK_LABELS[3]:  # AL
                 al_sets[nurse].add(day_idx)
             # EL already recorded in el_sets
 
@@ -115,8 +159,6 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     # 1. Number of shift per nurse per day
     # If no EL, each nurse can work at most 1 shift per day
     # If EL, allow at most 2 shifts per nurse if cannot satisfy other hard constraints for that day
-    two_shifts = {}  
-
     for n in nurse_names:
         for d in range(num_days):
             if d not in days_with_el:
@@ -125,7 +167,6 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             else:
             # EL day: allow either 1 or 2 shifts
                 ts = model.NewBoolVar(f"two_shifts_{n}_{d}")
-                two_shifts[(n, d)] = ts
 
                 if d in el_sets[n]:     # if nurse has el on that day, explicitly make ts = false for the nurse
                     model.Add(ts == 0)
@@ -334,6 +375,14 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
         for d in range(num_days):
             if d in prefs:
+            # # filter out fixed assignments from prefs
+            # # Exp: If declare EL/MC after initial schedule generated, any previous preferences will be ignored
+            #     if fixed_assignments.get((n, d), "").upper() in NO_WORK_LABELS:
+            #         sat = model.NewConstant(1)
+            #         is_satisfied[(n, d)] = sat
+            #         satisfied_list.append(sat)
+            #         continue
+
                 s = prefs[d]
                 sat = model.NewBoolVar(f'sat_{n}_{d}')
                 model.Add(work[n, d, s] == 1).OnlyEnforceIf(sat)
@@ -358,7 +407,6 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             p = model.NewIntVar(0, 100, f"pct_sat_{n}")
             pct_sat[n] = p
             model.Add(p * count == total_satisfied[n] * 100)
-
         else:
             pct_sat[n] = None
 
@@ -555,7 +603,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     if not am_senior_min_hard:
         violations["Low Senior AM Days"] = []
     metrics = {}
-    has_shift_prefs = any(shift_preferences.values())
+    has_shift_prefs = any(prefs_by_nurse.values())
     if has_shift_prefs:
         metrics = {"Preference Unmet": [], "Fairness Gap": cached_gap if use_fallback or 'gap_pct' not in locals() else solver.Value(gap_pct)}
 
@@ -571,11 +619,11 @@ def build_schedule_model(profiles_df: pd.DataFrame,
             picked = []
             
             if d in mc_sets[n]:
-                shift = "MC"
+                shift = NO_WORK_LABELS[1]      # MC
             elif d in al_sets[n]:
-                shift = "AL"
-            elif (n, d) in fixed_assignments and fixed_assignments[(n, d)].strip().upper() == "EL":
-                shift = "EL"
+                shift = NO_WORK_LABELS[3]      # AL
+            elif (n, d) in fixed_assignments and fixed_assignments[(n, d)].strip().upper() == NO_WORK_LABELS[2]:
+                shift = NO_WORK_LABELS[2]      # EL
             else:
                 if use_fallback:
                     picked = [s for s in range(shift_types) if cached_values[(n, d, s)]]
@@ -587,7 +635,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                 
                 match(len(picked)):
                     case 0:
-                        shift = "Rest"
+                        shift = NO_WORK_LABELS[0]   # REST
                         shift_counts[3] += 1
                     case 1:
                         shift = SHIFT_LABELS[picked[0]]
@@ -605,6 +653,9 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
             pref = prefs_by_nurse[n].get(d)
             if pref is not None:
+                if (n, d) in fixed_assignments and fixed_assignments[(n, d)].upper() in NO_WORK_LABELS:
+                    continue
+
                 if len(picked) == 1 and picked[0] == pref:
                     prefs_met += 1
                 else:
