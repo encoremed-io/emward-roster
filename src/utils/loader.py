@@ -3,6 +3,7 @@ import re
 from typing import Union, IO
 from pathlib import Path
 from config.paths import DATA_DIR
+from exceptions.custom_errors import FileContentError, FileReadingError
 
 def load_nurse_profiles(
     path_or_buffer: Union[str, Path, bytes, IO, None] = None,
@@ -26,7 +27,7 @@ def load_nurse_profiles(
     try:
         df = pd.read_excel(path_or_buffer)
     except Exception as e:
-        raise ValueError(f"Error loading nurse profiles: {e}")
+        raise FileReadingError(f"Error loading nurse profiles: {e}")
 
     col_map = {col.lower().strip(): col for col in df.columns}
 
@@ -35,14 +36,14 @@ def load_nurse_profiles(
         for key, original in col_map.items():
             if any(k in key for k in keywords):
                 return original
-        raise ValueError(f"No column found containing {keywords}")
+        raise FileContentError(f"No column found containing {keywords}")
 
     try:
         name_col = find_col("name")
         title_col = find_col("title")
         exp_col = find_col("experience", "year")
-    except ValueError as e:
-        raise ValueError(f"Missing expected column: {e}")
+    except Exception as e:
+        raise FileContentError(f"Missing expected column: {e}")
 
     df = df[[name_col, title_col, exp_col]]
     df.columns = ["Name", "Title", "Years of experience"]
@@ -56,7 +57,7 @@ def load_nurse_profiles(
         df.drop_duplicates(subset=["Name"], inplace=True)
     else:
         if df.duplicated(subset=["Name"]).any():
-            raise ValueError("Duplicate nurse names found.")
+            raise FileContentError("Duplicate nurse names found.")
 
     return df
 
@@ -79,11 +80,12 @@ def load_shift_preferences(
     try:
         df = pd.read_excel(path_or_buffer)
     except Exception as e:
-        raise ValueError(f"Error loading nurse preferences: {e}")
+        raise FileReadingError(f"Error loading nurse preferences: {e}")
 
     df.rename(columns={df.columns[0]: 'Name'}, inplace=True)
     df.set_index('Name', inplace=True)
 
+    invalid_cols = []
     cleaned_cols = []
     for col in df.columns:
         try:
@@ -95,8 +97,13 @@ def load_shift_preferences(
             dt = pd.to_datetime(col_str, errors='raise').date()
             cleaned_cols.append(dt)
         except Exception as e:
-            raise ValueError(f"Invalid date format in column '{col}': {e}")
+            invalid_cols.append(col)
+            
+    if invalid_cols:
+        raise FileContentError(f"Invalid date format in columns: {', '.join(invalid_cols)}")
 
     df.columns = cleaned_cols
     df.index = df.index.str.strip().str.upper()
+    if df.index.has_duplicates:
+        raise FileContentError(f"Duplicate nurse names found in preferences file in rows. Duplicated values: {df.index[df.index.duplicated()].tolist()}.")
     return df

@@ -38,6 +38,7 @@ class ScheduleState:
     weekend_rest: bool
     back_to_back_shift: bool
     use_sliding_window: bool
+    shift_balance: bool
 
     # collections to fill
     hard_rules: Dict[str, Any]

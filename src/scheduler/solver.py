@@ -88,21 +88,6 @@ def run_phase1(model, state) -> SolverResult:
     logger.info(f"High Priority Penalty Phase 1B: {high_penalty}")
     logger.info(f"Low Priority Penalty Phase 1B: {low_penalty}")
 
-    # # save "best" solution found
-    # cached_values = {}
-    # for n in nurse_names:
-    #     for d in range(num_days):
-    #         for s in range(shift_types):
-    #             cached_values[(n, d, s)] = solver.Value(work[n, d, s])
-
-    # cached_total_prefs_met = 0
-    # for n in nurse_names:
-    #     for d in range(num_days):
-    #         picked = [s for s in range(shift_types) if cached_values[(n, d, s)]]
-    #         pref = prefs_by_nurse[n].get(d)
-    #         if pref is not None and len(picked) == 1 and pref in picked:
-    #             cached_total_prefs_met += 1
-
     cached = {
         (n, d, s): solver.Value(state.work[n, d, s])
         for n in state.nurse_names
@@ -111,18 +96,13 @@ def run_phase1(model, state) -> SolverResult:
     }
 
     fairness_gap = solver.Value(state.gap_pct) if state.gap_pct is not None else None
-
-    # cached_gap = solver.Value(state.gap_pct) if state.gap_pct is not None else "N/A"
-    # high1 = solver.ObjectiveValue()
-    # best_penalty = solver.ObjectiveValue() + solver.Value(sum(state.low_priority_penalty))
-    # logger.info(f"▶️ Phase 1 complete: best total penalty = {best_penalty}; best fairness gap = {cached_gap}")
-
+    logger.info(f"▶️ Phase 1 complete: best total penalty = {high_penalty + low_penalty}; best fairness gap = {fairness_gap if fairness_gap is not None else 'N/A'}")
     return SolverResult(solver, status, cached, high_penalty, low_penalty, fairness_gap)
 
 
 def run_phase2(model, state, p1: SolverResult) -> SolverResult:
-    # Phase 2: Maximize preferences
-    logger.info("🚀 Phase 2: maximizing preferences…")
+    # Phase 2: Maximize preferences and shift balance
+    logger.info("🚀 Phase 2: maximizing preferences with (optional) shift balance...")
 
     model.Add(sum(r.flag for r in state.hard_rules.values()) == len(state.hard_rules))
     model.Add(sum(state.high_priority_penalty) <= round(p1.high_penalty))

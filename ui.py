@@ -33,7 +33,9 @@ CUSTOM_ERRORS = (
     InvalidALError,
     ConsecutiveMCError,
     ConsecutiveALError,
-    InputMismatchError
+    InputMismatchError,
+    FileReadingError,
+    FileContentError
 )
 
 st.set_page_config(page_title="Nurse Roster Scheduler", layout="wide")
@@ -272,6 +274,11 @@ use_sliding_window = st.sidebar.checkbox(
     help="If checked, the maximum weekly hours is enforced over any consecutive 7-day window, not just calendar weeks. This provides stricter control over nurse workload.",
     key="use_sliding_window"
 )
+shift_balance = st.sidebar.checkbox(
+    "Balance shift assignments", value=False,
+    help="If checked, the system will attempt to balance shift assignments among nurses. May cause longer solve times.",
+    key="shift_balance"
+)
 
 # Store core state
 for key, default in {
@@ -299,6 +306,7 @@ for key, default in {
     "weekend_rest": weekend_rest,
     "back_to_back_shift": back_to_back_shift,
     "use_sliding_window": use_sliding_window,
+    "shift_balance": shift_balance,
     "all_el_overrides": {},
     "all_mc_overrides": {}
 }.items():
@@ -375,6 +383,7 @@ if st.sidebar.button("Generate Schedule", type="primary"):
             weekend_rest=st.session_state.weekend_rest,
             back_to_back_shift=st.session_state.back_to_back_shift,
             use_sliding_window=st.session_state.use_sliding_window,
+            shift_balance=st.session_state.shift_balance,
             fixed_assignments=st.session_state.fixed
         )
         st.session_state.sched_df = sched
@@ -512,6 +521,7 @@ if st.session_state.sched_df is not None:
                         st.session_state.weekend_rest,
                         st.session_state.back_to_back_shift,
                         st.session_state.use_sliding_window,
+                        st.session_state.shift_balance,
                         fixed_assignments=fixed
                     )
                     st.session_state.sched_df   = sched2
@@ -536,6 +546,10 @@ if st.session_state.sched_df is not None:
 
     st.subheader("📊 Final Summary Metrics")
     st.dataframe(st.session_state.summary_df, use_container_width=True)
+    # for row in st.session_state.summary_df.itertuples():
+    #     if row.Unmet_Details:
+    #         with st.expander(f"Unmet Details for {row.Nurse}"):
+    #             st.markdown(row.Unmet_Details)
 
     violations = st.session_state.get("violations", {})
     if violations:

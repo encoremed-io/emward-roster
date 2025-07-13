@@ -21,3 +21,11 @@ class ConsecutiveALError(Exception):
 class InputMismatchError(Exception):
     """Raised when there is a mismatch between the nurse profiles and preferences."""
     pass
+
+class FileReadingError(Exception):
+    """Raised when there is an error reading a file."""
+    pass
+
+class FileContentError(Exception):
+    """Raised when the content of a file is not as expected."""
+    pass

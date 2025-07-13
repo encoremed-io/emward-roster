@@ -37,11 +37,11 @@ def extract_schedule_and_summary(state: ScheduleState, result: SolverResult, og_
     if not state.am_senior_min_hard:
         violations["Low Senior AM Days"] = []
     metrics = {}
-    has_prefs = bool(state.low_priority_penalty)
+    has_prefs = bool(any(state.prefs_by_nurse.values()))    # only have metrics if there are preferences
     if has_prefs:
         metrics = {
             "Preference Unmet": [],
-            "Fairness Gap": result.fairness_gap
+            "Fairness Gap": result.fairness_gap if result.fairness_gap is not None else "N/A"
         }
 
     for n in state.nurse_names:
@@ -129,7 +129,12 @@ def extract_schedule_and_summary(state: ScheduleState, result: SolverResult, og_
             "Double Shifts": len(double_shift_days),
         }
         for w in range(num_weeks):
-            summary_row[f"Hours_Week{w+1}"] = round(minutes_per_week[w] / 60, 1)
+            actual_hrs = round(minutes_per_week[w] / 60, 1)
+            days_this_week = set(range(w * DAYS_PER_WEEK, min((w + 1) * DAYS_PER_WEEK, state.num_days)))
+            al_this_week = len(state.al_sets[n] & days_this_week)
+            credit_hrs = round(actual_hrs + ((al_this_week * avg_minutes) / 60), 1)     # credit hours include AL
+            summary_row[f"Hours_Week{w+1}_Real"] = actual_hrs
+            summary_row[f"Hours_Week{w+1}_InclAL"] = credit_hrs
         summary_row.update({
             "Prefs_Met": prefs_met,
             "Prefs_Unmet": len(prefs_unmet),

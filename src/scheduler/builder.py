@@ -45,6 +45,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                          weekend_rest: bool = True,
                          back_to_back_shift: bool = False,
                          use_sliding_window: bool = USE_SLIDING_WINDOW,
+                         shift_balance: bool = False,
                          fixed_assignments: Optional[Dict[Tuple[str,int], str]] = None
                          ) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict]:
     """
@@ -93,6 +94,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         weekend_rest=weekend_rest,
         back_to_back_shift=back_to_back_shift,
         use_sliding_window=use_sliding_window,
+        shift_balance=shift_balance,
         hard_rules=hard_rules,
         days_with_el=days_with_el,
         total_satisfied={},
@@ -117,7 +119,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     # Low priority rules
     cm.add_rule(preference_rule)
     cm.add_rule(fairness_gap_rule)
-    # cm.add_rule(shift_balance_rule)
+    cm.add_rule(shift_balance_rule)
 
     cm.apply_all()
 

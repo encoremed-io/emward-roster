@@ -13,7 +13,7 @@ def solve_schedule(model: cp_model.CpModel, state: ScheduleState, og_nurse_order
     p1 = run_phase1(model, state)
     best_result = p1
     
-    # Only run phase 2 if low priority penalty exists, which means shifts preferences exist
+    # Only run phase 2 if low priority penalty exists, which means shifts preferences or shift imbalance exist
     if state.low_priority_penalty:
         p2: SolverResult = run_phase2(model, state, p1)
     

@@ -1,6 +1,7 @@
 import pandas as pd
 from datetime import datetime, timedelta, time, date as dt_date
 from typing import Any, Dict, Set, List, Union, Optional, Tuple
+from exceptions.custom_errors import FileContentError
 
 # --- Utility to convert column label to day-index ---
 def compute_label_offset(label: Any, date_start: dt_date) -> int:
@@ -74,7 +75,8 @@ def get_shift_preferences(
     profiles_df: pd.DataFrame,
     start_date: Union[pd.Timestamp, dt_date],
     active_days: int,
-    shift_labels: List[str]
+    shift_labels: List[str],
+    no_work_labels: List[str]
 ) -> Dict[str, Dict[int, int]]:
     """
     Returns nurse_name -> { day_index: shift_index } for non-MC preferences.
@@ -91,10 +93,17 @@ def get_shift_preferences(
         for label, val in row.items():
             if pd.notna(val):
                 code = str(val).strip().upper()
-                if code in shift_str_to_idx:
+                if code == "" or code in (lbl.upper() for lbl in no_work_labels):
+                    continue
+                elif code in shift_str_to_idx:
                     offset = compute_label_offset(label, date_start)
                     if 0 <= offset < active_days:
                         shift_prefs[nm][offset] = shift_str_to_idx[code]
+                else:
+                    raise FileContentError(
+                        f"Invalid preference “{code}” for nurse {nm} on {label} — "
+                        f"expected one of {shift_labels + no_work_labels!r} or blank."
+                    )
     return shift_prefs
 
 
@@ -131,9 +140,9 @@ def filter_fixed_assignments_from_prefs(
 
 def extract_prefs_info(preferences_df, profiles_df, date_start, nurse_names, num_days, shift_labels, no_work_labels, fixed_assignments=None):
     """ Extracts preferences information and each nurse's preferences from the preferences DataFrame. """
-    shift_preferences = get_shift_preferences(preferences_df, profiles_df, date_start, num_days, shift_labels)
+    shift_preferences = get_shift_preferences(preferences_df, profiles_df, date_start, num_days, shift_labels, no_work_labels)
     prefs_by_nurse = {n: shift_preferences.get(n, {}) for n in nurse_names}
-    filter_fixed_assignments_from_prefs(shift_preferences, prefs_by_nurse, no_work_labels,fixed_assignments)
+    filter_fixed_assignments_from_prefs(shift_preferences, prefs_by_nurse, no_work_labels, fixed_assignments)
     return shift_preferences, prefs_by_nurse
 
 

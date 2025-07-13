@@ -60,25 +60,28 @@ def fairness_gap_rule(model, state: ScheduleState):
 
 
 def shift_balance_rule(model, state: ScheduleState):
-    # Precompute counts just once
-    counts = {}
-    for n in state.nurse_names:
-        for s in range(state.shift_types):
-            C = model.NewIntVar(0, state.num_days, f"count_{n}_s{s}")
-            model.Add(C == sum(state.work[n, d, s] for d in range(state.num_days)))
-            counts[(n, s)] = C
+    if state.shift_balance:
+        # Precompute counts just once
+        counts = {}
+        for n in state.nurse_names:
+            for s in range(state.shift_types):
+                C = model.NewIntVar(0, state.num_days, f"count_{n}_s{s}")
+                model.Add(C == sum(state.work[n, d, s] for d in range(state.num_days)))
+                counts[(n, s)] = C
 
-    # For each nurse, build min/max/gap
-    for n in state.nurse_names:
-        c_vars = [counts[(n, s)] for s in range(state.shift_types)]
-        minC = model.NewIntVar(0, state.num_days, f"min_count_{n}")
-        maxC = model.NewIntVar(0, state.num_days, f"max_count_{n}")
+        # For each nurse, build min/max/gap
+        for n in state.nurse_names:
+            c_vars = [counts[(n, s)] for s in range(state.shift_types)]
+            minC = model.NewIntVar(0, state.num_days, f"min_count_{n}")
+            maxC = model.NewIntVar(0, state.num_days, f"max_count_{n}")
 
-        model.AddMinEquality(minC, c_vars)
-        model.AddMaxEquality(maxC, c_vars)
+            model.AddMinEquality(minC, c_vars)
+            model.AddMaxEquality(maxC, c_vars)
 
-        gap = model.NewIntVar(0, state.num_days, f"gap_{n}")
-        model.Add(gap == maxC - minC)
+            distribution_gap = model.NewIntVar(0, state.num_days, f"gap_{n}")
+            model.Add(distribution_gap == maxC - minC)
 
-        # soft-penalize any imbalance
-        state.low_priority_penalty.append(gap * SHIFT_IMBALANCE_PENALTY)
+            # soft penalise when distribution_gap >= 2 based on distance from 2
+            over_gap = model.NewIntVar(0, state.num_days, f"over_gap_{n}")
+            model.AddMaxEquality(over_gap, [distribution_gap - SHIFT_IMBALANCE_THRESHOLD, 0])
+            state.low_priority_penalty.append(over_gap * SHIFT_IMBALANCE_PENALTY)
