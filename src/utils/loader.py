@@ -116,11 +116,14 @@ def load_training_shifts(
 
     Parameters:
         path_or_buffer: Path to the Excel file (str), a file-like object (e.g., Streamlit UploadedFile),
-                        or bytes.
+                        or bytes. Defaults to 'data/training_shifts.xlsx'.
 
     Returns:
         pd.DataFrame: DataFrame with nurse names as index (stripped and uppercased), and columns as dates.
     """
+    if path_or_buffer is None:
+        path_or_buffer = DATA_DIR / "training_shifts.xlsx"
+
     try:
         df = pd.read_excel(path_or_buffer)
     except Exception as e:
