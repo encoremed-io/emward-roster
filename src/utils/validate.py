@@ -2,13 +2,18 @@ import pandas as pd
 from .nurse_utils import get_senior_set
 from exceptions.custom_errors import InputMismatchError
 
-def validate_data(profiles_df: pd.DataFrame, preferences_df: pd.DataFrame):
-    """ Validate that the nurse profiles and preferences match. """
-    missing, extra = validate_nurse_data(profiles_df, preferences_df)
+def validate_data(
+        df1: pd.DataFrame, 
+        df2: pd.DataFrame, 
+        file1_name: str = "file 1", 
+        file2_name: str = "file 2"
+    ):
+    """ Validate that the names in file 1 and file 2 match. """
+    missing, extra = validate_nurse_data(df1, df2)
     if missing or extra:
-        msg = ["⚠️ Mismatch between nurse profiles and preferences:\n"]
-        if missing: msg.append(f" • Not found in preferences: {', '.join(sorted(missing))}\n")
-        if extra: msg.append(f" • Not found in profiles: {', '.join(sorted(extra))}")
+        msg = [f"⚠️ Mismatch between {file1_name} and {file2_name}:\n"]
+        if missing: msg.append(f" • Not found in {file2_name}: {', '.join(sorted(missing))}\n")
+        if extra: msg.append(f" • Not found in {file1_name}: {', '.join(sorted(extra))}")
         msg = "\n".join(msg)
         raise InputMismatchError(msg)
     
@@ -30,7 +35,8 @@ def validate_input_params(
         min_seniors_per_shift: int,
         max_working_hours: int, 
         preferred_work_hours: int, 
-        min_acceptable_working_hours: int):
+        min_acceptable_working_hours: int
+    ):
     """ Validate input parameters. """
     nurse_amt = len(set(profiles_df['Name'].str.strip()))
     senior_amt = len(get_senior_set(profiles_df))

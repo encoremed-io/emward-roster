@@ -17,9 +17,9 @@ def install(c):
     c.run("pip install -r requirements.txt")
 
 
-@task
-def back(c):
-    c.run("uvicorn app:app --reload --host 127.0.0.1 --port 8001")
+# @task
+# def back(c):
+#     c.run("uvicorn app:app --reload --host 127.0.0.1 --port 8001")
 
 
 @task
@@ -27,32 +27,32 @@ def front(c):
     c.run("streamlit run ui.py", env={"PYTHONUTF8": "1"})
 
 
-@task
-def all(c):
-    # Launch backend
-    subprocess.Popen(
-        ["cmd", "/k", "uvicorn app:app --reload --host 127.0.0.1 --port 8001"],
-        creationflags=subprocess.CREATE_NEW_CONSOLE
-    )
+# @task
+# def all(c):
+#     # Launch backend
+#     subprocess.Popen(
+#         ["cmd", "/k", "uvicorn app:app --reload --host 127.0.0.1 --port 8001"],
+#         creationflags=subprocess.CREATE_NEW_CONSOLE
+#     )
 
-    # Launch frontend with PYTHONUTF8=1 set properly
-    env = os.environ.copy()
-    env["PYTHONUTF8"] = "1"
-    subprocess.Popen(
-        ["cmd", "/k", "streamlit run ui.py"],
-        creationflags=subprocess.CREATE_NEW_CONSOLE,
-        env=env
-    )
-
-
-@task
-def train(c):
-    c.run("python train_rl.py", env={"PYTHONUTF8": "1"})
+#     # Launch frontend with PYTHONUTF8=1 set properly
+#     env = os.environ.copy()
+#     env["PYTHONUTF8"] = "1"
+#     subprocess.Popen(
+#         ["cmd", "/k", "streamlit run ui.py"],
+#         creationflags=subprocess.CREATE_NEW_CONSOLE,
+#         env=env
+#     )
 
 
-@task
-def train_logs(c):
-    c.run("tensorboard --logdir tb_logs")
+# @task
+# def train(c):
+#     c.run("python train_rl.py", env={"PYTHONUTF8": "1"})
+
+
+# @task
+# def train_logs(c):
+#     c.run("tensorboard --logdir tb_logs")
 
 
 @task

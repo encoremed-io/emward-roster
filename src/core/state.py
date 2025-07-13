@@ -16,6 +16,7 @@ class ScheduleState:
     el_sets: Dict[str, Set[int]]
     weekend_pairs: List[Tuple[int,int]]
     prefs_by_nurse: Dict[str, Dict[int,int]]
+    training_by_nurse: Dict[str, Dict[int,int]]
 
     # model params
     num_days: int

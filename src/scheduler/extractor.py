@@ -4,11 +4,13 @@ from .solver import SolverResult
 from datetime import timedelta
 from utils.constants import NO_WORK_LABELS, SHIFT_LABELS, DAYS_PER_WEEK
 import statistics
+from typing import List
 import logging
 
 logger = logging.getLogger(__name__)
 
 def get_total_prefs_met(state: ScheduleState, result: SolverResult) -> int:
+    """Return the total number of preferences met in the solution."""
     total_prefs_met = 0
     for n in state.nurse_names:
         for d in range(state.num_days):
@@ -20,7 +22,22 @@ def get_total_prefs_met(state: ScheduleState, result: SolverResult) -> int:
     return total_prefs_met
 
 
-def extract_schedule_and_summary(state: ScheduleState, result: SolverResult, og_nurse_order: list[str]):
+def extract_schedule_and_summary(state: ScheduleState, result: SolverResult, og_nurse_order: List[str]):
+    """
+    Extract a schedule and summary from a solver result.
+
+    Args:
+        state (ScheduleState): The state of the scheduling problem.
+        result (SolverResult): The result of the solver.
+        og_nurse_order (list[str]): The original order of the nurse names.
+
+    Returns:
+        tuple: A tuple of (schedule_df, summary_df, violations, metrics)
+            schedule_df (pd.DataFrame): A DataFrame containing the extracted schedule.
+            summary_df (pd.DataFrame): A DataFrame containing the extracted summary.
+            violations (dict): A dictionary containing the soft constraint violations.
+            metrics (dict): A dictionary containing the preference satisfaction and fairness metrics.
+    """
     dates = [state.start_date + timedelta(days=i) for i in range(state.num_days)]
     headers = [d.strftime('%a %Y-%m-%d') for d in dates]
     num_weeks = (state.num_days + 6) // 7
@@ -47,7 +64,8 @@ def extract_schedule_and_summary(state: ScheduleState, result: SolverResult, og_
     for n in state.nurse_names:
         row = []
         minutes_per_week = [0] * num_weeks
-        shift_counts = [0, 0, 0, 0]  # AM, PM, Night, REST
+        shift_counts = [0, 0, 0, 0]     # AM, PM, Night, REST
+        training_counts = [0, 0, 0]     # AM, PM Night
         double_shift_days = []
         prefs_met = 0
         prefs_unmet = []
@@ -77,6 +95,10 @@ def extract_schedule_and_summary(state: ScheduleState, result: SolverResult, og_
                         shift = f"{SHIFT_LABELS[first]}/{SHIFT_LABELS[second]}*"
                     case _:
                         shift = "OVER*"
+
+            tr = state.training_by_nurse.get(n, {})
+            if d in tr:
+                training_counts[tr[d]] += 1
 
             row.append(shift)
 
@@ -118,15 +140,18 @@ def extract_schedule_and_summary(state: ScheduleState, result: SolverResult, og_
 
         schedule[n] = row
         summary_row = {
-            "Nurse":    n,
-            "AL":       len(state.al_sets[n]),
-            "MC":       len(state.mc_sets[n]),
-            "EL":       len(state.el_sets[n]),
-            "Rest":     shift_counts[3],
-            "AM":       shift_counts[0],
-            "PM":       shift_counts[1],
-            "Night":    shift_counts[2],
-            "Double Shifts": len(double_shift_days),
+            "Nurse":            n,
+            "AL":               len(state.al_sets[n]),
+            "MC":               len(state.mc_sets[n]),
+            "EL":               len(state.el_sets[n]),
+            "AM (Training)":    training_counts[0],
+            "PM (Training)":    training_counts[1],
+            "Night (Training)": training_counts[2],
+            "Rest":             shift_counts[3],
+            "AM":               shift_counts[0],
+            "PM":               shift_counts[1],
+            "Night":            shift_counts[2],
+            "Double Shifts":    len(double_shift_days),
         }
         for w in range(num_weeks):
             actual_hrs = round(minutes_per_week[w] / 60, 1)

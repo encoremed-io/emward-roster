@@ -41,7 +41,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                          am_senior_relax_step: int = AM_SENIOR_RELAX_STEP,
                          weekend_rest: bool = True,
                          back_to_back_shift: bool = False,
-                         use_sliding_window: bool = USE_SLIDING_WINDOW,
+                         use_sliding_window: bool = False,
                          fixed_assignments: Optional[Dict[Tuple[str,int], str]] = None
                          ) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict]:
     """
@@ -83,7 +83,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
 
     # === Preferences and MC days ===
     shift_preferences, mc_days, al_days = (
-        get_shift_preferences(preferences_df, profiles_df, date_start, num_days, SHIFT_LABELS),
+        get_shift_preferences(preferences_df, profiles_df, date_start, num_days, SHIFT_LABELS, NO_WORK_LABELS),
         get_mc_days(preferences_df, profiles_df, date_start, num_days),
         get_al_days(preferences_df, profiles_df, date_start, num_days)
     )

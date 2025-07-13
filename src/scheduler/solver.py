@@ -102,17 +102,14 @@ def run_phase1(model, state) -> SolverResult:
 
 def run_phase2(model, state, p1: SolverResult) -> SolverResult:
     # Phase 2: Maximize preferences and shift balance
-    logger.info("🚀 Phase 2: maximizing preferences with (optional) shift balance...")
+    logger.info("🚀 Phase 2: maximizing preferences with (optional) shift distribution balance...")
 
     model.Add(sum(r.flag for r in state.hard_rules.values()) == len(state.hard_rules))
     model.Add(sum(state.high_priority_penalty) <= round(p1.high_penalty))
     if p1.fairness_gap is not None:
         model.Add(state.gap_pct <= round(p1.fairness_gap))
-        # model.AddLinearConstraint(gap_pct, 0, T)
 
-    # Switch objective to preferences
-    # preference_obj = sum(total_satisfied[n] for n in nurse_names)
-    # model.Maximize(preference_obj)
+    # Switch objective to minimise low priority penalties
     model.Minimize(sum(state.low_priority_penalty))
 
     # debug: print model size

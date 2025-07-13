@@ -134,6 +134,16 @@ prefs_file = st.sidebar.file_uploader(
         "• Preferences file only applies to specified dates in file."
     )
 )
+
+training_shifts_file = st.sidebar.file_uploader(
+    "Upload Training Shifts (Optional)",
+    type=["xlsx"],
+    help=(
+        "• If provided, these shifts will be excluded for the nurse for the schedule on stated days.\n\n"
+        "• Training Shifts file only appied to specified dates in file."
+    )
+)
+
 start_date = pd.to_datetime(st.sidebar.date_input("Schedule start date", value=date.today(), key="start_date"))
 end_date = pd.to_datetime(st.sidebar.date_input("Schedule end date", value=date.today(), key="end_date"))
 # num_days = st.sidebar.slider("Number of days", 7, 28, 14)
@@ -287,6 +297,7 @@ for key, default in {
     "summary_df": None,
     "df_profiles": None,
     "df_prefs": None,
+    "df_train_shifts": None,
     "start_date": pd.to_datetime(start_date),
     "num_days": num_days,
     "shift_durations": shift_durations,
@@ -348,11 +359,15 @@ if st.sidebar.button("Generate Schedule", type="primary"):
 
         if prefs_file:    
             df_prefs = load_shift_preferences(prefs_file)
-
-            validate_data(df_profiles, df_prefs)
-
+            validate_data(df_profiles, df_prefs, "profiles", "preferences")
         else:
             df_prefs = pd.DataFrame(index=df_profiles["Name"])
+        
+        if training_shifts_file:
+            df_train_shifts = load_training_shifts(training_shifts_file)
+            validate_data(df_profiles, df_train_shifts, "profiles", "training shifts")
+        else:
+            df_train_shifts = pd.DataFrame(index=df_profiles["Name"])
 
         errors = validate_input_params(df_profiles, num_days, min_nurses_per_shift, min_seniors_per_shift, max_weekly_hours, preferred_weekly_hours, min_acceptable_weekly_hours)
         if errors:
@@ -361,9 +376,10 @@ if st.sidebar.button("Generate Schedule", type="primary"):
 
         st.session_state.df_profiles = df_profiles
         st.session_state.df_prefs = df_prefs
+        st.session_state.df_train_shifts = df_train_shifts
 
         sched, summ, violations, metrics = build_schedule_model(
-            df_profiles, df_prefs,
+            df_profiles, df_prefs, df_train_shifts,
             pd.to_datetime(start_date), 
             num_days,
             shift_durations,
@@ -502,6 +518,7 @@ if st.session_state.sched_df is not None:
                     sched2, summ2, violations2, metrics2 = build_schedule_model(
                         st.session_state.df_profiles,
                         st.session_state.df_prefs,
+                        st.session_state.df_train_shifts,
                         st.session_state.start_date,
                         st.session_state.num_days,
                         st.session_state.shift_durations,

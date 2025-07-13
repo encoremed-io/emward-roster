@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 # == Build Schedule Model ==
 def build_schedule_model(profiles_df: pd.DataFrame,
                          preferences_df: pd.DataFrame,
+                         training_shifts_df: pd.DataFrame,
                          start_date: pd.Timestamp | dt_date,
                          num_days: int,
                          shift_durations: List[int] = SHIFT_DURATIONS,
@@ -44,7 +45,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                          am_senior_relax_step: int = AM_SENIOR_RELAX_STEP,
                          weekend_rest: bool = True,
                          back_to_back_shift: bool = False,
-                         use_sliding_window: bool = USE_SLIDING_WINDOW,
+                         use_sliding_window: bool = False,
                          shift_balance: bool = False,
                          fixed_assignments: Optional[Dict[Tuple[str,int], str]] = None
                          ) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict]:
@@ -58,9 +59,9 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     # === Model setup ===
     logger.info("📋 Building model...")
     model, nurse_names, og_nurse_names, senior_names, shift_str_to_idx, date_start, \
-    hard_rules, shift_preferences, prefs_by_nurse, fixed_assignments, mc_sets, \
+    hard_rules, shift_preferences, prefs_by_nurse, training_shifts, training_by_nurse, fixed_assignments, mc_sets, \
     al_sets, el_sets, days_with_el, weekend_pairs, shift_types, work = setup_model(
-        profiles_df, preferences_df, start_date, num_days, SHIFT_LABELS, NO_WORK_LABELS, fixed_assignments
+        profiles_df, preferences_df, training_shifts_df, start_date, num_days, SHIFT_LABELS, NO_WORK_LABELS, fixed_assignments
     )
 
     state = ScheduleState(
@@ -74,6 +75,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         el_sets=el_sets,
         weekend_pairs=weekend_pairs,
         prefs_by_nurse=prefs_by_nurse,
+        training_by_nurse=training_by_nurse,
         num_days=num_days,
         shift_types=shift_types,
         shift_durations=shift_durations,
@@ -106,6 +108,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     # Fixed rules
     cm.add_rule(handle_fixed_assignments)
     cm.add_rule(leave_rules)
+    cm.add_rule(training_shift_rules)
 
     # High priority rules
     cm.add_rule(shifts_per_day_rule)

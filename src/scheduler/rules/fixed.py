@@ -84,3 +84,15 @@ def max_consecutive_leave(state: ScheduleState):
                     f"{sorted_mc[i]}, {sorted_mc[i+1]}, {sorted_mc[i+2]}"
                 )
             
+
+def training_shift_rules(model, state: ScheduleState):
+    define_training_shifts(model, state)
+
+
+def define_training_shifts(model, state: ScheduleState):
+    # Cannot assign same shift to nurse when they are training on that shift
+    for n in state.nurse_names:
+        for d, s in state.training_by_nurse.get(n, {}).items():
+            key = (n, d, s)
+            if key in state.work:
+                model.Add(state.work[key] == 0)

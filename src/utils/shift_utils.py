@@ -2,6 +2,7 @@ import pandas as pd
 from datetime import datetime, timedelta, time, date as dt_date
 from typing import Any, Dict, Set, List, Union, Optional, Tuple
 from exceptions.custom_errors import FileContentError
+import logging
 
 # --- Utility to convert column label to day-index ---
 def compute_label_offset(label: Any, date_start: dt_date) -> int:
@@ -111,7 +112,7 @@ def filter_fixed_assignments_from_prefs(
     shift_preferences: Dict[str, Dict[int, int]],
     prefs_by_nurse:    Dict[str, Dict[int, int]],
     no_work_labels:    List[str],
-    fixed_assignments: Optional[Dict[Tuple[str, int], str]] = None
+    fixed_assignments: Optional[Dict[Tuple[str, int], str]]
 ) -> None:
     """
     Remove any (nurse, day) preference from both shift_preferences and prefs_by_nurse
@@ -138,12 +139,112 @@ def filter_fixed_assignments_from_prefs(
                 prefs_by_nurse[nurse].pop(day, None)
 
 
-def extract_prefs_info(preferences_df, profiles_df, date_start, nurse_names, num_days, shift_labels, no_work_labels, fixed_assignments=None):
+def extract_prefs_info(preferences_df, profiles_df, date_start, nurse_names, num_days, shift_labels, no_work_labels, training_by_nurse, fixed_assignments=None):
     """ Extracts preferences information and each nurse's preferences from the preferences DataFrame. """
     shift_preferences = get_shift_preferences(preferences_df, profiles_df, date_start, num_days, shift_labels, no_work_labels)
     prefs_by_nurse = {n: shift_preferences.get(n, {}) for n in nurse_names}
     filter_fixed_assignments_from_prefs(shift_preferences, prefs_by_nurse, no_work_labels, fixed_assignments)
+    filter_prefs_from_training_shifts(shift_preferences, prefs_by_nurse, training_by_nurse)
     return shift_preferences, prefs_by_nurse
+
+
+def filter_prefs_from_training_shifts(
+    shift_preferences: Dict[str, Dict[int, int]],
+    prefs_by_nurse: Dict[str, Dict[int, int]],
+    training_by_nurse: Optional[Dict[str, Dict[int, int]]] = None
+) -> None:
+    if not training_by_nurse:
+        return
+
+    for nurse in prefs_by_nurse:
+        prefs = prefs_by_nurse[nurse]
+        training = training_by_nurse.get(nurse, {})
+        # find preference equal to training shift
+        to_drop = [
+            day for day, pref_shift in prefs.items()
+            if training.get(day) == pref_shift
+        ]
+        # logging.info(f"To drop: {to_drop}")
+        for day in to_drop:
+            prefs.pop(day, None)
+            shift_preferences[nurse].pop(day, None)
+        # logging.info(prefs_by_nurse)
+        # logging.info(shift_preferences)
+
+
+def get_training_shifts(
+    training_shifts_df: pd.DataFrame,
+    profiles_df: pd.DataFrame,
+    start_date: Union[pd.Timestamp, dt_date],
+    active_days: int,
+    shift_labels: List[str],
+) -> Dict[str, Dict[int, int]]:
+    """
+    Returns nurse_name -> { day_index: shift_index } for non-MC preferences.
+    """
+    date_start = start_date.date() if isinstance(start_date, pd.Timestamp) else start_date
+    nurse_names = [n.strip().upper() for n in profiles_df['Name']]
+    shifts_str_to_idx = {label.upper(): idx for idx, label in enumerate(shift_labels)}
+    training_shifts: Dict[str, Dict[int, int]] = {n: {} for n in nurse_names}
+
+    for nurse, row in training_shifts_df.iterrows():
+        nm = str(nurse).strip().upper()
+        if nm not in training_shifts:
+            continue
+        for label, val in row.items():
+            if pd.notna(val):
+                code = str(val).strip().upper()
+                if code == "":
+                    continue
+                elif code in shifts_str_to_idx:
+                    offset = compute_label_offset(label, date_start)
+                    if 0 <= offset < active_days:
+                        training_shifts[nm][offset] = shifts_str_to_idx[code]
+                else:
+                    raise FileContentError(
+                        f"Invalid training shift “{code}” for nurse {nm} on {label} — "
+                        f"expected one of {shift_labels!r} or blank."
+                    )
+    return training_shifts
+
+
+def filter_fixed_assignments_from_training_shifts(
+    training_shifts: Dict[str, Dict[int, int]],
+    training_by_nurse:    Dict[str, Dict[int, int]],
+    no_work_labels:    List[str],
+    fixed_assignments: Optional[Dict[Tuple[str, int], str]]
+) -> None:
+    """
+    Remove any (nurse, day) training sessions from both training_shifts and training_by_nurse
+    if that (nurse, day) is in fixed_assignments with a NO_WORK_LABEL (REST, MC, EL, AL).
+    """
+    if not fixed_assignments:
+        return
+    
+    no_work_label_set: set[str] = set(no_work_labels)     # convert list to set for quick lookup
+
+    for nurse, prefs in training_shifts.items():
+        # build list of days to drop for this nurse
+        to_drop = [
+            day
+            for day in prefs
+            if fixed_assignments.get((nurse, day), "").upper() in no_work_label_set
+        ]
+
+        for day in to_drop:
+            # remove from the master dict
+            prefs.pop(day, None)
+            # remove from per-nurse view as well
+            if nurse in training_by_nurse:
+                training_by_nurse[nurse].pop(day, None)
+
+
+def extract_training_shifts_info(training_shifts_df, profiles_df, date_start, nurse_names, num_days, shift_labels, no_work_labels, fixed_assignments=None):
+    """ Extracts training shifts information from the training_shifts DataFrame. """
+    training_shifts = get_training_shifts(training_shifts_df, profiles_df, date_start, num_days, shift_labels)
+    training_by_nurse = {n: training_shifts.get(n, {}) for n in nurse_names}
+    filter_fixed_assignments_from_training_shifts(training_shifts, training_by_nurse, no_work_labels, fixed_assignments)
+    return training_shifts, training_by_nurse
 
 
 def get_el_days(fixed_assignments, nurse_names):
