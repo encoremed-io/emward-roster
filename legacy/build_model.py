@@ -423,11 +423,9 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         # Start penalise fairness when gap_pct >= 60 based on distance from 60
         over_gap  = model.NewIntVar(0, 100, "over_gap")
         model.AddMaxEquality(over_gap, [gap_pct - FAIRNESS_GAP_THRESHOLD, 0])
-        low_priority_penalty.append(gap_pct * FAIRNESS_GAP_PENALTY)
+        low_priority_penalty.append(over_gap * FAIRNESS_GAP_PENALTY)
 
     # 3. Balance in number of each shift type assigned to nurse
-    # IMBALANCE_PENALTY = 1
-
     # # (A) Precompute counts just once
     # counts: dict[tuple[str,int], cp_model.IntVar] = {}
     # for n in nurse_names:
@@ -448,8 +446,11 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     #     gap = model.NewIntVar(0, num_days, f"gap_{n}")
     #     model.Add(gap == maxC - minC)
 
+    #     over_gap = model.NewIntVar(0, num_days, f"over_gap_{n}")
+    #     model.AddMaxEquality(over_gap, [gap - SHIFT_IMBALANCE_THRESHOLD, 0])
+
     #     # soft-penalize any imbalance
-    #     low_priority_penalty.append(gap * IMBALANCE_PENALTY)
+    #     low_priority_penalty.append(over_gap * SHIFT_IMBALANCE_PENALTY)
 
     # === Objective ===
     # === Phase 1: minimize total penalties ===
