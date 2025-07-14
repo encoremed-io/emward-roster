@@ -9,6 +9,24 @@ import logging
 logger = logging.getLogger(__name__)
 
 def solve_schedule(model: cp_model.CpModel, state: ScheduleState, og_nurse_order: list[str]) -> Tuple[pd.DataFrame, pd.DataFrame, dict, dict]:
+    """
+    Solve the scheduling problem in two phases.
+
+    Phase 1 checks feasibility and optimizes penalty function of high priority soft constraints.
+    Phase 2 optimizes penalty function of low priority soft constraints under the penalty bound of Phase 1.
+
+    Args:
+        model (cp_model.CpModel): The CP model.
+        state (ScheduleState): The state of the scheduling problem.
+        og_nurse_order (list[str]): The original order of the nurse names.
+
+    Returns:
+        tuple: A tuple of (schedule_df, summary_df, violations, metrics)
+            schedule_df (pd.DataFrame): A DataFrame containing the extracted schedule.
+            summary_df (pd.DataFrame): A DataFrame containing the extracted summary.
+            violations (dict): A dictionary containing the soft constraint violations.
+            metrics (dict): A dictionary containing the preference satisfaction and fairness metrics.
+    """
     # Run Phase 1
     p1 = run_phase1(model, state)
     best_result = p1

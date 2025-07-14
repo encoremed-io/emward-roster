@@ -1,8 +1,24 @@
 from core.state import ScheduleState
 from utils.constants import *
 from exceptions.custom_errors import InvalidMCError, ConsecutiveMCError
+"""
+This module contains the rules for handling fixed assignments, leave days and training shifts for the nurse scheduling problem.
+"""
 
 def handle_fixed_assignments(model, state: ScheduleState):
+    """
+    Add constraints to the model based on the fixed assignments.
+
+    Multiple cases to handle:
+    1. If the fixed assignment is a no-work label (MC, REST, AL, EL), block all shifts for that day.
+    2. If the fixed assignment is a double-shift (e.g. "AM/PM*"), force both component shifts on and all other shifts off.
+    3. If the fixed assignment is a single shift (e.g. "AM"), force that shift on and all other shifts off.
+
+    We also record any MC/EL overrides in the state, so that we can check them later.
+
+    :param model: The model to add constraints to.
+    :param state: The ScheduleState instance that contains the fixed assignments.
+    """
     for (nurse, day_idx), shift_label in state.fixed_assignments.items():
         label = shift_label.strip().upper()
 
@@ -44,12 +60,14 @@ def handle_fixed_assignments(model, state: ScheduleState):
 
 
 def leave_rules(model, state: ScheduleState):
+    """ Adds leave rules to the model """
     define_leave(model, state)
     max_weekly_leave(state)
     max_consecutive_leave(state)
 
 
 def define_leave(model, state: ScheduleState):
+    """ Ensure that no shifts are assigned on days marked as Leave (MC/EL/AL) """
     # MC/AL days: cannot assign any shift -> Leave means no work
     for n in state.nurse_names:
         for d in state.mc_sets[n] | state.al_sets[n]:
@@ -57,6 +75,7 @@ def define_leave(model, state: ScheduleState):
 
 
 def max_weekly_leave(state: ScheduleState):
+    """ Ensure that no nurse has more than 2 MC days in a week """
     # Max 2 MC days per week
     for n in state.nurse_names:
         mc = state.mc_sets[n]
@@ -73,6 +92,7 @@ def max_weekly_leave(state: ScheduleState):
             
 
 def max_consecutive_leave(state: ScheduleState):
+    """ Ensure that no nurse has more than 2 consecutive MC days """
     # No more than 2 consecutive MC days
     for n in state.nurse_names:
         sorted_mc = sorted(state.mc_sets[n])
@@ -86,10 +106,12 @@ def max_consecutive_leave(state: ScheduleState):
             
 
 def training_shift_rules(model, state: ScheduleState):
+    """ Adds training shift rules to the model """
     define_training_shifts(model, state)
 
 
 def define_training_shifts(model, state: ScheduleState):
+    """ Ensure that if a nurse is training on a shift, they cannot work that shift that day. """
     # Cannot assign same shift to nurse when they are training on that shift
     for n in state.nurse_names:
         for d, s in state.training_by_nurse.get(n, {}).items():

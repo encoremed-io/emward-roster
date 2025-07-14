@@ -48,6 +48,10 @@ This uses CP-SAT under the hood.
 
 
 def show_editable_schedule():
+    """
+    Show the schedule in an editable grid. The user can type "EL" for emergency leave or "MC" for medical leave.
+    Invalid inputs are detected and an error message is shown. New EL/MC overrides are collected and stored in the session state.
+    """
     st.subheader("📅 Editable Schedule")
     st.caption("Type 'EL' for emergency leave or 'MC' for medical leave")
     sched_df = st.session_state.sched_df
@@ -357,6 +361,7 @@ if st.sidebar.button("Generate Schedule", type="primary"):
                 "YearsExperience": years_exp
             })
 
+        # Load and validate shift preferences and training shifts data
         if prefs_file:    
             df_prefs = load_shift_preferences(prefs_file)
             validate_data(df_profiles, df_prefs, "profiles", "preferences")
@@ -369,11 +374,13 @@ if st.sidebar.button("Generate Schedule", type="primary"):
         else:
             df_train_shifts = pd.DataFrame(index=df_profiles["Name"])
 
+        # Validate input parameters
         errors = validate_input_params(df_profiles, num_days, min_nurses_per_shift, min_seniors_per_shift, max_weekly_hours, preferred_weekly_hours, min_acceptable_weekly_hours)
         if errors:
             st.error("\n".join(errors))
             st.stop()
 
+        # Build initial schedule
         st.session_state.df_profiles = df_profiles
         st.session_state.df_prefs = df_prefs
         st.session_state.df_train_shifts = df_train_shifts
@@ -438,6 +445,7 @@ if st.session_state.sched_df is not None:
     if st.session_state.show_schedule_expanded:
         show_editable_schedule()
         
+        # Regenerate schedule with all overrides
         if st.button("🔁 Regenerate with All Overrides"):
             el_overrides = st.session_state.get("all_el_overrides") or {}
             mc_overrides = st.session_state.get("all_mc_overrides") or {}
@@ -514,7 +522,7 @@ if st.session_state.sched_df is not None:
                     fixed.update(mc_overrides)
                     st.session_state.fixed = fixed
 
-                    # re-solve starting from earliest EL day (included)
+                    # re-solve starting from earliest MC/EL day (included)
                     sched2, summ2, violations2, metrics2 = build_schedule_model(
                         st.session_state.df_profiles,
                         st.session_state.df_prefs,
@@ -558,9 +566,11 @@ if st.session_state.sched_df is not None:
                 st.text_area("Traceback", tb, height=200)
                 st.stop()
 
+    # Show schedule
     st.subheader("📅 Final Schedule")
     st.dataframe(st.session_state.sched_df, use_container_width=True)
 
+    # Show summary
     st.subheader("📊 Final Summary Metrics")
     st.dataframe(st.session_state.summary_df, use_container_width=True)
     # for row in st.session_state.summary_df.itertuples():
@@ -568,6 +578,7 @@ if st.session_state.sched_df is not None:
     #         with st.expander(f"Unmet Details for {row.Nurse}"):
     #             st.markdown(row.Unmet_Details)
 
+    # Show relevent violations, if any
     violations = st.session_state.get("violations", {})
     if violations:
         st.subheader("⚠️ Violations Summary")
@@ -585,6 +596,7 @@ if st.session_state.sched_df is not None:
             elif isinstance(items, str) and items != "N/A":
                 st.markdown(f"- {items}")
 
+    # Show relevent metrics, if any
     metrics = st.session_state.get("metrics", {})
     if metrics:
         st.subheader("📈 Metrics Summary")

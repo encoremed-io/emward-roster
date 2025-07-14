@@ -153,6 +153,10 @@ def filter_prefs_from_training_shifts(
     prefs_by_nurse: Dict[str, Dict[int, int]],
     training_by_nurse: Optional[Dict[str, Dict[int, int]]] = None
 ) -> None:
+    """
+    Remove any (nurse, day) preference from both shift_preferences and prefs_by_nurse
+    if that (nurse, day) is in training_by_nurse.
+    """
     if not training_by_nurse:
         return
 
@@ -297,6 +301,7 @@ def normalize_fixed_assignments(
 
 
 def make_weekend_pairs(num_days, date_start):
+    """ Generates a list of pairs of weekend days. """
     weekend_pairs = []
     for i in range(num_days - 1):
         if (date_start + timedelta(days=i)).weekday() == 5:  # Saturday

@@ -1,8 +1,12 @@
 from core.state import ScheduleState
 from utils.constants import *
 import statistics
+"""
+This module contains the high priority rules for the nurse scheduling problem.
+"""
 
 def shifts_per_day_rule(model, state: ScheduleState):
+    """ Ensure that each nurse works 1 shift per day. If a nurse has an EL day, allow either 1 or 2 shifts. """
     for n in state.nurse_names:
         for d in range(state.num_days):
             if d not in state.el_sets[n]:
@@ -25,11 +29,24 @@ def shifts_per_day_rule(model, state: ScheduleState):
 
 
 def weekly_working_hours_rules(model, state: ScheduleState):
+    """ Add weekly working hours rules. """
     max_weekly_hours_rule(model, state)
     pref_min_weekly_hours_rule(model, state)
 
 
 def max_weekly_hours_rule(model, state: ScheduleState):
+    """
+    Enforce maximum weekly working hours for each nurse.
+
+    This rule ensures that nurses do not exceed the maximum allowed weekly hours. It accounts for leave 
+    (MC, AL, EL days) by deducting average shift hours from the maximum. The rule can apply over a 
+    sliding 7-day window or at fixed weekly boundaries.
+
+    If `state.use_sliding_window` is True, the rule checks every 7-day sliding window within the 
+    scheduling period. Otherwise, it checks each complete week of days.
+
+    Maximum weekly hours can be reduced by the number of MC/AL/EL days.
+    """
     # convert to minutes
     max_weekly_minutes = state.max_weekly_hours * 60
     avg_minutes = statistics.mean(state.shift_durations)
@@ -79,6 +96,16 @@ def max_weekly_hours_rule(model, state: ScheduleState):
 
 
 def pref_min_weekly_hours_rule(model, state: ScheduleState):
+    """
+    Ensure that nurses work at least the minimum acceptable weekly hours per complete week.
+
+    This constraint is soft if pref_weekly_hours_hard is False, and hard otherwise.
+
+    If soft, a penalty is incurred for each week that the nurse is assigned less than the preferred weekly hours.
+    The penalty is proportional to the number of hours below the preferred weekly hours.
+
+    Preferred weekly hours and minimum acceptable weekly hours can be reduced by the number of MC/AL/EL days.
+    """
     preferred_weekly_minutes = state.preferred_weekly_hours * 60
     min_acceptable_weekly_minutes = state.min_acceptable_weekly_hours * 60
     avg_minutes = statistics.mean(state.shift_durations)
@@ -119,6 +146,7 @@ def pref_min_weekly_hours_rule(model, state: ScheduleState):
 
 
 def min_staffing_per_shift_rule(model, state: ScheduleState):
+    """ Ensure that each shift has a minimum number of nurses and seniors. """
     for d in range(state.num_days):
         for s in range(state.shift_types):
             model.Add(sum(state.work[n, d, s] for n in state.nurse_names) >= state.min_nurses_per_shift).OnlyEnforceIf(state.hard_rules["Min nurses"].flag)
@@ -126,6 +154,7 @@ def min_staffing_per_shift_rule(model, state: ScheduleState):
 
 
 def weekend_rest_rule(model, state: ScheduleState):
+    """ Ensure that nurses who work on a weekend must rest on the corresponding days the following weekend only if state.weekend_rest is True. """
     if state.weekend_rest:
         for n in state.nurse_names:
             for d1, d2 in state.weekend_pairs:
@@ -134,6 +163,7 @@ def weekend_rest_rule(model, state: ScheduleState):
 
 
 def no_back_to_back_shift_rule(model, state: ScheduleState):
+    """ Ensure that nurses do not work back-to-back shifts on the same day if state.back_to_back_shift is True. """
     if not state.back_to_back_shift:
         for n in state.nurse_names:
             for d in range(state.num_days):
@@ -146,6 +176,26 @@ def no_back_to_back_shift_rule(model, state: ScheduleState):
 
 
 def am_coverage_rule(model, state: ScheduleState):
+    """
+    Apply AM coverage rules based on user configuration.
+
+    This function applies constraints to ensure a minimum percentage of nurses work the AM shift each day.
+    If `am_coverage_min_hard` is True, it strictly enforces the minimum AM coverage percentage. If False,
+    it employs a series of relaxed levels, penalizing deviations from the desired coverage incrementally.
+
+    Parameters:
+    - model: The constraint model to which rules are added.
+    - state: The current schedule state, containing configuration and data for nurse scheduling.
+
+    Behavior:
+    - Hard Constraint: Enforces the minimum AM coverage percentage across all shifts if `am_coverage_min_hard` is enabled.
+    - Soft Constraint: Uses relaxed coverage levels and applies penalties for failing to meet each level.
+    - Fallback: Ensures AM shifts outnumber PM and Night shifts if all relaxed levels fail.
+
+    This rule supports gradual relaxation using `am_coverage_relax_step` and applies corresponding penalties
+    from `AM_COVERAGE_PENALTY` for each level violation.
+    """
+
     if state.activate_am_cov:
         if not state.am_coverage_min_hard:
             levels = list(range(state.am_coverage_min_percent, 34, -state.am_coverage_relax_step))  # [65, 60, 55] if step = 5
@@ -183,6 +233,15 @@ def am_coverage_rule(model, state: ScheduleState):
 
 
 def am_senior_staffing_lvl_rule(model, state: ScheduleState):
+    """
+    Enforce the minimum percentage of senior nurses on AM shifts. If the flag is set to "hard", the constraint is enforced strictly.
+    If not, the constraint is relaxed by the specified step value, with a penalty incurred for each level that is not met.
+
+    The levels are specified as a list of percentages, e.g. [65, 60, 55] if the step is 5. The penalty for each level is the same as the step value, e.g. [5, 10, 15] in the above example.
+
+    The constraint is enforced for each day separately, and the penalty is only incurred if the constraint is not met for that day.
+
+    """
     if not state.am_senior_min_hard:
         levels = list(range(state.am_senior_min_percent, 50, -state.am_senior_relax_step))  # [65, 60, 55] if step = 5
         penalties = [(i + 1) * AM_SENIOR_PENALTY for i in range(len(levels))]   # [5, 10, 15]

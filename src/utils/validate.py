@@ -8,7 +8,7 @@ def validate_data(
         file1_name: str = "file 1", 
         file2_name: str = "file 2"
     ):
-    """ Validate that the names in file 1 and file 2 match. """
+    """ Validate that the names in df1 and df2 match. """
     missing, extra = validate_nurse_data(df1, df2)
     if missing or extra:
         msg = [f"⚠️ Mismatch between {file1_name} and {file2_name}:\n"]
