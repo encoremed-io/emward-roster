@@ -176,7 +176,7 @@ min_nurses_per_shift = st.sidebar.number_input(
     key="min_nurses_per_shift"
 )
 min_seniors_per_shift = st.sidebar.number_input(
-    "Minimum seniors per shift", min_value=1, value=MIN_SENIORS_PER_SHIFT,
+    "Minimum seniors per shift", min_value=0, value=MIN_SENIORS_PER_SHIFT,
     key="min_seniors_per_shift"
 )
 max_weekly_hours = st.sidebar.number_input(
