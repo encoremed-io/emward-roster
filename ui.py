@@ -1,4 +1,5 @@
 # ui.py
+""" Streamlit UI for Nurse Roster Scheduler. """
 import os
 os.environ['STREAMLIT_SERVER_FILE_WATCHER_TYPE'] = 'none'
 
