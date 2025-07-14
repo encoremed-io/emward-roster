@@ -26,7 +26,7 @@ class SolverResult:
             cached_values (Dict[Tuple[str, int, int], int]): Cached values of the solution variables.
             high_penalty (float): The penalty associated with high priority constraints.
             low_penalty (float): The penalty associated with low priority constraints.
-            fairness_gap (Any): The gap value representing the fairness of the solution.
+            fairness_gap (Any): The gap value representing the fairness of meeting preferences.
         """
         self.solver = solver
         self.status = status
