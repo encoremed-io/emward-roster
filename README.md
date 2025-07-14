@@ -61,7 +61,7 @@ This sets the PYTHONPATH environment variable to the src/ directory, allowing Py
 
 ### 5. Run the Application
 
-### Option 1: Using Invoke
+#### Option 1: Using Invoke
 
 Make sure `invoke` is installed:
 
@@ -75,9 +75,9 @@ Then, run the app using:
 invoke front
 ```
 
-This runs streamlit run src/ui.py via the tasks.py file.
+This runs `streamlit run ui.py` via the tasks.py file.
 
-### Option 2: Manually with Streamlit
+#### Option 2: Manually with Streamlit
 
 ```bash
 streamlit run ui.py
