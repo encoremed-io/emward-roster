@@ -1,7 +1,18 @@
 from core.state import ScheduleState
 from utils.constants import *
+"""
+This module contains the low priority rules for the nurse scheduling problem.
+"""
 
 def preference_rule(model, state: ScheduleState):
+    """
+    Add constraints to the model to enforce the preference satisfaction of nurses.
+
+    The soft constraint is that a nurse should work their preferred shift on each day.
+    A penalty is incurred if a nurse does not work their preferred shift.
+
+    The total number of satisfied preferences is also calculated for each nurse.
+    """
     # Preference satisfaction
     is_satisfied = {}
     for n in state.nurse_names:
@@ -28,6 +39,17 @@ def preference_rule(model, state: ScheduleState):
 
 
 def fairness_gap_rule(model, state: ScheduleState):
+    """
+    Fairness gap constraint: add a penalty proportional to the difference between the highest and lowest percentage of satisfied preferences among all nurses.
+
+    The penalty is only incurred if the gap is greater than or equal to the threshold of 60.
+
+    The gap is calculated as (max_pct - min_pct).
+
+    The penalty is proportional to the distance from 60, i.e. (gap_pct - 60) if gap_pct >= 60, else 0.
+
+    The total penalty is stored in state.low_priority_penalty.
+    """
     # Fairness gap
     pct_sat = {}
     for n, prefs in state.prefs_by_nurse.items():
@@ -60,6 +82,20 @@ def fairness_gap_rule(model, state: ScheduleState):
 
 
 def shift_balance_rule(model, state: ScheduleState):
+    """
+    Shift balance rule.
+
+    If shift_balance is True, this adds a rule to the model to penalise uneven shift distribution for each nurse.
+
+    The penalty is proportional to the gap between the maximum and minimum number of shifts assigned to each nurse.
+
+    The gap is calculated as (max_count - min_count), where max_count and min_count are the maximum and minimum counts of shifts assigned to the nurse.
+
+    The penalty is only incurred if the gap is greater than or equal to the threshold of 2.
+    The penalty is proportional to the distance from 2, i.e. (gap - 2) if gap >= 2, else 0.
+
+    The total penalty is stored in state.low_priority_penalty.
+    """
     if state.shift_balance:
         # Precompute counts just once
         counts = {}

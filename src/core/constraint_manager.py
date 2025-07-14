@@ -2,6 +2,7 @@ from typing import Callable
 
 class ConstraintManager:
     def __init__(self, model, state):
+        """Initialize the ConstraintManager."""
         self.model = model
         self.state = state
         self.rules: list[Callable] = []

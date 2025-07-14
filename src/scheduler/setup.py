@@ -29,12 +29,26 @@ def build_variables(model, nurse_names, num_days, shift_types):
 
 
 def make_model():
-    """ Create a new CP-SAT model instance. """
+    """ Creates a new CP-SAT model instance. """
     model = cp_model.CpModel()
     return model
 
 
 def setup_model(profiles_df, preferences_df, training_shifts_df, start_date, num_days, shift_labels, no_work_labels, fixed_assignments=None):
+    """
+    Sets up a CpModel instance with all the necessary variables and constraints.
+    
+    :param profiles_df: A DataFrame of nurse profiles.
+    :param preferences_df: A DataFrame of nurse preferences.
+    :param training_shifts_df: A DataFrame of non-MC preferences.
+    :param start_date: A pd.Timestamp object of the schedule start date.
+    :param num_days: The number of days in the schedule.
+    :param shift_labels: A list of strings of the shift labels.
+    :param no_work_labels: A list of strings of no-work labels.
+    :param fixed_assignments: A dictionary of fixed assignments.
+    
+    :return: A tuple of the model instance, shuffled nurse names, original nurse names, set of senior names, shift string to index mapping, start date, hard rules dictionary, shift preferences dictionary, preferences by nurse dictionary, training shifts dictionary, training shifts by nurse dictionary, fixed assignments dictionary, MC sets dictionary, annual leave sets dictionary, extra leave sets dictionary, days with extra leave set, weekend pairs set, number of shift types, and work variables dictionary.
+    """
     model = make_model()
     nurse_names = get_nurse_names(profiles_df)
     og_nurse_names, shuffled_nurse_names = shuffle_order(nurse_names)

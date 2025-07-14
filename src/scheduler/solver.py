@@ -14,7 +14,18 @@ class SolverResult:
         high_penalty: float,
         low_penalty: float,
         fairness_gap: Any
-    ):
+        ):
+        """
+        Initialize a SolverResult instance.
+
+        Args:
+            solver (cp_model.CpSolver): The CP solver used for solving the model.
+            status (Any): The status of the solver after the solving attempt.
+            cached_values (Dict[Tuple[str, int, int], int]): Cached values of the solution variables.
+            high_penalty (float): The penalty associated with high priority constraints.
+            low_penalty (float): The penalty associated with low priority constraints.
+            fairness_gap (Any): The gap value representing the fairness of the solution.
+        """
         self.solver = solver
         self.status = status
         self.cached_values = cached_values
@@ -24,6 +35,7 @@ class SolverResult:
 
     
 def configure_solver(timeout: float = 180.0, seed: int = 42) -> cp_model.CpSolver:
+    """ Configure the CP solver. """
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = timeout
     solver.parameters.random_seed = seed
@@ -35,6 +47,7 @@ def configure_solver(timeout: float = 180.0, seed: int = 42) -> cp_model.CpSolve
 
 
 def get_model_size(model: cp_model.CpModel) -> Tuple[int, int]:
+    """ Get the number of constraints and boolean variables in the model. """
     proto = model.Proto()
     num_constraints = len(proto.constraints)
     num_bool_vars = len(proto.variables)
@@ -42,6 +55,21 @@ def get_model_size(model: cp_model.CpModel) -> Tuple[int, int]:
 
 
 def run_phase1(model, state) -> SolverResult:
+    """
+    Run Phase 1 of the solver.
+
+    Phase 1 has two steps: 1A and 1B. In Phase 1A, the solver first checks if there is a feasible solution
+    by maximizing the number of satisfied hard rules. If a feasible solution is found, Phase 1B is run to
+    minimize the total penalty of high priority constraints.
+
+    Args:
+        model (cp_model.CpModel): The CP model.
+        state (ScheduleState): The state of the scheduling problem.
+
+    Returns:
+        SolverResult: A SolverResult instance containing the solver, status, cached values, high priority
+            penalty, low priority penalty, and fairness gap.
+    """
     # Phase 1A: Check feasibility
     logger.info("🚀 Phase 1A: checking feasibility...")
     # 1. Tell the model to minimize penalty sum
@@ -101,6 +129,19 @@ def run_phase1(model, state) -> SolverResult:
 
 
 def run_phase2(model, state, p1: SolverResult) -> SolverResult:
+    """
+    Run Phase 2 of the solver.
+
+    In Phase 2, we aim to maximize the preferences and shift balance given the
+    best total penalty found in Phase 1. The fairness gap is also taken into
+    account if it was calculated in Phase 1.
+
+    The solver is configured to use the cached values from Phase 1 as hints. The
+    model size is also printed for debugging purposes.
+
+    Returns a SolverResult object containing the solver, status, cached values,
+    high priority penalty, low priority penalty, and fairness gap.
+    """
     # Phase 2: Maximize preferences and shift balance
     logger.info("🚀 Phase 2: maximizing preferences with (optional) shift distribution balance...")
 

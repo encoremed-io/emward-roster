@@ -124,7 +124,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     cm.add_rule(fairness_gap_rule)
     cm.add_rule(shift_balance_rule)
 
-    cm.apply_all()
+    cm.apply_all()  # Apply all rules
 
     schedule_df, summary_df, violations, metrics = solve_schedule(model, state, og_nurse_names)
     return schedule_df, summary_df, violations, metrics
