@@ -1,8 +1,9 @@
 # ui.py
 """ Streamlit UI for Nurse Roster Scheduler. """
+import sys
 import os
 os.environ['STREAMLIT_SERVER_FILE_WATCHER_TYPE'] = 'none'
-
+sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 import streamlit as st
 from datetime import date, time
 from st_aggrid import GridOptionsBuilder, AgGrid, GridUpdateMode
