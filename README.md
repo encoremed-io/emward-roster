@@ -85,6 +85,15 @@ streamlit run ui.py
 
 ---
 
+### 6. Run the Application with (Docker)
+
+```bash
+docker build -t emward-roster .   
+docker run -p 8501:8501 emward-roster
+```
+
+---
+
 ## 📁 Project Structure
 
 The project is structured as follows:
