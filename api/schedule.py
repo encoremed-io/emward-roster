@@ -1,7 +1,7 @@
 from datetime import date
 from typing import List, Optional, Any
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, model_validator, Field, ConfigDict
 import datetime as dt
 from scheduler.builder import build_schedule_model, validate_data, InputMismatchError
@@ -10,7 +10,7 @@ from exceptions.custom_errors import *
 import traceback
 import logging
 
-app = FastAPI()
+router = APIRouter(prefix="/schedule")
 
 CUSTOM_ERRORS = {
     NoFeasibleSolutionError: 422,
@@ -131,7 +131,7 @@ def standardize_profile_columns(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-@app.post("/schedule/generate/", response_model=dict)
+@router.post("/generate", response_model=dict)
 async def generate_schedule(
     profiles: List[NurseProfile],
     preferences: List[NursePreference],
@@ -358,14 +358,3 @@ async def generate_schedule(
         tb = traceback.format_exc()
         raise HTTPException(status_code=500, detail=f"{str(e)}\n\nTraceback:\n{tb}")
     
-
-@app.get("/")
-def root():
-    """
-    Simple root endpoint to indicate the API is running.
-
-    Returns a JSON response with a "message" key, containing a string
-    indicating the API is running and providing a pointer to the Swagger UI
-    documentation at /docs.
-    """
-    return {"message": "Nurse Roster Scheduling API is running. Visit /docs for the Swagger UI."}
