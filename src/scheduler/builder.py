@@ -54,7 +54,8 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     Returns a schedule DataFrame, a summary DataFrame, and a violations dictionary.
     """
     # === Validate inputs ===
-    validate_data(profiles_df, preferences_df)
+    validate_data(profiles_df, preferences_df, "profiles", "preferences", False)
+    validate_data(profiles_df, training_shifts_df, "profiles", "training shifts", False)
 
     # === Model setup ===
     logger.info("📋 Building model...")
