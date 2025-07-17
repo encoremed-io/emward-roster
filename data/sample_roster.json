@@ -1,0 +1,139 @@
+{
+    "target_nurse_id": "N001",
+    "target_shift": {
+        "date": "2025-07-18",
+        "type": "morning",
+        "department": "ICU"
+    },
+    "settings": {
+        "max_shifts_per_week": 5,
+        "warn_recent_night_shift": true,
+        "recent_night_window_days": 2
+    },
+    "roster": [
+        {
+            "nurse_id": "N001",
+            "icu_certified": true,
+            "prefers_morning": true,
+            "role": "senior",
+            "shifts": [
+                {
+                    "date": "2025-07-14",
+                    "type": "morning"
+                },
+                {
+                    "date": "2025-07-15",
+                    "type": "night"
+                },
+                {
+                    "date": "2025-07-16",
+                    "type": "morning"
+                },
+                {
+                    "date": "2025-07-17",
+                    "type": "morning"
+                },
+                {
+                    "date": "2025-07-18",
+                    "type": "morning"
+                }
+            ]
+        },
+        {
+            "nurse_id": "N002",
+            "icu_certified": true,
+            "prefers_morning": true,
+            "role": "junior",
+            "shifts": [
+                {
+                    "date": "2025-07-13",
+                    "type": "morning"
+                },
+                {
+                    "date": "2025-07-15",
+                    "type": "morning"
+                },
+                {
+                    "date": "2025-07-17",
+                    "type": "night"
+                }
+            ]
+        },
+        {
+            "nurse_id": "N003",
+            "icu_certified": false,
+            "prefers_morning": false,
+            "role": "senior",
+            "shifts": [
+                {
+                    "date": "2025-07-11",
+                    "type": "night"
+                },
+                {
+                    "date": "2025-07-14",
+                    "type": "morning"
+                },
+                {
+                    "date": "2025-07-16",
+                    "type": "night"
+                }
+            ]
+        },
+        {
+            "nurse_id": "N004",
+            "icu_certified": true,
+            "prefers_morning": false,
+            "role": "junior",
+            "shifts": [
+                {
+                    "date": "2025-07-12",
+                    "type": "night"
+                },
+                {
+                    "date": "2025-07-15",
+                    "type": "morning"
+                },
+                {
+                    "date": "2025-07-16",
+                    "type": "morning"
+                },
+                {
+                    "date": "2025-07-17",
+                    "type": "morning"
+                },
+                {
+                    "date": "2025-07-18",
+                    "type": "night"
+                }
+            ]
+        },
+        {
+            "nurse_id": "N005",
+            "icu_certified": true,
+            "prefers_morning": true,
+            "role": "junior",
+            "shifts": [
+                {
+                    "date": "2025-07-13",
+                    "type": "morning"
+                },
+                {
+                    "date": "2025-07-14",
+                    "type": "morning"
+                },
+                {
+                    "date": "2025-07-15",
+                    "type": "morning"
+                },
+                {
+                    "date": "2025-07-16",
+                    "type": "morning"
+                },
+                {
+                    "date": "2025-07-17",
+                    "type": "night"
+                }
+            ]
+        }
+    ]
+}
