@@ -2,18 +2,27 @@ from datetime import date
 from typing import List, Optional, Any
 import pandas as pd
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, model_validator, Field
+from pydantic import BaseModel, model_validator, Field, ConfigDict
 import datetime as dt
 from scheduler.builder import build_schedule_model, validate_data, InputMismatchError
 from utils.constants import *
-from exceptions.custom_errors import NoFeasibleSolutionError
+from exceptions.custom_errors import *
 import traceback
 import logging
 
 app = FastAPI()
 
+CUSTOM_ERRORS = {
+    NoFeasibleSolutionError: 422,
+    InvalidMCError: 400,
+    ConsecutiveMCError: 400,
+    InputMismatchError: 400
+}
+
 # Define data models
 class NurseProfile(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     name: str
     title: str
     years_experience: int
@@ -21,6 +30,13 @@ class NurseProfile(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def extract_years_experience(cls, values: Any) -> Any:
+        """
+        Model validator to extract years_experience from other keys in the input data if not present.
+
+        This validator is needed to handle the case where the column name for years of experience is not exactly "years_experience", e.g. "Years of Experience", "Year(s) Experience", etc.
+
+        If the "years_experience" key is not present, the validator iterates over all the keys in the input data and checks if the key contains the words "year" or "experience". If a matching key is found, the value associated with that key is moved to the "years_experience" key, and the original key is removed from the input data.
+        """
         if "years_experience" not in values:
             for key in list(values.keys()):
                 lowered = key.lower()
@@ -30,22 +46,30 @@ class NurseProfile(BaseModel):
         return values
 
 class NursePreference(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     nurse: str
     date: date
     shift: str
     timestamp: Optional[dt.datetime] = None
 
 class NurseTraining(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     nurse: str
     date: date
     training: str
 
 class FixedAssignment(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     nurse: str
-    day_index: int
-    shift: str
+    date: date
+    fixed: str
 
 class ScheduleRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     start_date: date
     num_days: int
     shift_durations: List[int] = Field(default=SHIFT_DURATIONS)
@@ -71,9 +95,18 @@ class ScheduleRequest(BaseModel):
 
 def standardize_profile_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
-    From any df whose columns include (case-insensitive) "name", "title", and 
-    "experience"/"year", pick out those three, rename to exactly 
-    ["Name", "Title", "Years of experience"], uppercase Name, and return the result.
+    Standardize the column names of a nurse profile DataFrame to "Name", "Title", and "Years of experience".
+    
+    The function takes a DataFrame with columns representing nurse names, titles, and years of experience.
+    It returns a new DataFrame with the same data, but with standardized column names.
+    
+    The function first builds a dictionary mapping lower-case, stripped column names to the original column names.
+    It then uses this dictionary to find the columns in the DataFrame that match the candidates.
+    If no exact match is found, it tries a substring match.
+    If no match is found, it raises a ValueError.
+    
+    The function then copies the relevant columns into a new DataFrame and renames them.
+    Finally, it strips and upper-cases the Name column and returns the new DataFrame.
     """
     col_map = {col.lower().strip(): col for col in df.columns}
 
@@ -105,17 +138,66 @@ async def generate_schedule(
     training_shifts: List[NurseTraining],
     request: ScheduleRequest
 ):
-    try:
-        # Convert array inputs to DataFrames
-        # profiles_df = (
-        #     pd.DataFrame([p.model_dump() for p in profiles])
-        #     .rename(columns={
-        #         'name': 'Name',
-        #         'title': 'Title',
-        #         'years_experience': 'YearsExperience',
-        #     })
-        # )
+    """
+    Generate a schedule based on the given nurse profiles, shift preferences, and other parameters
+    
+    The API endpoint takes the following parameters:
+    
+    - `profiles`: List of `NurseProfile` objects, which contain the following information:
+        - `name`: Name of the nurse
+        - `title`: Title of the nurse (e.g. "Senior Nurse", "Junior Nurse")
+        - `years_experience`: Number of years of experience the nurse has
+    - `preferences`: List of `NursePreference` objects, which contain the following information:
+        - `nurse`: Name of the nurse
+        - `date`: Date of the shift
+        - `shift`: Shift preference (e.g. "AM", "PM", "Night")
+        - `timestamp`: Timestamp of the preference (optional, used for sorting preferences)
+    - `training_shifts`: List of `NurseTraining` objects, which contain the following information:
+        - `nurse`: Name of the nurse
+        - `date`: Date of the training shift
+        - `training`: Shift on training (e.g. "AM", "PM")
+    - `request`: `ScheduleRequest` object, which contains the following information:
+        - `start_date`: Start date of the schedule
+        - `num_days`: Number of days in the schedule
+        - `shift_durations`: List of shift durations in hours
+        - `min_nurses_per_shift`: Minimum number of nurses per shift
+        - `min_seniors_per_shift`: Minimum number of senior nurses per shift
+        - `max_weekly_hours`: Maximum weekly hours for each nurse
+        - `preferred_weekly_hours`: Preferred weekly hours for each nurse
+        - `min_acceptable_weekly_hours`: Minimum acceptable weekly hours for each nurse
+        - `activate_am_cov`: Whether to activate AM coverage constraints
+        - `am_coverage_min_percent`: Minimum percentage of AM shifts that must be covered
+        - `am_coverage_min_hard`: Whether the minimum percentage is a hard constraint
+        - `am_coverage_relax_step`: Relaxation step for the minimum percentage
+        - `am_senior_min_percent`: Minimum percentage of senior nurses that must be assigned to AM shifts
+        - `am_senior_min_hard`: Whether the minimum percentage is a hard constraint
+        - `am_senior_relax_step`: Relaxation step for the minimum percentage
+        - `weekend_rest`: Whether to ensure that each nurse has a weekend rest
+        - `back_to_back_shift`: Whether to prevent back-to-back shifts
+        - `use_sliding_window`: Whether to use a sliding window for shift assignments
+        - `shift_balance`: Whether to balance the number of shifts between nurses
+        - `fixed_assignments`: List of fixed shift assignments (optional), with the following fields:
+            - `nurse`: Name of the nurse
+            - `date`: Date of the shift
+            - `fixed`: Fixed declaration (e.g. "EL", "MC")
+        
+    The API endpoint returns a JSON object with the following keys:
+    
+    - `schedule`: List of shift assignments, where each assignment is a dictionary with the following keys:
+        - `nurse`: Name of the nurse
+        - `date`: Date of the shift
+        - `shift`: Shift assignment (e.g. "AM", "PM", "Night")
+    - `summary`: List of summary statistics, where each statistic is a dictionary with the following keys:
+        - `metric`: Name of the metric (e.g. "Hours_Week1_Real", "Prefs_Unmet")
+        - `value`: Value of the metric
+    - `violations`: List of constraint violations, where each violation is a dictionary with the following keys:
+        - `constraint`: Name of the constraint (e.g. "Low Hours Nurses", "Low Senior AM Days")
+        - `value`: Value of the constraint
+     - `metrics`: A dictionary containing evaluation metrics. Keys include "Preference Unmet" and "Fairness Gap", with each value representing the corresponding metric score.
 
+    The API endpoint raises an HTTPException with a status code of 400 if the input is invalid and raises an HTTPException with a status code of 422 if no feasible solution is found.
+    """
+    try:
         # Convert array inputs to raw DataFrame
         raw = pd.DataFrame([p.model_dump() for p in profiles])
         # Standardize it to exactly Name/Title/Years of experience
@@ -134,22 +216,38 @@ async def generate_schedule(
                 .rename_axis(None, axis=0)
                 .rename_axis(None, axis=1)
             )
-            prefs_df.index.name = "Name"  # <-- Set index name here
+            # normalize to match profiles_df["Name"]
+            prefs_df.index = (
+                prefs_df
+                .index
+                .astype(str)
+                .str.strip()
+                .str.upper()
+            )
+            prefs_df.index.name = "Name"
         else:
-            prefs_df = pd.DataFrame(index=profiles_df["Name"].str.strip())
+            prefs_df = pd.DataFrame(index=profiles_df["Name"].str.strip().str.upper())
             prefs_df.index.name = "Name"
 
         # Handle training shifts
         if training_shifts:
+            raw_train = pd.DataFrame([t.model_dump() for t in training_shifts])
             training_df = (
-                pd.DataFrame([t.model_dump() for t in training_shifts])
+                raw_train
                 .pivot(index='nurse', columns='date', values='training')
-                .rename_axis(None, axis=0)
-                .rename_axis(None, axis=1)
             )
-            training_df.index.name = "Name"  # <-- Set index name here
+            # normalize to match profiles_df["Name"]
+            training_df.index = (
+                training_df
+                .index
+                .astype(str)
+                .str.strip()
+                .str.upper()
+            )
+            training_df.index.name = "Name"
         else:
-            training_df = pd.DataFrame(index=profiles_df["Name"].str.strip())
+            # build an empty table with the same normalized index
+            training_df = pd.DataFrame(index=profiles_df["Name"])
             training_df.index.name = "Name"
         
         # Ensure indices are string type for validation
@@ -165,14 +263,24 @@ async def generate_schedule(
         # Handle fixed assignments
         fixed_assignments_dict = None
         if request.fixed_assignments:
-            fixed_assignments_dict = {(fa.nurse, fa.day_index): fa.shift 
-                                     for fa in request.fixed_assignments}
+            # build a dict keyed by (nurse, date)
+            fixed_assignments_dict = {(fa.nurse, fa.date): fa.fixed 
+                                    for fa in request.fixed_assignments}
+            # now convert dates to day‐indices
+            fixed_idx_dict = {}
+            for (nurse, dt), shift in fixed_assignments_dict.items():
+                idx = (pd.Timestamp(dt) - pd.Timestamp(request.start_date)).days
+                if idx < 0 or idx >= request.num_days:
+                    raise HTTPException(400,
+                        f"Fixed assignment for {nurse} on {dt} is outside the scheduling window")
+                fixed_idx_dict[(nurse, idx)] = shift
             
         # Convert hours→minutes so the CP‑SAT model sees minutes everywhere
         dur_minutes = [h * 60 for h in request.shift_durations]
         
         # Call scheduling function
 
+        # Log the inputs for debugging
         logging.info("=== API inputs for build_schedule_model ===")
         logging.info("profiles_df.shape:         %s", profiles_df.shape)
         logging.info("profiles_df.columns:       %s", profiles_df.columns.tolist())
@@ -229,7 +337,7 @@ async def generate_schedule(
             back_to_back_shift=request.back_to_back_shift,
             use_sliding_window=request.use_sliding_window,
             shift_balance=request.shift_balance,
-            fixed_assignments=fixed_assignments_dict
+            fixed_assignments=fixed_idx_dict if fixed_assignments_dict else None
         )
 
         # Convert DataFrames to JSON-friendly format
@@ -244,8 +352,8 @@ async def generate_schedule(
         
     except InputMismatchError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except NoFeasibleSolutionError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+    except tuple(CUSTOM_ERRORS) as e:
+        raise HTTPException(status_code=CUSTOM_ERRORS[type(e)], detail=str(e))
     except Exception as e:
         tb = traceback.format_exc()
         raise HTTPException(status_code=500, detail=f"{str(e)}\n\nTraceback:\n{tb}")
@@ -253,4 +361,11 @@ async def generate_schedule(
 
 @app.get("/")
 def root():
+    """
+    Simple root endpoint to indicate the API is running.
+
+    Returns a JSON response with a "message" key, containing a string
+    indicating the API is running and providing a pointer to the Swagger UI
+    documentation at /docs.
+    """
     return {"message": "Nurse Roster Scheduling API is running. Visit /docs for the Swagger UI."}
