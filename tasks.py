@@ -18,9 +18,9 @@ def install(c):
     c.run("pip install -r requirements.txt")
 
 
-# @task
-# def back(c):
-#     c.run("uvicorn app:app --reload --host 127.0.0.1 --port 8001")
+@task
+def back(c):
+    c.run("uvicorn api.main:app --reload --host 127.0.0.1 --port 8001")
 
 
 @task
