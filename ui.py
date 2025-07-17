@@ -330,6 +330,11 @@ for key, default in {
     if key not in st.session_state:
         st.session_state[key] = default
 
+if "missing_prefs" not in st.session_state:
+    st.session_state.missing_prefs = None
+if "missing_train_shifts" not in st.session_state:
+    st.session_state.missing_train_shifts = None
+
 # Generate Schedule
 if st.sidebar.button("Generate Schedule", type="primary"):
     st.session_state.fixed.clear()
@@ -366,15 +371,26 @@ if st.sidebar.button("Generate Schedule", type="primary"):
         # Load and validate shift preferences and training shifts data
         if prefs_file:    
             df_prefs = load_shift_preferences(prefs_file)
-            validate_data(df_profiles, df_prefs, "profiles", "preferences")
+            try: 
+                st.session_state.missing_prefs = validate_data(df_profiles, df_prefs, "profiles", "preferences", False)
+            except InputMismatchError as e:
+                st.error(str(e))
+                st.stop()
+            logging.info(st.session_state.missing_prefs)
         else:
             df_prefs = pd.DataFrame(index=df_profiles["Name"])
+            st.session_state.missing_prefs = None
         
         if training_shifts_file:
             df_train_shifts = load_training_shifts(training_shifts_file)
-            validate_data(df_profiles, df_train_shifts, "profiles", "training shifts")
+            try:
+                st.session_state.missing_train_shifts = validate_data(df_profiles, df_train_shifts, "profiles", "training shifts", False)
+            except InputMismatchError as e:
+                st.error(str(e))
+                st.stop()
         else:
             df_train_shifts = pd.DataFrame(index=df_profiles["Name"])
+            st.session_state.missing_train_shifts = None
 
         # Validate input parameters
         errors = validate_input_params(df_profiles, num_days, min_nurses_per_shift, min_seniors_per_shift, max_weekly_hours, preferred_weekly_hours, min_acceptable_weekly_hours)
@@ -575,10 +591,13 @@ if st.session_state.sched_df is not None:
     # Show summary
     st.subheader("📊 Final Summary Metrics")
     st.dataframe(st.session_state.summary_df, use_container_width=True)
-    # for row in st.session_state.summary_df.itertuples():
-    #     if row.Unmet_Details:
-    #         with st.expander(f"Unmet Details for {row.Nurse}"):
-    #             st.markdown(row.Unmet_Details)
+
+    if st.session_state.missing_prefs:
+        st.warning(st.session_state.missing_prefs)
+        logging.info(st.session_state.missing_prefs)
+    if st.session_state.missing_train_shifts:
+        st.warning(st.session_state.missing_train_shifts)
+        logging.info(st.session_state.missing_train_shifts)
 
     # Show relevent violations, if any
     violations = st.session_state.get("violations", {})
