@@ -96,3 +96,7 @@ Templates for each file can be found in the `data/` directory.
 -   [Google OR-Tools](https://developers.google.com/optimization)
 -   [Streamlit](https://streamlit.io/)
 -   [Pandas](https://pandas.pydata.org/)
+
+## 👤 Author
+
+[**Goh Jun Keat**](https://github.com/JKniaaa) @ 2025
