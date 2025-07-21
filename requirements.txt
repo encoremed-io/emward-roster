@@ -20,3 +20,7 @@ torch
 invoke
 xlsxwriter
 python-dotenv
+scikit-learn
+skl2onnx
+onnx
+onnxruntime

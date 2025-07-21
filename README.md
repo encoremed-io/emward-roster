@@ -28,71 +28,28 @@ cd roster-scheduler
 
 ---
 
-### 2. Create a Virtual Environment
+### 5. Build & Run the Application
+
+#### Build the application
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate      # On Linux/macOS
-.venv\Scripts\activate         # On Windows
+docker-compose up --build
 ```
 
----
-
-### 3. Install dependencies
+#### Run the application (api)
 
 ```bash
-pip install --upgrade pip
-pip install -r requirements.txt
+docker-compose up api
 ```
 
----
-
-### 4. Set the Python path for local imports
-
-Create a .env file in the project root (same level as requirements.txt) with the following content:
+#### Run the application (ui)
 
 ```bash
-PYTHONPATH=src
-```
-
-This sets the PYTHONPATH environment variable to the src/ directory, allowing Python to resolve internal imports properly.
-
----
-
-### 5. Run the Application
-
-#### Option 1: Using Invoke
-
-Make sure `invoke` is installed:
-
-```bash
-pip install invoke
-```
-
-Then, run the app using:
-
-```bash
-invoke front
+docker-compose up ui
 ```
 
 This runs `streamlit run ui.py` via the tasks.py file.
 
-#### Option 2: Manually with Streamlit
-
-```bash
-streamlit run ui.py
-```
-
----
-
-### 6. Run the Application with (Docker)
-
-```bash
-docker build -t emward-roster .   
-docker run -p 8501:8501 emward-roster
-```
-
----
 
 ## 📁 Project Structure
 
@@ -103,17 +60,21 @@ roster-scheduler/
 │
 ├── .venv/
 ├── .env
+├── api/               → Api paths
 ├── config/            → Constants and path configuration
 ├── data/              → Nurse input Excel files
+├── exceptions/        → Custom error exceptions
 ├── jupyter/           → Development notebooks
 ├── legacy/            → Deprecated modules (e.g., old scheduler logic)
-├── src/               → Main Python source code
-│   ├── core/          → Scheduling state and constraint manager
-│   ├── exceptions/    → Custom exception classes
-│   ├── scheduler/     → Model setup, builder, runner, and solver logic
-|       └── rules/     → Constraint rule functions
-│   └── utils/         → Utility and helper functions
-│
+├── models/            → Training models & logics
+├── core/              → Scheduling state and constraint manager
+├── exceptions/        → Custom exception classes
+├── scheduler/         → Model setup, builder, runner, and solver logic
+    └── rules/         → Constraint rule functions
+├── utils/             → Utility and helper functions
+├── main.py            → Application entry file
+├── Dockerfile         → Dockerfile
+├── docker-compose.yml → Docker composer file
 ├── ui.py              → Streamlit web interface
 ├── tasks.py           → Invoke tasks
 ├── requirements.txt   → Project dependencies
@@ -135,12 +96,6 @@ Templates for each file can be found in the `data/` directory.
 -   [Google OR-Tools](https://developers.google.com/optimization)
 -   [Streamlit](https://streamlit.io/)
 -   [Pandas](https://pandas.pydata.org/)
-
-## 🏢 Internship Project
-
-Developed by **Goh Jun Keat** under the internship program at **Encore Med Sdn Bhd**.  
-Encore Med Sdn Bhd may incorporate this scheduler into its future products.  
-© 2025 Encore Med Sdn Bhd. All rights reserved.
 
 ## 👤 Author
 
