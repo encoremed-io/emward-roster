@@ -24,8 +24,5 @@ COPY . .
 # Expose Streamlit default port
 EXPOSE 8501
 
-# Option 1: Run using Invoke
-CMD ["invoke", "front"]
-
-# Option 2: Run directly with Streamlit (uncomment this if not using invoke)
-# CMD ["streamlit", "run", "ui.py"]
+# Expose FastAPI port
+EXPOSE 8000
