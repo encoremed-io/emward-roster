@@ -108,4 +108,3 @@ def validate_input_params(
         errors.insert(0, "Recheck your inputs:\n")
 
     return errors
-

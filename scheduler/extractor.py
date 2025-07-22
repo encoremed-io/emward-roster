@@ -15,7 +15,9 @@ def get_total_prefs_met(state: ScheduleState, result: SolverResult) -> int:
     for n in state.nurse_names:
         for d in range(state.num_days):
             picked = [s for s in range(state.shift_types) if result.cached_values[(n, d, s)]]
-            pref = state.prefs_by_nurse[n].get(d)
+            raw_pref = state.prefs_by_nurse[n].get(d)
+            # unpack the preference tuple if it exists
+            pref = raw_pref[0] if isinstance(raw_pref, tuple) else raw_pref
             if pref is not None and len(picked) == 1 and pref in picked:
                 total_prefs_met += 1
 
@@ -107,15 +109,16 @@ def extract_schedule_and_summary(state: ScheduleState, result: SolverResult, og_
                 minutes_per_week[week_idx] += int(state.shift_durations[p])
                 shift_counts[p] += 1
 
-            pref = state.prefs_by_nurse[n].get(d)
-            if pref is not None:
+            raw = state.prefs_by_nurse[n].get(d)
+            if raw is not None:
                 if (n, d) in state.fixed_assignments and state.fixed_assignments[(n, d)].upper() in NO_WORK_LABELS:
                     continue
 
-                if len(picked) == 1 and picked[0] == pref:
+                idx = raw[0] if isinstance(raw, tuple) else raw
+                if len(picked) == 1 and picked[0] == idx:
                     prefs_met += 1
                 else:
-                    prefs_unmet.append(f"{dates[d].strftime('%a %Y-%m-%d')} (wanted {SHIFT_LABELS[pref]})")
+                    prefs_unmet.append(f"{dates[d].strftime('%a %Y-%m-%d')} (wanted {SHIFT_LABELS[idx]})")
 
         if not state.pref_weekly_hours_hard:
             preferred_weekly_minutes = state.preferred_weekly_hours * 60
