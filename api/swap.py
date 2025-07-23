@@ -1,99 +1,172 @@
 from fastapi import APIRouter, Body
 import pandas as pd
-from utils.helpers.swap_suggestions import parse_date, generate_warning, is_conflicting, preprocess_nurse
+from utils.helpers.swap_suggestions import parse_date, generate_warning, preprocess_nurse
 from utils.helpers.swap_suggestions_onnx import run_model_on
+from datetime import datetime, timedelta
+from typing import Dict, List
 
 router = APIRouter(prefix="/swap")
 
 # get suggestions for swapping nurses shift
 @router.post("/suggestions")
 def suggest_swap(data: dict = Body(...)):
-    target_shift = data["target_shift"]
-    target_date = parse_date(target_shift["date"])
-    shift_type = target_shift["type"]
-    required_skill = target_shift.get("required_skill", "icu_certified")
-    target_nurse_id = data.get("target_nurse_id")
-    settings = data.get("settings", {
-        "max_shifts_per_week": 5,
-        "warn_recent_night_shift": True,
-        "recent_night_window_days": 2
-    })
-
+    # data
+    target_nurses = data.get("targetNurseId", [])
+    settings = data.get("settings", {})
+    shift_duration = settings.get("shiftDurations", 8)
+    max_hours = settings.get("maxWeeklyHours", 40)
+    min_seniors = settings.get("minSeniorsPerShift", 2)
+    back_to_back = settings.get("backToBackShift", False)
+    
+    # assign roster
     roster = data["roster"]
 
-    # Find the nurse to be replaced
-    assigned_nurse = next((n for n in roster if n["nurse_id"] == target_nurse_id), None)
-
-    if not assigned_nurse:
-        return {"message": f"Nurse '{target_nurse_id}' not found in roster."}
-
-    target_role = assigned_nurse.get("role", "junior")
-
-    # Count other seniors on the same shift
-    other_seniors = [
-        n for n in roster
-        if n["nurse_id"] != target_nurse_id and
-           n.get("role") == "senior" and
-           any(s["date"] == target_shift["date"] and s["type"] == shift_type for s in n.get("shifts", []))
-    ]
-
-    must_replace_with_senior = target_role == "senior" and not other_seniors
-
-    # Filter nurses into groups
-    strict, relaxed, last_resort = [], [], []
-
-    for nurse in roster:
-        if nurse["nurse_id"] == target_nurse_id:
-            continue
-
-        if must_replace_with_senior and nurse.get("role") != "senior":
-            continue
-            
-        is_busy = is_conflicting(nurse, target_shift)
-        processed = preprocess_nurse(nurse, target_date, settings)
-
-        if not is_busy and nurse.get(required_skill, False):
-            strict.append(processed)
-        elif not is_busy:
-            relaxed.append(processed)
-        else:
-            last_resort.append(processed)
-    
-    # Apply fallback filtering
-    top_candidates = None
-    filter_level = ""
-
-    for group, label in [(strict, "strict"), (relaxed, "relaxed"), (last_resort, "last_resort")]:
-        if not group:
-            continue
-        df = pd.DataFrame(group)
-        features = df[["icu_certified", "prefers_morning", "shifts_this_week", "recent_night_shift"]]
-        df["swap_score"] = run_model_on(features)
-        top = df.sort_values(by="swap_score", ascending=False).head(3)
-        if not top.empty:
-            top_candidates = top
-            filter_level = label
-            break
-
-    # Format result
     results = []
-    if top_candidates is not None and not top_candidates.empty:
-        for _, row in top_candidates.iterrows():
-            results.append({
-                "nurse_id": row["nurse_id"],
-                "swap_score": float(row["swap_score"]),
-                "shifts_this_week": int(row["shifts_this_week"]),
-                "recent_night_shift": int(row["recent_night_shift"]),
-                "message": generate_warning(row, settings)
-            })
 
-    return {
-        "original_nurse": assigned_nurse["nurse_id"],
-        "replacement_for": {
-            "date": target_shift["date"],
-            "type": shift_type,
-            "department": target_shift.get("department")
-        },
-        "filter_level": filter_level if filter_level else "none_available",
-        "top_candidates": results
-    }
+    # loop through the nurses who are taking leaves
+    for target_entry in target_nurses:
+        nurseId = target_entry["nurseId"]
+        assigned_nurse = next((n for n in roster if n["nurseId"] == nurseId), None)
+
+        # return error if nurse not found
+        if not assigned_nurse:
+            results.append({
+                "originalNurse": nurseId,
+                "error": "Nurse not found in roster."
+            })
+            continue
+        
+        # get nurse role
+        target_role = assigned_nurse.get("role", "junior")
+
+        # loop through the target shifts
+        for shift in target_entry["targetShift"]:
+            date = shift["date"]
+
+            # loop through the shift id
+            for shiftType in shift["shiftTypeId"]:
+                # Get nurses already assigned to the same date/shift
+                same_day_assignments = [
+                    n for n in roster
+                    for s in n.get("shifts", [])
+                    if s["date"] == date and s["shiftTypeId"] == shiftType
+                ]
+
+                # get current seniors
+                current_seniors = sum(1 for n in same_day_assignments if n.get("role") == "senior")
+
+                # replace with senior if the min seniors requirement is not met
+                must_replace_with_senior = target_role == "senior" and current_seniors < min_seniors
+
+                # set rule rigidity
+                strict, fallback = [], []
+                
+                # direct swap option
+                directSwap = None
+
+                # loop through roster
+                for nurse in roster:
+
+                    # skip the nurse that is applying leave
+                    if nurse["nurseId"] == nurseId:
+                        continue
+
+                    # check for swap suggestion
+                    for shift in nurse.get("shifts", []):
+                        if shift["date"] == date:
+                            continue  # Skip if it's the same day as the target
+
+                        # Check if nurse is already working on the target date
+                        if any(s["date"] == date for s in nurse.get("shifts", [])):
+                            print(f"  ❌ Already has shift on {date}")
+                            continue
+
+                        # Enforce back-to-back restriction
+                        if not back_to_back:
+                            target_dt = datetime.strptime(date, "%Y-%m-%d")
+                            if any(
+                                abs((target_dt - datetime.strptime(s["date"], "%Y-%m-%d")).days) == 1
+                                for s in nurse.get("shifts", [])
+                            ):
+                                print(f"  ❌ Back-to-back conflict with shift on adjacent day")
+                                continue
+
+                        # Optional: Check seniority if required
+                        if must_replace_with_senior and nurse.get("role") != "senior":
+                            print(f"  ❌ Not senior and senior required")
+                            continue
+
+                        # Passed all checks — suggest this as a direct swap
+                        directSwap = {
+                            "nurseId": nurse["nurseId"],
+                            "swapFrom": shift,  # original shift (any type)
+                            "swapTo": {
+                                "date": date,
+                                "shiftTypeId": shiftType  # target shift needing replacement
+                            },
+                            "note": "Cross-shift swap allowed ({} → {}).".format(
+                                shift["shiftTypeId"], shiftType
+                            ) if shift["shiftTypeId"] != shiftType else "Same-shift direct swap"
+                        }
+                        break
+
+                    if directSwap:
+                        break
+
+                    # check if the replacement require senior
+                    if must_replace_with_senior and nurse.get("role") != "senior":
+                        continue
+                    
+                    # check if nurse has conflict on the same date shift
+                    has_conflict = any(
+                        s["date"] == date and s["shiftTypeId"] == shiftType
+                        for s in nurse.get("shifts", [])
+                    )
+                    if has_conflict:
+                        continue
+
+                    # check for back to back shift
+                    if not back_to_back:
+                        shift_dates = [s["date"] for s in nurse.get("shifts", [])]
+                        dt = datetime.strptime(date, "%Y-%m-%d")
+                        if any(abs((dt - datetime.strptime(d, "%Y-%m-%d")).days) == 1 for d in shift_dates):
+                            continue
+
+                    # get the total hours the nurse works
+                    weekly_hours = len(nurse.get("shifts", [])) * shift_duration
+
+                    # compile the shift details of the nurse
+                    processed = preprocess_nurse(nurse, datetime.strptime(date, "%Y-%m-%d"), settings)
+
+                    # potential replacement candidate
+                    entry = {
+                        "nurseId": nurse["nurseId"],
+                        "isSenior": nurse.get("role") == "senior",
+                        "currentHours": weekly_hours,
+                        "violatesMaxHours": weekly_hours + shift_duration > max_hours,
+                        "message": generate_warning(processed, settings)
+                    }
+                    
+                    # append to fallback list if rules being violated
+                    if entry["violatesMaxHours"]:
+                        fallback.append(entry)
+                    else:
+                        strict.append(entry)
+                
+                candidates = strict if strict else fallback
+                filterLevel = "strict" if strict else "fallback" if fallback else "none_available"
+
+                # append candidates to results
+                results.append({
+                    "originalNurse": nurseId,
+                    "replacementFor": {
+                        "date": date,
+                        "type": shiftType
+                    },
+                    "filterLevel": filterLevel,
+                    "topCandidates": candidates,
+                    "directSwapCandidate": directSwap
+                })
+    
+    # return all candidates suggestions
+    return {"results": results}

@@ -1,0 +1,62 @@
+[
+    {
+        "target_shift": {
+            "date": "2025-06-12",
+            "type": "morning",
+            "department": "ICU"
+        },
+        "target_nurse_id": "N001",
+        "candidates": [
+            {
+                "nurse_id": "N002",
+                "icu_certified": true,
+                "prefers_morning": true,
+                "shifts_this_week": 3,
+                "recent_night_shift": false,
+                "was_chosen": true
+            },
+            {
+                "nurse_id": "N003",
+                "icu_certified": false,
+                "prefers_morning": true,
+                "shifts_this_week": 4,
+                "recent_night_shift": false,
+                "was_chosen": false
+            },
+            {
+                "nurse_id": "N004",
+                "icu_certified": true,
+                "prefers_morning": false,
+                "shifts_this_week": 5,
+                "recent_night_shift": true,
+                "was_chosen": false
+            }
+        ]
+    },
+    {
+        "target_shift": {
+            "date": "2025-06-13",
+            "type": "night",
+            "department": "General"
+        },
+        "target_nurse_id": "N005",
+        "candidates": [
+            {
+                "nurse_id": "N006",
+                "icu_certified": false,
+                "prefers_morning": false,
+                "shifts_this_week": 2,
+                "recent_night_shift": false,
+                "was_chosen": true
+            },
+            {
+                "nurse_id": "N007",
+                "icu_certified": true,
+                "prefers_morning": true,
+                "shifts_this_week": 3,
+                "recent_night_shift": false,
+                "was_chosen": false
+            }
+        ]
+    }
+]
