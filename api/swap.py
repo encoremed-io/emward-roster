@@ -4,11 +4,16 @@ from utils.helpers.swap_suggestions import parse_date, generate_warning, preproc
 from utils.helpers.swap_suggestions_onnx import run_model_on
 from datetime import datetime, timedelta
 from typing import Dict, List
+from docs.swap.suggestions import swap_suggestions_description
 
 router = APIRouter(prefix="/swap")
 
 # get suggestions for swapping nurses shift
-@router.post("/suggestions")
+@router.post("/suggestions",
+    description=swap_suggestions_description,
+    summary="Suggest Nurse Swap Candidates"
+)
+
 def suggest_swap(data: dict = Body(...)):
     # data
     target_nurses = data.get("targetNurseId", [])
@@ -161,7 +166,7 @@ def suggest_swap(data: dict = Body(...)):
                     "originalNurse": nurseId,
                     "replacementFor": {
                         "date": date,
-                        "type": shiftType
+                        "shiftTypeId": shiftType
                     },
                     "filterLevel": filterLevel,
                     "topCandidates": candidates,
