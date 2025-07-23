@@ -40,11 +40,11 @@ class ScheduleState:
     """
     weekend_pairs: List[Tuple[int,int]]
     """A list of tuples of days (Sunday, Monday) indicating weekends."""
-    prefs_by_nurse: Dict[str, Dict[int,int]]
+    prefs_by_nurse: Dict[str, Dict[int, Tuple[int, Any]]]
     """A dictionary mapping each nurse to a dictionary of their preferred
-    shift types.
+    shift types with timestamps.
     """
-    training_by_nurse: Dict[str, Dict[int,int]]
+    training_by_nurse: Dict[str, Dict[int, int]]
     """A dictionary mapping each nurse to a dictionary of their training
     requirements.
     """

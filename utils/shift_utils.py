@@ -78,28 +78,39 @@ def get_shift_preferences(
     active_days: int,
     shift_labels: List[str],
     no_work_labels: List[str]
-) -> Dict[str, Dict[int, int]]:
+) -> Dict[str, Dict[int, Tuple[int, pd.Timestamp]]]:
     """
-    Returns nurse_name -> { day_index: shift_index } for non-MC preferences.
+    Returns nurse_name -> { day_index: (shift_index, timestamp) } for non-MC preferences.
     """
     date_start = start_date.date() if isinstance(start_date, pd.Timestamp) else start_date
     nurse_names = [n.strip().upper() for n in profiles_df['Name']]
     shift_str_to_idx = {label.upper(): idx for idx, label in enumerate(shift_labels)}
-    shift_prefs: Dict[str, Dict[int, int]] = {n: {} for n in nurse_names}
+    shift_prefs: Dict[str, Dict[int, Tuple[int, pd.Timestamp]]] = {n: {} for n in nurse_names}
+
+    # logging.warning("cols: %s", preferences_df.columns.tolist())
+    # logging.warning("index name/type: %s %s", preferences_df.index.name, type(preferences_df.index))
 
     for nurse, row in preferences_df.iterrows():
         nm = str(nurse).strip().upper()
         if nm not in shift_prefs:
             continue
-        for label, val in row.items():
-            if pd.notna(val):
-                code = str(val).strip().upper()
+        for label, raw in row.items():
+            if pd.notna(raw):
+                if isinstance(raw, tuple) and len(raw) == 2:
+                    code, ts = raw
+                    code = str(code).strip().upper()
+                else:
+                    code = str(raw).strip().upper()
+                    ts = pd.Timestamp.min
+
                 if code == "" or code in (lbl.upper() for lbl in no_work_labels):
                     continue
                 elif code in shift_str_to_idx:
                     offset = compute_label_offset(label, date_start)
                     if 0 <= offset < active_days:
-                        shift_prefs[nm][offset] = shift_str_to_idx[code]
+                        prev = shift_prefs[nm].get(offset)
+                        if prev is None or ts < prev[1]:
+                            shift_prefs[nm][offset] = (shift_str_to_idx[code], ts)
                 else:
                     raise FileContentError(
                         f"Invalid preference “{code}” for nurse {nm} on {label} — "
@@ -109,8 +120,8 @@ def get_shift_preferences(
 
 
 def filter_fixed_assignments_from_prefs(
-    shift_preferences: Dict[str, Dict[int, int]],
-    prefs_by_nurse:    Dict[str, Dict[int, int]],
+    shift_preferences: Dict[str, Dict[int, Tuple[int, Any]]],
+    prefs_by_nurse:    Dict[str, Dict[int, Tuple[int, Any]]],
     no_work_labels:    List[str],
     fixed_assignments: Optional[Dict[Tuple[str, int], str]]
 ) -> None:
@@ -125,11 +136,16 @@ def filter_fixed_assignments_from_prefs(
 
     for nurse, prefs in shift_preferences.items():
         # build list of days to drop for this nurse
-        to_drop = [
-            day
-            for day in prefs
-            if fixed_assignments.get((nurse, day), "").upper() in no_work_label_set
-        ]
+        # to_drop = [
+        #     day
+        #     for day in prefs
+        #     if fixed_assignments.get((nurse, day), "").upper() in no_work_label_set
+        # ]
+
+        to_drop = []
+        for day, (pref_shift, _) in prefs.items():
+            if fixed_assignments.get((nurse, day), "").upper() in no_work_label_set:
+                to_drop.append(day)
 
         for day in to_drop:
             # remove from the master dict
@@ -149,8 +165,8 @@ def extract_prefs_info(preferences_df, profiles_df, date_start, nurse_names, num
 
 
 def filter_prefs_from_training_shifts(
-    shift_preferences: Dict[str, Dict[int, int]],
-    prefs_by_nurse: Dict[str, Dict[int, int]],
+    shift_preferences: Dict[str, Dict[int, Tuple[int, Any]]],
+    prefs_by_nurse: Dict[str, Dict[int, Tuple[int, Any]]],
     training_by_nurse: Optional[Dict[str, Dict[int, int]]] = None
 ) -> None:
     """
@@ -164,10 +180,15 @@ def filter_prefs_from_training_shifts(
         prefs = prefs_by_nurse[nurse]
         training = training_by_nurse.get(nurse, {})
         # find preference equal to training shift
-        to_drop = [
-            day for day, pref_shift in prefs.items()
-            if training.get(day) == pref_shift
-        ]
+        # to_drop = [
+        #     day for day, pref_shift in prefs.items()
+        #     if training.get(day) == pref_shift
+        # ]
+        to_drop = []
+        for day, (pref_shift, _) in prefs.items():
+            if training.get(day) == pref_shift:
+                to_drop.append(day)
+
         # logging.info(f"To drop: {to_drop}")
         for day in to_drop:
             prefs.pop(day, None)

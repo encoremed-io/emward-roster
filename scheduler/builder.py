@@ -121,7 +121,8 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     cm.add_rule(am_senior_staffing_lvl_rule)
 
     # Low priority rules
-    cm.add_rule(preference_rule)
+    # cm.add_rule(preference_rule)
+    cm.add_rule(preference_rule_ts)
     cm.add_rule(fairness_gap_rule)
     cm.add_rule(shift_balance_rule)
 
