@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from schemas.swap.suggestions import SwapCandidateFeatures
 
 # format date
 def parse_date(date_str):
@@ -9,38 +10,38 @@ def generate_warning(nurse, settings):
     messages = []
 
     # Calculate shift-based hours
-    shift_duration = settings.get("shiftDurations", 8)
-    max_hours = settings.get("maxWeeklyHours", 40)
-    preferred_hours = settings.get("preferredWeeklyHours", 40)
+    shift_duration = settings.shiftDurations
+    max_hours = settings.maxWeeklyHours
+    preferred_hours = settings.preferredWeeklyHours
 
-    weekly_hours = nurse.get("shiftsThisWeek", 0) * shift_duration
+    weekly_hours = nurse.shiftsThisWeek * shift_duration
 
     # Warn if over max hours
     if weekly_hours > max_hours:
         messages.append(
-            f"{nurse['nurseId']} has {weekly_hours} hours this week (limit: {max_hours})."
+            f"{nurse.nurseId} has {weekly_hours} hours this week (limit: {max_hours})."
         )
 
     # Optional: Warn if under preferred (but not required)
     if weekly_hours < preferred_hours:
         messages.append(
-            f"{nurse['nurseId']} is below preferred weekly hours ({weekly_hours} < {preferred_hours})."
+            f"{nurse.nurseId} is below preferred weekly hours ({weekly_hours} < {preferred_hours})."
         )
 
     # Warn if recent night shift (if enabled, default is True)
-    if settings.get("warnRecentNightShift", True) and nurse.get("recentNightShift", 0) == 1:
-        messages.append(f"{nurse['nurseId']} recently worked a night shift.")
+    if getattr(settings, "warnRecentNightShift", False) and nurse.recentNightShift == 1:
+        messages.append(f"{nurse.nurseId} recently worked a night shift.")
 
     return " ".join(messages) if messages else "OK"
 
 
 # process nurse replacement logic
 def preprocess_nurse(nurse, target_date, settings):
-    shift_duration = settings.get("shiftDurations", 8)
-    recent_night_window = settings.get("recentNightWindowDays", 2) # optional for rest day after night shifts
-    night_shift_ids = settings.get("nightShiftIds", [3])
+    shift_duration = settings.shiftDurations
+    recent_night_window = getattr(settings, "recentNightWindowDays", 2) # optional for rest day after night shifts
+    night_shift_ids = getattr(settings, "nightShiftIds", [3])
 
-    shift_dates = [parse_date(s["date"]) for s in nurse.get("shifts", [])]
+    shift_dates = [parse_date(s.date) for s in nurse.shifts]
 
     # Define this week as 7 days up to the target date
     this_week_start = target_date - timedelta(days=6)
@@ -51,12 +52,13 @@ def preprocess_nurse(nurse, target_date, settings):
 
     # Check if any shift in the recent night window was a night/overnight shift
     recentNightShift = any(
-        parse_date(s["date"]) >= recent_night_cutoff and s.get("shiftTypeId") in night_shift_ids
-        for s in nurse.get("shifts", [])
+        parse_date(s.date) >= recent_night_cutoff and s.shiftTypeId in night_shift_ids
+        for s in nurse.shifts
     )
 
-    return {
-        **nurse,
-        "shiftsThisWeek": shiftsThisWeek,
-        "recentNightShift": int(recentNightShift)
-    }
+    return SwapCandidateFeatures(
+        nurseId=nurse.nurseId,
+        isSenior=nurse.isSenior,
+        shiftsThisWeek=shiftsThisWeek,
+        recentNightShift=int(recentNightShift)
+    )
