@@ -1,0 +1,445 @@
+{
+  "profiles": [
+    {"name": "Nurse1", "title": "Senior", "years_experience": 5},
+    {"name": "Nurse2", "title": "Senior", "years_experience": 5},
+    {"name": "Nurse3", "title": "Senior", "years_experience": 5},
+    {"name": "Nurse4", "title": "Senior", "years_experience": 5},
+    {"name": "Nurse5", "title": "Senior", "years_experience": 5},
+    {"name": "Nurse6", "title": "Senior", "years_experience": 5},
+    {"name": "Nurse7", "title": "Senior", "years_experience": 5},
+    {"name": "Nurse8", "title": "Junior", "years_experience": 1},
+    {"name": "Nurse9", "title": "Junior", "years_experience": 1},
+    {"name": "Nurse10", "title": "Junior", "years_experience": 1},
+    {"name": "Nurse11", "title": "Junior", "years_experience": 1},
+    {"name": "Nurse12", "title": "Junior", "years_experience": 1},
+    {"name": "Nurse13", "title": "Junior", "years_experience": 1},
+    {"name": "Nurse14", "title": "Junior", "years_experience": 1},
+    {"name": "Nurse15", "title": "Junior", "years_experience": 1},
+    {"name": "Nurse16", "title": "Junior", "years_experience": 1},
+    {"name": "Nurse17", "title": "Junior", "years_experience": 1},
+    {"name": "Nurse18", "title": "Junior", "years_experience": 1},
+    {"name": "Nurse19", "title": "Junior", "years_experience": 1},
+    {"name": "Nurse20", "title": "Junior", "years_experience": 1}
+  ],
+  "preferences": [
+    {
+      "nurse": "Nurse2",
+      "date": "2025-07-08",
+      "shift": "AM",
+      "timestamp": "2025-07-10T09:00:00"
+    },
+    {
+      "nurse": "Nurse2",
+      "date": "2025-07-12",
+      "shift": "AL",
+      "timestamp": "2025-07-11T14:30:00"
+    },
+    {
+      "nurse": "Nurse2",
+      "date": "2025-07-14",
+      "shift": "AL",
+      "timestamp": "2025-07-12T08:15:00"
+    },
+    {
+      "nurse": "Nurse2",
+      "date": "2025-07-16",
+      "shift": "AM",
+      "timestamp": "2025-07-10T10:45:00"
+    },
+    {
+      "nurse": "Nurse3",
+      "date": "2025-07-07",
+      "shift": "AL",
+      "timestamp": "2025-07-11T16:00:00"
+    },
+    {
+        "nurse": "Nurse3",
+        "date": "2025-07-09",
+        "shift": "Night",
+        "timestamp": "2025-07-10T11:00:00"
+    },
+    {
+        "nurse": "Nurse3",
+        "date": "2025-07-11",
+        "shift": "Night",
+        "timestamp": "2025-07-11T13:20:00"
+    },
+    {
+        "nurse": "Nurse3",
+        "date": "2025-07-14",
+        "shift": "PM",
+        "timestamp": "2025-07-12T09:45:00"
+    },
+    {
+        "nurse": "Nurse4",
+        "date": "2025-07-15",
+        "shift": "Night",
+        "timestamp": "2025-07-13T08:10:00"
+    },
+    {
+        "nurse": "Nurse4",
+        "date": "2025-07-18",
+        "shift": "Night",
+        "timestamp": "2025-07-14T14:30:00"
+    },
+    {
+        "nurse": "Nurse4",
+        "date": "2025-07-20",
+        "shift": "Night",
+        "timestamp": "2025-07-15T10:00:00"
+    },
+    {
+        "nurse": "Nurse5",
+        "date": "2025-07-07",
+        "shift": "AM",
+        "timestamp": "2025-07-16T07:30:00"
+    },
+    {
+        "nurse": "Nurse5",
+        "date": "2025-07-10",
+        "shift": "AM",
+        "timestamp": "2025-07-17T09:00:00"
+    },
+    {
+        "nurse": "Nurse5",
+        "date": "2025-07-13",
+        "shift": "AM",
+        "timestamp": "2025-07-18T13:00:00"
+    },
+    {
+        "nurse": "Nurse5",
+        "date": "2025-07-16",
+        "shift": "AM",
+        "timestamp": "2025-07-19T15:30:00"
+    },
+    {
+        "nurse": "Nurse5",
+        "date": "2025-07-17",
+        "shift": "AL",
+        "timestamp": "2025-07-20T10:30:00"
+    },
+    {
+        "nurse": "Nurse5",
+        "date": "2025-07-19",
+        "shift": "AL",
+        "timestamp": "2025-07-21T14:00:00"
+    },
+    {
+        "nurse": "Nurse6",
+        "date": "2025-07-12",
+        "shift": "Night",
+        "timestamp": "2025-07-22T12:45:00"
+    },
+    {
+        "nurse": "Nurse6",
+        "date": "2025-07-19",
+        "shift": "AM",
+        "timestamp": "2025-07-23T08:20:00"
+    },
+    {
+        "nurse": "Nurse7",
+        "date": "2025-07-08",
+        "shift": "Night",
+        "timestamp": "2025-07-10T09:40:00"
+    },
+    {
+        "nurse": "Nurse7",
+        "date": "2025-07-14",
+        "shift": "AL",
+        "timestamp": "2025-07-11T08:55:00"
+    },
+    {
+        "nurse": "Nurse7",
+        "date": "2025-07-17",
+        "shift": "PM",
+        "timestamp": "2025-07-12T11:10:00"
+    },
+    {
+        "nurse": "Nurse8",
+        "date": "2025-07-07",
+        "shift": "PM",
+        "timestamp": "2025-07-13T14:50:00"
+    },
+    {
+        "nurse": "Nurse8",
+        "date": "2025-07-09",
+        "shift": "PM",
+        "timestamp": "2025-07-14T10:15:00"
+    },
+    {
+        "nurse": "Nurse8",
+        "date": "2025-07-11",
+        "shift": "AM",
+        "timestamp": "2025-07-15T16:40:00"
+    },
+    {
+        "nurse": "Nurse8",
+        "date": "2025-07-13",
+        "shift": "AM",
+        "timestamp": "2025-07-16T08:50:00"
+    },
+    {
+        "nurse": "Nurse8",
+        "date": "2025-07-18",
+        "shift": "Night",
+        "timestamp": "2025-07-17T13:35:00"
+    },
+    {
+        "nurse": "Nurse8",
+        "date": "2025-07-20",
+        "shift": "PM",
+        "timestamp": "2025-07-18T11:25:00"
+    },
+    {
+        "nurse": "Nurse9",
+        "date": "2025-07-12",
+        "shift": "AL",
+        "timestamp": "2025-07-19T15:05:00"
+    },
+    {
+        "nurse": "Nurse9",
+        "date": "2025-07-15",
+        "shift": "Night",
+        "timestamp": "2025-07-20T08:45:00"
+    },
+    {
+        "nurse": "Nurse10",
+        "date": "2025-07-08",
+        "shift": "AL",
+        "timestamp": "2025-07-21T14:10:00"
+    },
+    {
+        "nurse": "Nurse10",
+        "date": "2025-07-11",
+        "shift": "Night",
+        "timestamp": "2025-07-22T10:05:00"
+    },
+    {
+        "nurse": "Nurse10",
+        "date": "2025-07-14",
+        "shift": "PM",
+        "timestamp": "2025-07-23T07:15:00"
+    },
+    {
+        "nurse": "Nurse10",
+        "date": "2025-07-17",
+        "shift": "PM",
+        "timestamp": "2025-07-10T12:25:00"
+    },
+    {
+        "nurse": "Nurse11",
+        "date": "2025-07-07",
+        "shift": "Night",
+        "timestamp": "2025-07-11T13:10:00"
+    },
+    {
+        "nurse": "Nurse11",
+        "date": "2025-07-16",
+        "shift": "AM",
+        "timestamp": "2025-07-12T14:45:00"
+    },
+    {
+        "nurse": "Nurse11",
+        "date": "2025-07-19",
+        "shift": "AM",
+        "timestamp": "2025-07-13T10:55:00"
+    },
+    {
+        "nurse": "Nurse11",
+        "date": "2025-07-20",
+        "shift": "AL",
+        "timestamp": "2025-07-14T09:05:00"
+    },
+    {
+        "nurse": "Nurse12",
+        "date": "2025-07-10",
+        "shift": "AM",
+        "timestamp": "2025-07-15T11:50:00"
+    },
+    {
+        "nurse": "Nurse12",
+        "date": "2025-07-14",
+        "shift": "AL",
+        "timestamp": "2025-07-16T15:20:00"
+    },
+    {
+        "nurse": "Nurse12",
+        "date": "2025-07-16",
+        "shift": "AL",
+        "timestamp": "2025-07-17T07:45:00"
+    },
+    {
+        "nurse": "Nurse12",
+        "date": "2025-07-17",
+        "shift": "AL",
+        "timestamp": "2025-07-18T12:30:00"
+    },
+    {
+        "nurse": "Nurse12",
+        "date": "2025-07-18",
+        "shift": "Night",
+        "timestamp": "2025-07-16T16:15:00"
+    },
+    {
+        "nurse": "Nurse13",
+        "date": "2025-07-08",
+        "shift": "AL",
+        "timestamp": "2025-07-17T13:55:00"
+    },
+    {
+        "nurse": "Nurse13",
+        "date": "2025-07-09",
+        "shift": "PM",
+        "timestamp": "2025-07-18T08:30:00"
+    },
+    {
+        "nurse": "Nurse13",
+        "date": "2025-07-11",
+        "shift": "AL",
+        "timestamp": "2025-07-19T10:20:00"
+    },
+    {
+        "nurse": "Nurse13",
+        "date": "2025-07-12",
+        "shift": "PM",
+        "timestamp": "2025-07-20T14:45:00"
+    },
+    {
+        "nurse": "Nurse13",
+        "date": "2025-07-15",
+        "shift": "Night",
+        "timestamp": "2025-07-21T12:00:00"
+    },
+    {
+        "nurse": "Nurse14",
+        "date": "2025-07-19",
+        "shift": "AL",
+        "timestamp": "2025-07-22T09:10:00"
+    },
+    {
+        "nurse": "Nurse14",
+        "date": "2025-07-20",
+        "shift": "Night",
+        "timestamp": "2025-07-23T11:40:00"
+    },
+    {
+        "nurse": "Nurse15",
+        "date": "2025-07-07",
+        "shift": "Night",
+        "timestamp": "2025-07-23T11:40:00"
+    },
+    {
+        "nurse": "Nurse15",
+        "date": "2025-07-16",
+        "shift": "AM",
+        "timestamp": "2025-07-23T11:40:00"
+    },
+    {
+        "nurse": "Nurse16",
+        "date": "2025-07-08",
+        "shift": "AM",
+        "timestamp": "2025-07-23T11:40:00"
+    },
+    {
+        "nurse": "Nurse16",
+        "date": "2025-07-13",
+        "shift": "PM",
+        "timestamp": "2025-07-23T11:40:00"
+    },
+    {
+        "nurse": "Nurse16",
+        "date": "2025-07-14",
+        "shift": "PM",
+        "timestamp": "2025-07-23T11:40:00"
+    },
+    {
+        "nurse": "Nurse16",
+        "date": "2025-07-17",
+        "shift": "PM",
+        "timestamp": "2025-07-23T11:40:00"
+    },
+    {
+        "nurse": "Nurse17",
+        "date": "2025-07-11",
+        "shift": "Night",
+        "timestamp": "2025-07-23T11:40:00"
+    },
+    {
+        "nurse": "Nurse17",
+        "date": "2025-07-15",
+        "shift": "Night",
+        "timestamp": "2025-07-23T11:40:00"
+    },
+    {
+        "nurse": "Nurse17",
+        "date": "2025-07-18",
+        "shift": "Night",
+        "timestamp": "2025-07-23T11:40:00"
+    },
+    {
+        "nurse": "Nurse18",
+        "date": "2025-07-07",
+        "shift": "Night",
+        "timestamp": "2025-07-23T11:40:00"
+    },
+    {
+        "nurse": "Nurse18",
+        "date": "2025-07-09",
+        "shift": "Night",
+        "timestamp": "2025-07-23T11:40:00"
+    },
+    {
+        "nurse": "Nurse19",
+        "date": "2025-07-08",
+        "shift": "AM",
+        "timestamp": "2025-07-23T11:40:00"
+    },
+    {
+        "nurse": "Nurse19",
+        "date": "2025-07-12",
+        "shift": "AM",
+        "timestamp": "2025-07-23T11:40:00"
+    },
+    {
+        "nurse": "Nurse19",
+        "date": "2025-07-16",
+        "shift": "AM",
+        "timestamp": "2025-07-23T11:40:00"
+    },
+    {
+        "nurse": "Nurse19",
+        "date": "2025-07-20",
+        "shift": "Night",
+        "timestamp": "2025-07-23T11:40:00"
+    }
+  ],
+  "training_shifts": [],
+  "previous_schedule": [],
+  "request": {
+    "start_date": "2025-07-07",
+    "num_days": 14,
+    "shift_durations": [
+      7,
+      7,
+      10
+    ],
+    "min_nurses_per_shift": 4,
+    "min_seniors_per_shift": 1,
+    "max_weekly_hours": 42,
+    "preferred_weekly_hours": 40,
+    "pref_weekly_hours_hard": false,
+    "min_acceptable_weekly_hours": 30,
+    "activate_am_cov": false,
+    "am_coverage_min_percent": 60,
+    "am_coverage_min_hard": false,
+    "am_coverage_relax_step": 5,
+    "am_senior_min_percent": 60,
+    "am_senior_min_hard": false,
+    "am_senior_relax_step": 5,
+    "weekend_rest": true,
+    "back_to_back_shift": false,
+    "use_sliding_window": false,
+    "shift_balance": false,
+    "fixed_assignments": []
+  }
+}

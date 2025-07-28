@@ -36,6 +36,7 @@ CUSTOM_ERRORS = (
     ConsecutiveMCError,
     ConsecutiveALError,
     InputMismatchError,
+    InvalidPreviousScheduleError,
     FileReadingError,
     FileContentError
 )
@@ -154,8 +155,6 @@ prefs_file = st.sidebar.file_uploader(
     "Upload Nurse Preferences (Optional)", 
     type=["xlsx"],
     help=(
-        "• If uploading profiles, ensure nurse names match in both files.\n\n"
-        "• For manual entry, the number of seniors and juniors must match your input above.\n\n"
         "• Preferences file only applies to specified dates in file."
     )
 )
@@ -167,6 +166,15 @@ training_shifts_file = st.sidebar.file_uploader(
         "• If provided, these shifts will be excluded for the nurse for the schedule on stated days.\n\n"
         "• Training Shifts file only appied to specified dates in file."
     )
+)
+
+prev_sched_file = st.sidebar.file_uploader(
+    "Upload Previous Schedule (Optional)",
+    type=["xlsx"],
+    help=(
+         "• Upload a previous schedule to ensure continuity.\n\n"
+         "• Previous Schedule end date must be before current schedule start date."
+     )
 )
 
 start_date = pd.to_datetime(st.sidebar.date_input("Schedule start date", value=date.today(), key="start_date"))
@@ -346,7 +354,7 @@ sel_date = st.sidebar.date_input(
 
 sel_pref = st.sidebar.selectbox(
     "Select Preference",
-    options=[lbl for lbl in SHIFT_LABELS + NO_WORK_LABELS if lbl not in ["EL", "REST"]],
+    options=[lbl for lbl in SHIFT_LABELS + NO_WORK_LABELS if lbl not in ["EL", "REST", "TR"]],
     index=None,
     key="sel_pref"
 )
@@ -393,6 +401,7 @@ for key, default in {
     "df_profiles": None,
     "df_prefs": None,
     "df_train_shifts": None,
+    "df_prev_sched": None,
     "start_date": pd.to_datetime(start_date),
     "num_days": num_days,
     "shift_durations": shift_durations,
@@ -509,6 +518,7 @@ if st.sidebar.button("Generate Schedule", type="primary"):
         # 3) store the merged+sorted metadata if you still need it elsewhere
         st.session_state["all_prefs_meta"] = all_prefs_sorted
         
+        # Training Shifts
         if training_shifts_file:
             df_train_shifts = load_training_shifts(training_shifts_file)
             try:
@@ -520,13 +530,25 @@ if st.sidebar.button("Generate Schedule", type="primary"):
             df_train_shifts = pd.DataFrame(index=df_profiles["Name"])
             st.session_state.missing_train_shifts = None
 
+        # Previous schedule
+        if prev_sched_file:
+            df_prev_sched = load_prev_schedule(prev_sched_file)
+            try:
+                validate_data(df_profiles, df_prev_sched, "profiles", "previous schedule", False)
+            except InputMismatchError as e:
+                st.error(str(e))
+                st.stop()
+        else:
+            df_prev_sched = pd.DataFrame(index=df_profiles["Name"])
+
         # Build initial schedule
         st.session_state.df_profiles = df_profiles
         st.session_state.df_prefs = df_prefs
         st.session_state.df_train_shifts = df_train_shifts
+        st.session_state.df_prev_sched = df_prev_sched
 
         sched, summ, violations, metrics = build_schedule_model(
-            df_profiles, df_prefs, df_train_shifts,
+            df_profiles, df_prefs, df_train_shifts, df_prev_sched,
             pd.to_datetime(start_date), 
             num_days,
             shift_durations,
@@ -667,6 +689,7 @@ if st.session_state.sched_df is not None:
                         st.session_state.df_profiles,
                         st.session_state.df_prefs,
                         st.session_state.df_train_shifts,
+                        st.session_state.df_prev_sched,
                         st.session_state.start_date,
                         st.session_state.num_days,
                         st.session_state.shift_durations,
@@ -687,7 +710,7 @@ if st.session_state.sched_df is not None:
                         st.session_state.back_to_back_shift,
                         st.session_state.use_sliding_window,
                         st.session_state.shift_balance,
-                        fixed_assignments=fixed
+                        st.session_state.fixed
                     )
                     st.session_state.sched_df   = sched2
                     st.session_state.summary_df = summ2
@@ -770,6 +793,8 @@ if st.session_state.sched_df is not None:
         st.caption("These are indicators of preferences satisfaction and fairness of the schedule.")
         for category, items in metrics.items():
             match category:
+                case "Preference Met":
+                    st.markdown(f"🔸 **{category}**: {items} preferences met")
                 case "Preference Unmet":
                     total_unmet = sum(s["Prefs_Unmet"] for s in st.session_state.summary_df.to_dict(orient="records"))
                     st.markdown(f"🔸 **{category}**: {total_unmet} unmet preferences across {len(items)} nurse{'s' if len(items)!=1 else ''}")
