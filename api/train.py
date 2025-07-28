@@ -2,41 +2,33 @@ from fastapi import APIRouter, Body
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
+
+# from sklearn.model_selection import train_test_split
 from skl2onnx import convert_sklearn
 from skl2onnx.common.data_types import FloatTensorType
 from typing import List
-from pydantic import BaseModel
 import os
+from docs.train.candidates import train_candidates_description
+from schemas.train.candidates import CandidatesTrainingRecord
+from utils.helpers.swap_suggestions import extract_preference_features
 
-router = APIRouter(prefix="/train")
+router = APIRouter(prefix="/train", tags=["Train Models"])
 
-class CandidateFeatures(BaseModel):
-    nurse_id: str
-    icu_certified: bool
-    prefers_morning: bool
-    shifts_this_week: int
-    recent_night_shift: bool
-    was_chosen: bool
 
-class ShiftInfo(BaseModel):
-    date: str
-    type: str
-    department: str
-
-class SwapTrainingRecord(BaseModel):
-    target_shift: ShiftInfo
-    target_nurse_id: str
-    candidates: List[CandidateFeatures]
-
-@router.post("/roster")
-def train_roster(records: List[SwapTrainingRecord] = Body(...)):
+@router.post(
+    "/candidates",
+    description=train_candidates_description,
+    summary="Train Candidates Model",
+)
+def train_roster(records: List[CandidatesTrainingRecord] = Body(...)):
     all_candidates = []
 
     # Loops candidates data
     for record in records:
-        for c in record.candidates:
-            all_candidates.append(c.dict())
+        base = record.model_dump()
+        pref_features = extract_preference_features(base["preferences"])
+        base.update(pref_features)
+        all_candidates.append(base)
 
     # Checks for empty data
     if not all_candidates:
@@ -44,11 +36,28 @@ def train_roster(records: List[SwapTrainingRecord] = Body(...)):
 
     df = pd.DataFrame(all_candidates)
 
+    # Checks if there are enough records to train the model
+    if len(df) < 5:
+        return {"error": "Insufficient data to train model."}
+
     # Feature matrix (input)
-    X = df[["icu_certified", "prefers_morning", "shifts_this_week", "recent_night_shift"]].astype(np.float32)
+    X = df[
+        [
+            "isSenior",
+            "isSpecialist",
+            "shiftsThisWeek",
+            "recentNightShift",
+            "totalHoursThisWeek",
+            "consecutiveDaysWorked",
+            "dayAfterOffDay",
+            "totalPreferredShifts",
+            "uniquePreferredShiftTypes",
+            "avgPreferredShiftId",
+        ]
+    ].astype(np.float32)
 
     # Target vector
-    y = df["was_chosen"].astype(int)
+    y = df["wasChosen"].astype(int)
 
     # ML model that uses decision trees (10 trees, 42 random seeds)
     model = RandomForestClassifier(n_estimators=10, random_state=42)
@@ -57,6 +66,8 @@ def train_roster(records: List[SwapTrainingRecord] = Body(...)):
     # Export ONNX
     initial_type = [("input", FloatTensorType([None, X.shape[1]]))]
     onnx_model = convert_sklearn(model, initial_types=initial_type)
+    if isinstance(onnx_model, tuple):
+        onnx_model = onnx_model[0]  # Extract the actual ONNX model
 
     # Save Model to Disk
     os.makedirs("models/swap_suggestions", exist_ok=True)
@@ -65,5 +76,6 @@ def train_roster(records: List[SwapTrainingRecord] = Body(...)):
 
     return {
         "message": "Model trained and saved successfully.",
-        "samples_trained_on": len(df)
+        "samplesTrainedOn": len(df),
+        "featureImportances": dict(zip(X.columns, model.feature_importances_)),
     }

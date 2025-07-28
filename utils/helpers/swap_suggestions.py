@@ -1,9 +1,12 @@
 from datetime import datetime, timedelta
 from schemas.swap.suggestions import SwapCandidateFeatures
+import numpy as np
+
 
 # format date
 def parse_date(date_str):
     return datetime.strptime(date_str, "%Y-%m-%d")
+
 
 # validation check with warning messages
 def generate_warning(nurse, settings):
@@ -38,7 +41,9 @@ def generate_warning(nurse, settings):
 # process nurse replacement logic
 def preprocess_nurse(nurse, target_date, settings):
     shift_duration = settings.shiftDurations
-    recent_night_window = getattr(settings, "recentNightWindowDays", 2) # optional for rest day after night shifts
+    recent_night_window = getattr(
+        settings, "recentNightWindowDays", 2
+    )  # optional for rest day after night shifts
     night_shift_ids = getattr(settings, "nightShiftIds", [3])
 
     shift_dates = [parse_date(s.date) for s in nurse.shifts]
@@ -60,5 +65,24 @@ def preprocess_nurse(nurse, target_date, settings):
         nurseId=nurse.nurseId,
         isSenior=nurse.isSenior,
         shiftsThisWeek=shiftsThisWeek,
-        recentNightShift=int(recentNightShift)
+        recentNightShift=int(recentNightShift),
     )
+
+
+# Extract features from preferences
+def extract_preference_features(pref_data: dict) -> dict:
+    shifts = pref_data.get("shifts", [])
+
+    all_shift_ids = [
+        shift_id for day in shifts for shift_id in day.get("shiftTypeId", [])
+    ]
+
+    total_preferred = len(all_shift_ids)
+    unique_shift_types = len(set(all_shift_ids))
+    avg_shift_id = float(np.mean(all_shift_ids)) if all_shift_ids else 0.0
+
+    return {
+        "totalPreferredShifts": total_preferred,
+        "uniquePreferredShiftTypes": unique_shift_types,
+        "avgPreferredShiftId": avg_shift_id,
+    }
