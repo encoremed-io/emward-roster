@@ -8,6 +8,7 @@ from scheduler.builder import build_schedule_model
 from utils.validate import validate_data
 from utils.constants import *
 from exceptions.custom_errors import *
+import re
 import traceback
 import logging
 
@@ -17,7 +18,8 @@ CUSTOM_ERRORS = {
     NoFeasibleSolutionError: 422,
     InvalidMCError: 400,
     ConsecutiveMCError: 400,
-    InputMismatchError: 400
+    InputMismatchError: 400,
+    InvalidPreviousScheduleError: 400
 }
 
 # Define data models
@@ -60,6 +62,11 @@ class NurseTraining(BaseModel):
     nurse: str
     date: date
     training: str
+
+class PrevSchedule(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    index: str        # <nurse>
+    # <date>: <shift> fields will be handled via internal logic
 
 class FixedAssignment(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -132,11 +139,12 @@ def standardize_profile_columns(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-@router.post("/schedule/generate/", response_model=dict)
+@router.post("/generate/", response_model=dict)
 async def generate_schedule(
     profiles: List[NurseProfile],
     preferences: List[NursePreference],
     training_shifts: List[NurseTraining],
+    previous_schedule: List[PrevSchedule],
     request: ScheduleRequest
 ):
     """
@@ -157,6 +165,10 @@ async def generate_schedule(
         - `nurse`: Name of the nurse
         - `date`: Date of the training shift
         - `training`: Shift on training (e.g. "AM", "PM")
+    - `previous_schedule`: List of `PrevSchedule` objects. Each object represents a nurse's past schedule and contains:
+        - `index`: The name of the nurse.
+        - `<Day Date>`: The assigned shift for that day, where the key is a string in the format `"Day YYYY-MM-DD"` 
+          (e.g., `"Mon 2025-07-07"`), and the value is one of the shift types (e.g. "AM", "PM", "Night") or no work labels (e.g. "MC", "REST", "AL", "EL").
     - `request`: `ScheduleRequest` object, which contains the following information:
         - `start_date`: Start date of the schedule
         - `num_days`: Number of days in the schedule
@@ -258,7 +270,28 @@ async def generate_schedule(
             # build an empty table with the same normalized index
             training_df = pd.DataFrame(index=profiles_df["Name"])
             training_df.index.name = "Name"
-        
+
+        if previous_schedule:
+            prev_sched_df = pd.DataFrame([p.model_dump() for p in previous_schedule])
+            # set nurse index
+            if "index" not in prev_sched_df.columns:
+                raise HTTPException(400, detail="Each prev_schedule row requires an 'index' field")
+            prev_sched_df = prev_sched_df.set_index("index")
+            prev_sched_df.index = prev_sched_df.index.astype(str).str.strip().str.upper()
+            prev_sched_df.index.name = "Name"
+            # robust date‑column parsing
+            converted = {}
+            for col in prev_sched_df.columns:
+                m = re.search(r"\d{4}-\d{2}-\d{2}", col)
+                if not m:
+                    raise HTTPException(400, detail=f"Could not parse date in prev-schedule column '{col}'")
+                converted[col] = pd.to_datetime(m.group(0))
+            prev_sched_df = prev_sched_df.rename(columns=converted)
+            prev_schedule_df = prev_sched_df
+        else:
+            prev_schedule_df = pd.DataFrame(index=profiles_df["Name"])
+            prev_schedule_df.index.name = "Name"
+
         # Ensure indices are string type for validation
         if not prefs_df.empty and prefs_df.index.dtype != 'object':
             prefs_df.index = prefs_df.index.astype(str)
@@ -268,6 +301,7 @@ async def generate_schedule(
         # === Execute the original validation ===
         validate_data(profiles_df, prefs_df, "profiles", "preferences", False)
         validate_data(profiles_df, training_df, "profiles", "training shifts", False)
+        validate_data(profiles_df, prev_schedule_df, "profiles", "previous schedule", False)
         
         # Handle fixed assignments
         fixed_assignments_dict = None
@@ -289,43 +323,46 @@ async def generate_schedule(
         
         # Call scheduling function
 
-        # Log the inputs for debugging
-        logging.info("=== API inputs for build_schedule_model ===")
-        logging.info("profiles_df.shape:         %s", profiles_df.shape)
-        logging.info("profiles_df.columns:       %s", profiles_df.columns.tolist())
-        logging.info("prefs_df.shape:            %s, index sample: %r",
-                     prefs_df.shape, list(prefs_df.index)[:5])
-        logging.info("prefs_df.columns sample:   %r", list(prefs_df.columns)[:5])
-        logging.info("training_df.shape:         %s, index sample: %r",
-                     training_df.shape, list(training_df.index)[:5])
-        logging.info("training_df.columns sample:%r", list(training_df.columns)[:5])
-        logging.info("start_date:                %s", request.start_date)
-        logging.info("num_days:                  %d", request.num_days)
-        logging.info("shift_durations (hrs):     %r", request.shift_durations)
-        logging.info("shift_durations (mins):    %r", dur_minutes)
-        logging.info("min_nurses_per_shift:      %d", request.min_nurses_per_shift)
-        logging.info("min_seniors_per_shift:     %d", request.min_seniors_per_shift)
-        logging.info("max_weekly_hours (hrs):    %d", request.max_weekly_hours)
-        logging.info("max_weekly_hours (mins):   %d", request.max_weekly_hours * 60)
-        logging.info("preferred_weekly_hours (hrs):  %d", request.preferred_weekly_hours)
-        logging.info("preferred_weekly_hours (mins): %d", request.preferred_weekly_hours * 60)
-        logging.info("min_accept_weekly_hours (hrs):  %d", request.min_acceptable_weekly_hours)
-        logging.info("min_accept_weekly_hours (mins): %d", request.min_acceptable_weekly_hours * 60)
-        logging.info("activate_am_cov:           %s", request.activate_am_cov)
-        logging.info("am_coverage_min_percent:   %d", request.am_coverage_min_percent)
-        logging.info("am_coverage_min_hard:      %s", request.am_coverage_min_hard)
-        logging.info("am_senior_min_percent:     %d", request.am_senior_min_percent)
-        logging.info("am_senior_min_hard:        %s", request.am_senior_min_hard)
-        logging.info("weekend_rest:              %s", request.weekend_rest)
-        logging.info("back_to_back_shift:        %s", request.back_to_back_shift)
-        logging.info("use_sliding_window:        %s", request.use_sliding_window)
-        logging.info("shift_balance:             %s", request.shift_balance)
-        logging.info("fixed_assignments count:   %s", len(fixed_assignments_dict or {}))
+        # # Log the inputs for debugging
+        # logging.info("=== API inputs for build_schedule_model ===")
+        # logging.info("profiles_df.shape:         %s", profiles_df.shape)
+        # logging.info("profiles_df.columns:       %s", profiles_df.columns.tolist())
+        # logging.info("prefs_df.shape:            %s, index sample: %r",
+        #              prefs_df.shape, list(prefs_df.index)[:5])
+        # logging.info("prefs_df.columns sample:   %r", list(prefs_df.columns)[:5])
+        # logging.info("training_df.shape:         %s, index sample: %r",
+        #              training_df.shape, list(training_df.index)[:5])
+        # logging.info("training_df.columns sample:%r", list(training_df.columns)[:5])
+        # logging.info("prev_schedule_df.shape:    %s, index sample: %r",
+        #              prev_schedule_df.shape, list(prev_schedule_df.index)[:5])
+        # logging.info("start_date:                %s", request.start_date)
+        # logging.info("num_days:                  %d", request.num_days)
+        # logging.info("shift_durations (hrs):     %r", request.shift_durations)
+        # logging.info("shift_durations (mins):    %r", dur_minutes)
+        # logging.info("min_nurses_per_shift:      %d", request.min_nurses_per_shift)
+        # logging.info("min_seniors_per_shift:     %d", request.min_seniors_per_shift)
+        # logging.info("max_weekly_hours (hrs):    %d", request.max_weekly_hours)
+        # logging.info("max_weekly_hours (mins):   %d", request.max_weekly_hours * 60)
+        # logging.info("preferred_weekly_hours (hrs):  %d", request.preferred_weekly_hours)
+        # logging.info("preferred_weekly_hours (mins): %d", request.preferred_weekly_hours * 60)
+        # logging.info("min_accept_weekly_hours (hrs):  %d", request.min_acceptable_weekly_hours)
+        # logging.info("min_accept_weekly_hours (mins): %d", request.min_acceptable_weekly_hours * 60)
+        # logging.info("activate_am_cov:           %s", request.activate_am_cov)
+        # logging.info("am_coverage_min_percent:   %d", request.am_coverage_min_percent)
+        # logging.info("am_coverage_min_hard:      %s", request.am_coverage_min_hard)
+        # logging.info("am_senior_min_percent:     %d", request.am_senior_min_percent)
+        # logging.info("am_senior_min_hard:        %s", request.am_senior_min_hard)
+        # logging.info("weekend_rest:              %s", request.weekend_rest)
+        # logging.info("back_to_back_shift:        %s", request.back_to_back_shift)
+        # logging.info("use_sliding_window:        %s", request.use_sliding_window)
+        # logging.info("shift_balance:             %s", request.shift_balance)
+        # logging.info("fixed_assignments count:   %s", len(fixed_assignments_dict or {}))
 
         schedule, summary, violations, metrics = build_schedule_model(
             profiles_df=profiles_df,
             preferences_df=prefs_df,
             training_shifts_df=training_df,
+            prev_schedule_df=prev_schedule_df,
             start_date=pd.Timestamp(request.start_date),
             num_days=request.num_days,
             shift_durations=dur_minutes,
@@ -359,8 +396,6 @@ async def generate_schedule(
         
         return response
         
-    except InputMismatchError as e:
-        raise HTTPException(status_code=400, detail=str(e))
     except tuple(CUSTOM_ERRORS) as e:
         raise HTTPException(status_code=CUSTOM_ERRORS[type(e)], detail=str(e))
     except Exception as e:

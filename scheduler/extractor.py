@@ -59,6 +59,7 @@ def extract_schedule_and_summary(state: ScheduleState, result: SolverResult, og_
     has_prefs = bool(any(state.prefs_by_nurse.values()))    # only have metrics if there are preferences
     if has_prefs:
         metrics = {
+            "Preference Met": 0,
             "Preference Unmet": [],
             "Fairness Gap": result.fairness_gap if result.fairness_gap is not None else "N/A"
         }
@@ -67,7 +68,7 @@ def extract_schedule_and_summary(state: ScheduleState, result: SolverResult, og_
         row = []
         minutes_per_week = [0] * num_weeks
         shift_counts = [0, 0, 0, 0]     # AM, PM, Night, REST
-        training_counts = [0, 0, 0]     # AM, PM Night
+        training_counts = [0, 0, 0, 0]     # AM, PM, Night, FULL
         double_shift_days = []
         prefs_met = 0
         prefs_unmet = []
@@ -75,6 +76,7 @@ def extract_schedule_and_summary(state: ScheduleState, result: SolverResult, og_
         for d in range(state.num_days):
             # if (n, d, s) is assigned, return 1, else 0 (if not assigned for any reason)
             picked = [s for s in range(state.shift_types) if result.cached_values.get((n, d, s), 0) > 0]
+            tr = state.training_by_nurse.get(n, {})     # training by nurse
 
             if d in state.mc_sets[n]:
                 shift = NO_WORK_LABELS[1]      # MC
@@ -88,8 +90,12 @@ def extract_schedule_and_summary(state: ScheduleState, result: SolverResult, og_
                 
                 match(len(picked)):
                     case 0:
-                        shift = NO_WORK_LABELS[0]   # REST
-                        shift_counts[3] += 1
+                        if d in tr and tr[d] == -1:
+                            shift = NO_WORK_LABELS[4]   # full day training
+                            training_counts[3] += 1
+                        else:
+                            shift = NO_WORK_LABELS[0]   # REST
+                            shift_counts[3] += 1
                     case 1:
                         shift = SHIFT_LABELS[picked[0]]
                     case 2:
@@ -98,9 +104,10 @@ def extract_schedule_and_summary(state: ScheduleState, result: SolverResult, og_
                     case _:
                         shift = "OVER*"
 
-            tr = state.training_by_nurse.get(n, {})
             if d in tr:
-                training_counts[tr[d]] += 1
+                s = tr[d]
+                if s != -1:
+                    training_counts[s] += 1
 
             row.append(shift)
 
@@ -117,6 +124,7 @@ def extract_schedule_and_summary(state: ScheduleState, result: SolverResult, og_
                 idx = raw[0] if isinstance(raw, tuple) else raw
                 if len(picked) == 1 and picked[0] == idx:
                     prefs_met += 1
+                    metrics["Preference Met"] += 1
                 else:
                     prefs_unmet.append(f"{dates[d].strftime('%a %Y-%m-%d')} (wanted {SHIFT_LABELS[idx]})")
 
@@ -136,25 +144,26 @@ def extract_schedule_and_summary(state: ScheduleState, result: SolverResult, og_
                     violations["Low Hours Nurses"].append(f"{n} Week {w+1}: {round(minutes_per_week[w] / 60, 1)}h; pref {round(eff_pref_minutes / 60, 1)}")        
         
         if double_shift_days:
-            violations["Double Shifts"].append(f"{n}: {'; '.join(double_shift_days)}")
+            violations["Double Shifts"].append(f"{n}: {'; '.join(double_shift_days)}")            
 
         if prefs_unmet:
             metrics["Preference Unmet"].append(f"{n}: {'; '.join(prefs_unmet)}")
 
         schedule[n] = row
         summary_row = {
-            "Nurse":            n,
-            "AL":               len(state.al_sets[n]),
-            "MC":               len(state.mc_sets[n]),
-            "EL":               len(state.el_sets[n]),
-            "AM (Training)":    training_counts[0],
-            "PM (Training)":    training_counts[1],
-            "Night (Training)": training_counts[2],
-            "Rest":             shift_counts[3],
-            "AM":               shift_counts[0],
-            "PM":               shift_counts[1],
-            "Night":            shift_counts[2],
-            "Double Shifts":    len(double_shift_days),
+            "Nurse":                    n,
+            "AL":                       sum(1 for d in state.al_sets[n] if 0 <= d < state.num_days),
+            "MC":                       sum(1 for d in state.mc_sets[n] if 0 <= d < state.num_days),
+            "EL":                       sum(1 for d in state.el_sets[n] if 0 <= d < state.num_days),
+            "AM (Training)":            training_counts[0],
+            "PM (Training)":            training_counts[1],
+            "Night (Training)":         training_counts[2],
+            "TR (Full Day Training)":   training_counts[3],
+            "Rest":                     shift_counts[3],
+            "AM":                       shift_counts[0],
+            "PM":                       shift_counts[1],
+            "Night":                    shift_counts[2],
+            "Double Shifts":            len(double_shift_days),
         }
         for w in range(num_weeks):
             actual_hrs = round(minutes_per_week[w] / 60, 1)
@@ -192,9 +201,12 @@ def extract_schedule_and_summary(state: ScheduleState, result: SolverResult, og_
     if has_prefs:
         logger.info("\n📊 Preferences Satisfaction and Fairness Summary:")
         total_unmet = sum(s["Prefs_Unmet"] for s in summary)
+        logger.info(f"🔸 Preference Met: {metrics['Preference Met']} preferences met")
         logger.info(f"🔸 Preference Unmet: {total_unmet} unmet preferences across {len(metrics['Preference Unmet'])} nurses")
         logger.info(f"🔸 Fairness Gap: {metrics['Fairness Gap']}%")
         for key, items in metrics.items():
+            # if not isinstance(items, list):
+            #     logger.info(f"🔸 {key}: {items}")
             if isinstance(items, list):
                 for item in sorted(items):
                     logger.info(f"   - {item}")

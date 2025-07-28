@@ -3,7 +3,7 @@
     "SHIFT_DURATIONS": [7, 7, 10],
     "AVG_HOURS": 8,
     "DAYS_PER_WEEK": 7,
-    "NO_WORK_LABELS": ["REST", "MC", "EL", "AL"],
+    "NO_WORK_LABELS": ["REST", "MC", "EL", "AL", "TR"],
 
     "MIN_NURSES_PER_SHIFT": 4,
     "MIN_SENIORS_PER_SHIFT": 1,

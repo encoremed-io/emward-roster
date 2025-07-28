@@ -75,7 +75,7 @@ def preference_rule_ts(model, state: ScheduleState):
     for (day, shift), reqs in slot_reqs.items():
         # sort None timestamps to front
         reqs.sort(key=lambda x: x[1] or pd.Timestamp.min)
-        logging.debug(reqs)
+        # logging.debug(reqs)
         n_prefs = len(reqs)
         for rank, (nurse, ts) in enumerate(reqs):
             sat = model.NewBoolVar(f"pref_sat_{nurse}_{day}_{shift}")

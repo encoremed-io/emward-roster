@@ -22,6 +22,9 @@ class InputMismatchError(Exception):
     """Raised when there is a mismatch between the nurse profiles and preferences."""
     pass
 
+class InvalidPreviousScheduleError(Exception):
+    """Raised when the previous schedule is invalid."""
+
 class FileReadingError(Exception):
     """Raised when there is an error reading a file."""
     pass

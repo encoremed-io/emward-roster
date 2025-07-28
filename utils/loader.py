@@ -154,3 +154,50 @@ def load_training_shifts(
     if df.index.has_duplicates:
         raise FileContentError(f"Duplicate nurse names found in training shifts file in rows. Duplicated values: {df.index[df.index.duplicated()].tolist()}.")
     return df
+
+
+def load_prev_schedule(
+    path_or_buffer: Union[str, Path, bytes, IO, None] = None) -> pd.DataFrame:
+    """
+    Load nurse training shifts from an Excel file.
+
+    Parameters:
+        path_or_buffer: Path to the Excel file (str), a file-like object (e.g., Streamlit UploadedFile),
+                        or bytes. Defaults to 'data/previous_schedule.xlsx'.
+
+    Returns:
+        pd.DataFrame: DataFrame with nurse names as index (stripped and uppercased), and columns as dates.
+    """
+    if path_or_buffer is None:
+        path_or_buffer = DATA_DIR / "previous_schedule.xlsx"
+
+    try:
+        df = pd.read_excel(path_or_buffer)
+    except Exception as e:
+        raise FileReadingError(f"Error loading nurse training shifts: {e}")
+
+    df.rename(columns={df.columns[0]: 'Name'}, inplace=True)
+    df.set_index('Name', inplace=True)
+
+    invalid_cols = []
+    cleaned_cols = []
+    for col in df.columns:
+        try:
+            col_str = str(col).strip()
+
+            # Remove weekday prefix if exists: match "Mon", "Tues", "Thu", etc.
+            col_str = re.sub(r'^[A-Za-z]{3,9}\s+', '', col_str)
+
+            dt = pd.to_datetime(col_str, errors='raise').date()
+            cleaned_cols.append(dt)
+        except Exception as e:
+            invalid_cols.append(col)
+            
+    if invalid_cols:
+        raise FileContentError(f"Invalid date format in columns: {', '.join(invalid_cols)}")
+
+    df.columns = cleaned_cols
+    df.index = df.index.str.strip().str.upper()
+    if df.index.has_duplicates:
+        raise FileContentError(f"Duplicate nurse names found in previous schedule file in rows. Duplicated values: {df.index[df.index.duplicated()].tolist()}.")
+    return df

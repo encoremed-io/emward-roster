@@ -8,7 +8,7 @@ This module contains the high priority rules for the nurse scheduling problem.
 def shifts_per_day_rule(model, state: ScheduleState):
     """ Ensure that each nurse works 1 shift per day. If a nurse has an EL day, allow either 1 or 2 shifts. """
     for n in state.nurse_names:
-        for d in range(state.num_days):
+        for d in range(-state.prev_days, state.num_days):
             if d not in state.el_sets[n]:
             # no EL here: enforce original rule
                 model.AddAtMostOne(state.work[n, d, s] for s in range(state.shift_types))
@@ -61,7 +61,7 @@ def max_weekly_hours_rule(model, state: ScheduleState):
         if state.use_sliding_window:
             minutes_by_day = [
                 sum(state.work[n, d, s] * int(state.shift_durations[s]) for s in range(state.shift_types))
-                for d in range(state.num_days)
+                for d in range(-state.prev_days, state.num_days)
             ]
 
             for d in range(DAYS_PER_WEEK - 1, state.num_days):
@@ -147,7 +147,7 @@ def pref_min_weekly_hours_rule(model, state: ScheduleState):
 
 def min_staffing_per_shift_rule(model, state: ScheduleState):
     """ Ensure that each shift has a minimum number of nurses and seniors. """
-    for d in range(state.num_days):
+    for d in range(-state.prev_days, state.num_days):
         for s in range(state.shift_types):
             model.Add(sum(state.work[n, d, s] for n in state.nurse_names) >= state.min_nurses_per_shift).OnlyEnforceIf(state.hard_rules["Min nurses"].flag)
             model.Add(sum(state.work[n, d, s] for n in state.senior_names) >= state.min_seniors_per_shift).OnlyEnforceIf(state.hard_rules["Min seniors"].flag)
@@ -157,20 +157,23 @@ def weekend_rest_rule(model, state: ScheduleState):
     """ Ensure that nurses who work on a weekend must rest on the corresponding days the following weekend only if state.weekend_rest is True. """
     if state.weekend_rest:
         for n in state.nurse_names:
-            for d1, d2 in state.weekend_pairs:
+            for d1, d2 in state.weekend_pairs:    
+                # skip any pair outside the built horizon
+                if (n, d1, 0) not in state.work or (n, d2, 0) not in state.work:
+                    continue
                 model.Add(sum(state.work[n, d1, s] for s in range(state.shift_types)) + 
-                        sum(state.work[n, d2, s] for s in range(state.shift_types)) <= 1).OnlyEnforceIf(state.hard_rules["Weekend rest"].flag)
+                        sum(state.work[n, d2, s] for s in range(state.shift_types)) <= 1)
 
 
 def no_back_to_back_shift_rule(model, state: ScheduleState):
     """ Ensure that nurses do not work back-to-back shifts on the same day if state.back_to_back_shift is True. """
     if not state.back_to_back_shift:
         for n in state.nurse_names:
-            for d in range(state.num_days):
+            for d in range(-state.prev_days, state.num_days):
                 # No back-to-back shifts on the same day (double shifts)
                 model.Add(state.work[n, d, 0] + state.work[n, d, 1] <= 1).OnlyEnforceIf(state.hard_rules["No b2b"].flag)  # AM + PM on same day
                 model.Add(state.work[n, d, 1] + state.work[n, d, 2] <= 1).OnlyEnforceIf(state.hard_rules["No b2b"].flag)  # PM + Night on same day
-                if d > 0:
+                if d > 0 or (d == 0 and state.prev_days > 0):
                     # Night shift on day d cannot be followed by AM shift on day d+1
                     model.AddImplication(state.work[n, d - 1, 2], state.work[n, d, 0].Not()).OnlyEnforceIf(state.hard_rules["No b2b"].flag) 
 
@@ -201,7 +204,7 @@ def am_coverage_rule(model, state: ScheduleState):
             levels = list(range(state.am_coverage_min_percent, 34, -state.am_coverage_relax_step))  # [65, 60, 55] if step = 5
             penalties = [(i + 1) * AM_COVERAGE_PENALTY for i in range(len(levels))]   # [5, 10, 15]
 
-        for d in range(state.num_days):
+        for d in range(-state.prev_days, state.num_days):
             total_shifts = sum(state.work[n, d, s] for n in state.nurse_names for s in range(state.shift_types))
             am_shifts = sum(state.work[n, d, 0] for n in state.nurse_names)
             pm_shifts = sum(state.work[n, d, 1] for n in state.nurse_names)
@@ -246,7 +249,7 @@ def am_senior_staffing_lvl_rule(model, state: ScheduleState):
         levels = list(range(state.am_senior_min_percent, 50, -state.am_senior_relax_step))  # [65, 60, 55] if step = 5
         penalties = [(i + 1) * AM_SENIOR_PENALTY for i in range(len(levels))]   # [5, 10, 15]
 
-    for d in range(state.num_days):
+    for d in range(-state.prev_days, state.num_days):
         am_shifts = sum(state.work[n, d, 0] for n in state.nurse_names)
         am_seniors = sum(state.work[n, d, 0] for n in state.senior_names)
         am_juniors = am_shifts - am_seniors     # number of junior nurses on AM shift

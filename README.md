@@ -62,7 +62,7 @@ roster-scheduler/
 ├── .env
 ├── api/               → Api paths
 ├── config/            → Constants and path configuration
-├── data/              → Nurse input Excel files
+├── data/              → Input files templates
 ├── exceptions/        → Custom error exceptions
 ├── jupyter/           → Development notebooks
 ├── legacy/            → Deprecated modules (e.g., old scheduler logic)
@@ -88,6 +88,7 @@ The project expects the following input files:
 -   `nurse_profiles.xlsx`: Contains nurse profiles, including `Names`, `Titles`, and `Years of Experience`.
 -   `nurse_preferences.xlsx`: **(Optional)** Contains nurse preferences for each `date`, including shift preferences and leave requirements.
 -   `training_shifts.xlsx`: **(Optional)** Contains training shifts for each nurse for each `date`.
+-   `previous_schedule.xlsx`: **(Optional)** Contains any valid previous schedule, as long as `end date` of previous schedule is **strictly before** the `start date` of schedule to be generated.
 
 Templates for each file can be found in the `data/` directory.
 

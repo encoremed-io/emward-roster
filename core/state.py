@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from ortools.sat.python import cp_model
 from typing import Any, Dict, List, Set, Tuple, Optional
 from datetime import date
+import pandas as pd
 
 @dataclass
 class ScheduleState:
@@ -23,6 +24,8 @@ class ScheduleState:
     """A dictionary mapping shift strings (e.g. 'AM', 'PM', 'Night') to their
     corresponding integer values.
     """
+    previous_schedule: pd.DataFrame
+    """A pandas DataFrame of the previous schedule."""
     fixed_assignments: Dict[Tuple[str,int], str]
     """A dictionary mapping `(nurse_name, day)` tuples to shift strings.
     """
@@ -52,6 +55,8 @@ class ScheduleState:
     # model params
     num_days: int
     """The number of days in the scheduling period."""
+    prev_days: int
+    """The number of days in the previous schedule."""
     shift_types: int
     """The number of shift types."""
     shift_durations: List[int]
@@ -114,4 +119,3 @@ class ScheduleState:
     """A list of low priority penalty terms."""
     gap_pct: Optional[cp_model.IntVar] = None
     """A variable to store the gap percentage from the fairness rule."""
-
