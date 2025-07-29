@@ -89,6 +89,7 @@
     }
   ],
   "training_shifts": [],
+  "previous_schedule": [],
   "request": {
     "start_date": "2025-07-07",
     "num_days": 14,

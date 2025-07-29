@@ -142,7 +142,7 @@ def get_shift_preferences(
     """
     date_start = start_date.date() if isinstance(start_date, pd.Timestamp) else start_date
     nurse_names = [n.strip().upper() for n in profiles_df['Name']]
-    shift_str_to_idx = {label.upper(): idx for idx, label in enumerate(shift_labels)}
+    shift_str_to_idx = make_shift_index(shift_labels)
     shift_prefs: Dict[str, Dict[int, Tuple[int, pd.Timestamp]]] = {n: {} for n in nurse_names}
 
     # logging.warning("cols: %s", preferences_df.columns.tolist())
@@ -256,7 +256,7 @@ def get_training_shifts(
     """
     date_start = start_date.date() if isinstance(start_date, pd.Timestamp) else start_date
     nurse_names = [n.strip().upper() for n in profiles_df['Name']]
-    shifts_str_to_idx = {label.upper(): idx for idx, label in enumerate(shift_labels)}
+    shifts_str_to_idx = make_shift_index(shift_labels)
     training_shifts: Dict[str, Dict[int, int]] = {n: {} for n in nurse_names}
 
     for nurse, row in training_shifts_df.iterrows():

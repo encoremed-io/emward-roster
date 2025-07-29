@@ -107,15 +107,13 @@ def preference_rule_ts(model, state: ScheduleState):
 
 def fairness_gap_rule(model, state: ScheduleState):
     """
-    Fairness gap constraint: add a penalty proportional to the difference between the highest and lowest percentage of satisfied preferences among all nurses.
+    Fairness gap soft constraint.
 
-    The penalty is only incurred if the gap is greater than or equal to the threshold of 60.
+    For each nurse, calculate the percentage of satisfied preferences (out of the total number of preferences).
 
-    The gap is calculated as (max_pct - min_pct).
+    Then, calculate the difference between the maximum and minimum percentages, and use this as a measure of the fairness gap.
 
-    The penalty is proportional to the distance from 60, i.e. (gap_pct - 60) if gap_pct >= 60, else 0.
-
-    The total penalty is stored in state.low_priority_penalty.
+    If the fairness gap is greater than or equal to the threshold, start penalising the model based on the distance from the threshold.
     """
     # Fairness gap
     pct_sat = {}
@@ -152,18 +150,18 @@ def fairness_gap_rule(model, state: ScheduleState):
 
 def shift_balance_rule(model, state: ScheduleState):
     """
-    Shift balance rule.
+    Enforce shift balance for each nurse across all shift types.
 
-    If shift_balance is True, this adds a rule to the model to penalise uneven shift distribution for each nurse.
+    This rule ensures that the distribution of shifts among various types is balanced for each nurse.
+    It calculates the minimum and maximum number of shifts a nurse works across all shift types and
+    computes the gap between them. If the gap exceeds a defined threshold, a penalty is applied.
 
-    The penalty is proportional to the gap between the maximum and minimum number of shifts assigned to each nurse.
+    Args:
+        model: The constraint programming model.
+        state: The current state of the schedule, including nurse names, number of days, shift types,
+               and parameters for penalties and thresholds.
 
-    The gap is calculated as (max_count - min_count), where max_count and min_count are the maximum and minimum counts of shifts assigned to the nurse.
-
-    The penalty is only incurred if the gap is greater than or equal to the threshold of 2.
-    The penalty is proportional to the distance from 2, i.e. (gap - 2) if gap >= 2, else 0.
-
-    The total penalty is stored in state.low_priority_penalty.
+    The penalty is proportional to the excess gap beyond the specified threshold.
     """
     if state.shift_balance:
         # Precompute counts just once
