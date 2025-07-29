@@ -7,7 +7,7 @@ from utils.constants import *       # import all constants
 from utils.validate import *
 from utils.shift_utils import *
 from exceptions.custom_errors import *
-from scheduler.setup import setup_model
+from scheduler.setup import setup_model, adjust_low_priority_params
 from core.state import ScheduleState
 from core.constraint_manager import ConstraintManager
 from scheduler.rules import *
@@ -48,6 +48,7 @@ def build_schedule_model(profiles_df: pd.DataFrame,
                          back_to_back_shift: bool = False,
                          use_sliding_window: bool = False,
                          shift_balance: bool = False,
+                         priority_setting: str = "50/50",
                          fixed_assignments: Optional[Dict[Tuple[str,int], str]] = None
                          ) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict]:
     """
@@ -65,6 +66,11 @@ def build_schedule_model(profiles_df: pd.DataFrame,
     hard_rules, shift_preferences, prefs_by_nurse, training_shifts, training_by_nurse, fixed_assignments, mc_sets, \
     al_sets, el_sets, days_with_el, weekend_pairs, shift_types, work, prev_days, total_days = setup_model(
         profiles_df, preferences_df, training_shifts_df, prev_schedule_df, start_date, num_days, SHIFT_LABELS, NO_WORK_LABELS, fixed_assignments
+    )
+
+    pref_miss_penalty, fairness_gap_penalty, fairness_gap_threshold, \
+    shift_imbalance_penalty, shift_imbalance_threshold = adjust_low_priority_params(
+        shift_balance, priority_setting
     )
 
     state = ScheduleState(
@@ -102,6 +108,11 @@ def build_schedule_model(profiles_df: pd.DataFrame,
         back_to_back_shift=back_to_back_shift,
         use_sliding_window=use_sliding_window,
         shift_balance=shift_balance,
+        pref_miss_penalty=pref_miss_penalty,
+        fairness_gap_penalty=fairness_gap_penalty,
+        fairness_gap_threshold=fairness_gap_threshold,
+        shift_imbalance_penalty=shift_imbalance_penalty,
+        shift_imbalance_threshold=shift_imbalance_threshold,
         hard_rules=hard_rules,
         days_with_el=days_with_el,
         total_satisfied={},

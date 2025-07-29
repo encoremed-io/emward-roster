@@ -12,7 +12,14 @@ from utils.shift_utils import (
     normalise_date
 )
 from core.assumption_flags import define_hard_rules
-from exceptions.custom_errors import InvalidPreviousScheduleError
+from utils.constants import (
+    PREF_MISS_PENALTY,
+    FAIRNESS_GAP_PENALTY,
+    FAIRNESS_GAP_THRESHOLD,
+    SHIFT_IMBALANCE_PENALTY,
+    SHIFT_IMBALANCE_THRESHOLD
+)
+from exceptions.custom_errors import InvalidPreviousScheduleError, InvalidPrioritySettingError
 
 def build_variables(model, nurse_names, num_days, prev_days, shift_types):
     """ Builds the work[n,d,s] BoolVars for every nurse/day/shift. """
@@ -103,3 +110,46 @@ def setup_model(profiles_df, preferences_df, training_shifts_df, prev_schedule_d
     work = build_variables(model, shuffled_nurse_names, num_days, prev_days, shift_types)
 
     return model, shuffled_nurse_names, og_nurse_names, clean_prev_sched,senior_names, shift_str_to_idx, date_start, hard_rules, shift_preferences, prefs_by_nurse, training_shifts, training_by_nurse, fixed_assignments, mc_sets, al_sets, el_sets, days_with_el, weekend_pairs, shift_types, work, prev_days, total_days
+
+
+def adjust_low_priority_params(doAdjustment: bool, option: str):
+    if not doAdjustment:
+        return PREF_MISS_PENALTY, FAIRNESS_GAP_PENALTY, FAIRNESS_GAP_THRESHOLD, SHIFT_IMBALANCE_PENALTY, SHIFT_IMBALANCE_THRESHOLD
+    
+    else:
+        match(str(option).strip().upper()):
+            case "FAIRNESS":
+                pref_miss_penalty = 1
+                fairness_gap_penalty = 10
+                fairness_gap_threshold = 0
+                shift_imbalance_penalty = 10
+                shift_imbalance_threshold = 1
+            case "FAIRNESS-LEANING":
+                pref_miss_penalty = 2
+                fairness_gap_penalty = 5
+                fairness_gap_threshold = FAIRNESS_GAP_THRESHOLD // 2
+                shift_imbalance_penalty = 5
+                shift_imbalance_threshold = 2
+            case "50/50":
+                pref_miss_penalty = PREF_MISS_PENALTY
+                fairness_gap_penalty = FAIRNESS_GAP_PENALTY
+                fairness_gap_threshold = FAIRNESS_GAP_THRESHOLD
+                shift_imbalance_penalty = SHIFT_IMBALANCE_PENALTY
+                shift_imbalance_threshold = SHIFT_IMBALANCE_THRESHOLD
+            case "PREFERENCE-LEANING":
+                pref_miss_penalty = 5
+                fairness_gap_penalty = 1
+                fairness_gap_threshold = FAIRNESS_GAP_THRESHOLD + ((100 - FAIRNESS_GAP_THRESHOLD) // 2)
+                shift_imbalance_penalty = 1
+                shift_imbalance_threshold = 10
+            case "PREFERENCE":
+                pref_miss_penalty = 10
+                fairness_gap_penalty = 0
+                fairness_gap_threshold = 100
+                shift_imbalance_penalty = 0
+                shift_imbalance_threshold = 100
+            case _:
+                raise InvalidPrioritySettingError("Invalid priority setting. Expected 'FAIRNESS', 'FAIRNESS-LEANING', '50/50', 'PREFERENCE-LEANING', or 'PREFERENCE'.")
+    
+    return pref_miss_penalty, fairness_gap_penalty, fairness_gap_threshold, shift_imbalance_penalty, shift_imbalance_threshold
+    

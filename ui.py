@@ -37,6 +37,7 @@ CUSTOM_ERRORS = (
     ConsecutiveALError,
     InputMismatchError,
     InvalidPreviousScheduleError,
+    InvalidPrioritySettingError,
     FileReadingError,
     FileContentError
 )
@@ -322,6 +323,24 @@ shift_balance = st.sidebar.checkbox(
     help="If checked, the system will attempt to balance shift assignments among nurses. May cause longer solve times.",
     key="shift_balance"
 )
+if shift_balance:
+    priority_setting = st.sidebar.select_slider(
+        "Priority setting",
+        options=["Fairness", "Fairness-leaning", "50/50", "Preference-leaning", "Preference"],
+        value="50/50",
+        key="priority_setting",
+        help=(
+            "Select priority for solving:\n\n"
+            "• Fairness: Prioritise fairness of shift distributions.\n\n"
+            "• Preference: Prioritise number of preferences met.\n\n")
+    )
+
+    st.sidebar.info(
+        "⚠️ Your selected priority guides the solver, but results may vary depending on inputs and constraints.\n\n"
+        "For example, 'Preference' may not always lead to more preferences met than '50/50'."
+    )
+else:
+    priority_setting = "50/50"
 
 # Validate input parameters
 errors = validate_input_params(df_profiles, num_days, min_nurses_per_shift, min_seniors_per_shift, max_weekly_hours, preferred_weekly_hours, min_acceptable_weekly_hours)
@@ -422,6 +441,7 @@ for key, default in {
     "back_to_back_shift": back_to_back_shift,
     "use_sliding_window": use_sliding_window,
     "shift_balance": shift_balance,
+    "priority_setting": priority_setting,
     "all_el_overrides": {},
     "all_mc_overrides": {},
     "all_prefs_meta": []    
@@ -569,6 +589,7 @@ if st.sidebar.button("Generate Schedule", type="primary"):
             back_to_back_shift=st.session_state.back_to_back_shift,
             use_sliding_window=st.session_state.use_sliding_window,
             shift_balance=st.session_state.shift_balance,
+            priority_setting=st.session_state.priority_setting,
             fixed_assignments=st.session_state.fixed
         )
         st.session_state.sched_df = sched
@@ -710,6 +731,7 @@ if st.session_state.sched_df is not None:
                         st.session_state.back_to_back_shift,
                         st.session_state.use_sliding_window,
                         st.session_state.shift_balance,
+                        st.session_state.priority_setting,
                         st.session_state.fixed
                     )
                     st.session_state.sched_df   = sched2

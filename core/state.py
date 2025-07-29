@@ -105,6 +105,16 @@ class ScheduleState:
     """
     shift_balance: bool
     """A boolean indicating if the shift balance constraint is active."""
+    pref_miss_penalty: int
+    """The penalty for missing preferences."""
+    fairness_gap_penalty: int
+    """The penalty for the fairness gap of preferences met."""
+    fairness_gap_threshold: int
+    """The threshold for penalsing the fairness gap of preferences met."""
+    shift_imbalance_penalty: int
+    """The penalty for the shift distribution imbalance."""
+    shift_imbalance_threshold: int
+    """The threshold for penalsing the shift distribution imbalance."""
 
     # collections to fill
     hard_rules: Dict[str, Any]

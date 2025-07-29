@@ -382,7 +382,8 @@
     "weekend_rest": true,
     "back_to_back_shift": false,
     "use_sliding_window": false,
-    "shift_balance": false,
+    "shift_balance": true,
+    "priority_setting": "50/50",
     "fixed_assignments": []
   }
 }
