@@ -357,7 +357,6 @@
       "training": "PM"
     }
   ],
-  "previous_schedule": [],
   "request": {
     "start_date": "2025-07-16",
     "num_days": 14,
@@ -382,7 +381,8 @@
     "weekend_rest": true,
     "back_to_back_shift": false,
     "use_sliding_window": false,
-    "shift_balance": false,
+    "shift_balance": true,
+    "priority_setting": "preference",
     "fixed_assignments": [
       {
           "nurse": "Nurse3",

@@ -19,7 +19,8 @@ CUSTOM_ERRORS = {
     InvalidMCError: 400,
     ConsecutiveMCError: 400,
     InputMismatchError: 400,
-    InvalidPreviousScheduleError: 400
+    InvalidPreviousScheduleError: 400,
+    InvalidPrioritySettingError: 400
 }
 
 # Define data models
@@ -98,6 +99,7 @@ class ScheduleRequest(BaseModel):
     back_to_back_shift: bool = False
     use_sliding_window: bool = False
     shift_balance: bool = False
+    priority_setting: str = "50/50"
     fixed_assignments: Optional[List[FixedAssignment]] = None
 
 
@@ -189,6 +191,7 @@ async def generate_schedule(
         - `back_to_back_shift`: Whether to prevent back-to-back shifts
         - `use_sliding_window`: Whether to use a sliding window for shift assignments
         - `shift_balance`: Whether to balance the number of shifts between nurses
+        - `priority_setting`: Priority setting for the solver (e.g. "Fairness", "Fairness-leaning", "50/50", "Preference-leaning", "Preference"). Only activated when `shift_balance` is `True`.
         - `fixed_assignments`: List of fixed shift assignments (optional), with the following fields:
             - `nurse`: Name of the nurse
             - `date`: Date of the shift
@@ -383,6 +386,7 @@ async def generate_schedule(
             back_to_back_shift=request.back_to_back_shift,
             use_sliding_window=request.use_sliding_window,
             shift_balance=request.shift_balance,
+            priority_setting=request.priority_setting,
             fixed_assignments=fixed_idx_dict if fixed_assignments_dict else None
         )
 

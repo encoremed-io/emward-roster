@@ -25,6 +25,9 @@ class InputMismatchError(Exception):
 class InvalidPreviousScheduleError(Exception):
     """Raised when the previous schedule is invalid."""
 
+class InvalidPrioritySettingError(Exception):
+    """Raised when the priority setting is invalid."""
+
 class FileReadingError(Exception):
     """Raised when there is an error reading a file."""
     pass
