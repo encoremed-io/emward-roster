@@ -4,9 +4,9 @@
 
 **Key features:**
 
--   **Full Schedule Generation**: Based on nurse profiles, preferences, and training shifts.
--   **Summary Dashboard**: Shows total preferences met and any soft constraint violations.
--   **Interactive Edit Mode**: Assign MC/EL shifts manually and then regenerate the roster.
+-   **Full Schedule Generation**: Based on nurse profiles, preferences, training shifts and previous schedule.
+-   **Summary Dashboard**: Shows total preferences met and any soft constraint violations and metrics.
+-   **Interactive Edit Mode**: Assign MC/EL manually and then regenerate the roster.
 
 ---
 
@@ -28,7 +28,7 @@ cd roster-scheduler
 
 ---
 
-### 5. Build & Run the Application
+### 2. Build & Run the Application
 
 #### Build the application
 
@@ -62,7 +62,7 @@ roster-scheduler/
 ├── .env
 ├── api/               → Api paths
 ├── config/            → Constants and path configuration
-├── data/              → Input files templates
+├── data/              → Templates for input files and API requests
 ├── exceptions/        → Custom error exceptions
 ├── jupyter/           → Development notebooks
 ├── legacy/            → Deprecated modules (e.g., old scheduler logic)
@@ -85,7 +85,7 @@ roster-scheduler/
 
 The project expects the following input files:
 
--   `nurse_profiles.xlsx`: Contains nurse profiles, including `Names`, `Titles`, and `Years of Experience`.
+-   `nurse_profiles.xlsx`: **(Required)** Contains nurse profiles, including `Names`, `Titles`, and `Years of Experience`.
 -   `nurse_preferences.xlsx`: **(Optional)** Contains nurse preferences for each `date`, including shift preferences and leave requirements.
 -   `training_shifts.xlsx`: **(Optional)** Contains training shifts for each nurse for each `date`.
 -   `previous_schedule.xlsx`: **(Optional)** Contains any valid previous schedule, as long as `end date` of previous schedule is **strictly before** the `start date` of schedule to be generated.

@@ -22,7 +22,7 @@ from utils.constants import (
 from exceptions.custom_errors import InvalidPreviousScheduleError, InvalidPrioritySettingError
 
 def build_variables(model, nurse_names, num_days, prev_days, shift_types):
-    """ Builds the work[n,d,s] BoolVars for every nurse/day/shift. """
+    """ Builds the work[n,d,s] BoolVars for every nurse/day/shift, including previous days. """
     work = {
         (n, d, s): model.NewBoolVar(f'work_{n}_{d}_{s}')
         for n in nurse_names for d in range(-prev_days, num_days) for s in range(shift_types)
@@ -113,6 +113,21 @@ def setup_model(profiles_df, preferences_df, training_shifts_df, prev_schedule_d
 
 
 def adjust_low_priority_params(doAdjustment: bool, option: str):
+    """
+    Adjusts and returns the penalty parameters for low priority constraints based on the given option.
+
+    Args:
+        doAdjustment (bool): Flag indicating whether to adjust parameters or not.
+        option (str): The option to determine the adjustment strategy. Valid options are 
+                      'FAIRNESS', 'FAIRNESS-LEANING', '50/50', 'PREFERENCE-LEANING', and 'PREFERENCE'.
+
+    Returns:
+        tuple: Contains the adjusted values for pref_miss_penalty, fairness_gap_penalty, 
+               fairness_gap_threshold, shift_imbalance_penalty, and shift_imbalance_threshold.
+
+    Raises:
+        InvalidPrioritySettingError: If an invalid option is provided.
+    """
     if not doAdjustment:
         return PREF_MISS_PENALTY, FAIRNESS_GAP_PENALTY, FAIRNESS_GAP_THRESHOLD, SHIFT_IMBALANCE_PENALTY, SHIFT_IMBALANCE_THRESHOLD
     

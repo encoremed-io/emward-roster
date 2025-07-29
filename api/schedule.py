@@ -166,7 +166,7 @@ async def generate_schedule(
     - `training_shifts`: List of `NurseTraining` objects, which contain the following information:
         - `nurse`: Name of the nurse
         - `date`: Date of the training shift
-        - `training`: Shift on training (e.g. "AM", "PM")
+        - `training`: Shift on training (e.g. "AM", "PM", "Night", "FULL")
     - `previous_schedule`: List of `PrevSchedule` objects. Each object represents a nurse's past schedule and contains:
         - `index`: The name of the nurse.
         - `<Day Date>`: The assigned shift for that day, where the key is a string in the format `"Day YYYY-MM-DD"` 

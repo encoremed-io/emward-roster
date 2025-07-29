@@ -357,6 +357,7 @@
       "training": "PM"
     }
   ],
+  "previous_schedule": [],
   "request": {
     "start_date": "2025-07-16",
     "num_days": 14,
