@@ -11,18 +11,20 @@ import os
 # Create dummy data
 np.random.seed(42)
 n = 100
-data = pd.DataFrame({
-    "icu_certified": np.random.randint(0, 2, n),
-    "prefers_morning": np.random.randint(0, 2, n),
-    "shifts_this_week": np.random.randint(0, 7, n),
-    "recent_night_shift": np.random.randint(0, 2, n),
-})
+data = pd.DataFrame(
+    {
+        "icu_certified": np.random.randint(0, 2, n),
+        "prefers_morning": np.random.randint(0, 2, n),
+        "shifts_this_week": np.random.randint(0, 7, n),
+        "recent_night_shift": np.random.randint(0, 2, n),
+    }
+)
 
 # Create labels
 data["swap_score"] = (
-    (data["icu_certified"] & data["prefers_morning"]) &
-    (data["shifts_this_week"] < 5) &
-    (~data["recent_night_shift"].astype(bool))
+    (data["icu_certified"] & data["prefers_morning"])
+    & (data["shifts_this_week"] < 5)
+    & (~data["recent_night_shift"].astype(bool))
 ).astype(int)
 
 X = data.drop(columns=["swap_score"])
@@ -37,9 +39,12 @@ model.fit(X_train, y_train)
 
 # Export ONNX
 initial_type = [("input", FloatTensorType([None, X.shape[1]]))]
-onnx_model = convert_sklearn(model, initial_types=initial_type)
+onnx_model_tuple = convert_sklearn(model, initial_types=initial_type)
+onnx_model = (
+    onnx_model_tuple[0] if isinstance(onnx_model_tuple, tuple) else onnx_model_tuple
+)
 
 # Save Model to Disk
-os.makedirs("models", exist_ok=True)
+os.makedirs("models/swap_suggestions", exist_ok=True)
 with open("models/swap_suggestions/trained_model.onnx", "wb") as f:
     f.write(onnx_model.SerializeToString())
