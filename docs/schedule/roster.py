@@ -11,7 +11,7 @@ schedule_roster_description = """
         - `nurse`: Name of the nurse
         - `date`: Date of the shift
         - `shift`: Shift preference (e.g. "AM", "PM", "Night")
-        - `timestamp`: Timestamp of the preference (optional, used for sorting preferences)
+        - `timestamp`: Timestamp of the preference
     - `training_shifts`: List of `NurseTraining` objects, which contain the following information:
         - `nurse`: Name of the nurse
         - `date`: Date of the training shift

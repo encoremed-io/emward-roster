@@ -38,7 +38,7 @@ class NursePreference(BaseModel):
     nurse: str
     date: date
     shift: str
-    timestamp: Optional[dt.datetime] = None
+    timestamp: dt.datetime
 
 
 class NurseTraining(BaseModel):

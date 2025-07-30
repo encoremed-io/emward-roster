@@ -6,17 +6,18 @@ from exceptions.custom_errors import NoFeasibleSolutionError
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class SolverResult:
     def __init__(
         self,
         solver: cp_model.CpSolver,
         status: Any,
-        cached_values: Dict[Tuple[str,int,int], int],
+        cached_values: Dict[Tuple[str, int, int], int],
         high_penalty: float,
         low_penalty: float,
-        fairness_gap: Any
-        ):
+        fairness_gap: Any,
+    ):
         """
         Initialize a SolverResult instance.
 
@@ -35,9 +36,9 @@ class SolverResult:
         self.low_penalty = low_penalty
         self.fairness_gap = fairness_gap
 
-    
+
 def configure_solver(timeout: float = 180.0, seed: int = 42) -> cp_model.CpSolver:
-    """ Configure the CP solver. """
+    """Configure the CP solver."""
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = timeout
     solver.parameters.random_seed = seed
@@ -49,7 +50,7 @@ def configure_solver(timeout: float = 180.0, seed: int = 42) -> cp_model.CpSolve
 
 
 def get_model_size(model: cp_model.CpModel) -> Tuple[int, int]:
-    """ Get the number of constraints and boolean variables in the model. """
+    """Get the number of constraints and boolean variables in the model."""
     proto = model.Proto()
     num_constraints = len(proto.constraints)
     num_bool_vars = len(proto.variables)
@@ -84,20 +85,24 @@ def run_phase1(model, state) -> SolverResult:
     solver = configure_solver()
     status = solver.Solve(model)
 
-    status = solver.Solve(model)
     total_hards = len(state.hard_rules)
     logger.info(f"Total hard constraint flags: {total_hards}")
     satisfied_hards = int(solver.ObjectiveValue())
     logger.info(f"Satisfied hard constraint flags: {satisfied_hards}")
     logger.info(f"⏱ Solve time: {solver.WallTime():.2f} seconds")
-    if satisfied_hards != total_hards or status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        dropped = [r.message for r in state.hard_rules.values() if solver.Value(r.flag) == 0]
+    if satisfied_hards != total_hards or status not in (
+        cp_model.OPTIMAL,
+        cp_model.FEASIBLE,
+    ):
+        dropped = [
+            r.message for r in state.hard_rules.values() if solver.Value(r.flag) == 0
+        ]
         error_msg = ["❌ No feasible solution. Identified issues:\n"]
         error_msg.append("\n".join(f"    • {m.strip()}" for m in dropped))
         error_msg = "\n".join(error_msg)
         logger.info("⚠️ No feasible solution found with minimal constraints.")
         raise NoFeasibleSolutionError(error_msg)
-    
+
     logger.info("✅ Feasible solution found with minimal constraints.")
 
     # Phase 1B: Minimise high priority penalties
@@ -126,7 +131,9 @@ def run_phase1(model, state) -> SolverResult:
     }
 
     fairness_gap = solver.Value(state.gap_pct) if state.gap_pct is not None else None
-    logger.info(f"▶️ Phase 1 complete: best total penalty = {high_penalty + low_penalty}; best fairness gap = {fairness_gap if fairness_gap is not None else 'N/A'}")
+    logger.info(
+        f"▶️ Phase 1 complete: best total penalty = {high_penalty + low_penalty}; best fairness gap = {fairness_gap if fairness_gap is not None else 'N/A'}"
+    )
     return SolverResult(solver, status, cached, high_penalty, low_penalty, fairness_gap)
 
 
@@ -145,7 +152,9 @@ def run_phase2(model, state, p1: SolverResult) -> SolverResult:
     high priority penalty, low priority penalty, and fairness gap.
     """
     # Phase 2: Maximize preferences and shift balance
-    logger.info("🚀 Phase 2: maximizing preferences with (optional) shift distribution balance...")
+    logger.info(
+        "🚀 Phase 2: maximizing preferences with (optional) shift distribution balance..."
+    )
 
     model.Add(sum(r.flag for r in state.hard_rules.values()) == len(state.hard_rules))
     model.Add(sum(state.high_priority_penalty) <= round(p1.high_penalty))
