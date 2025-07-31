@@ -201,6 +201,7 @@ async def generate_schedule(
             preferred_weekly_hours=request.preferred_weekly_hours,
             pref_weekly_hours_hard=request.pref_weekly_hours_hard,
             min_acceptable_weekly_hours=request.min_acceptable_weekly_hours,
+            min_weekly_rest=request.min_weekly_rest,
             activate_am_cov=request.activate_am_cov,
             am_coverage_min_percent=request.am_coverage_min_percent,
             am_coverage_min_hard=request.am_coverage_min_hard,

@@ -104,6 +104,7 @@
     "preferred_weekly_hours": 40,
     "pref_weekly_hours_hard": false,
     "min_acceptable_weekly_hours": 30,
+    "min_weekly_rest": 1,
     "activate_am_cov": false,
     "am_coverage_min_percent": 60,
     "am_coverage_min_hard": false,

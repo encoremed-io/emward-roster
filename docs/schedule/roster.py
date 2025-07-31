@@ -29,6 +29,7 @@ schedule_roster_description = """
         - `max_weekly_hours`: Maximum weekly hours for each nurse
         - `preferred_weekly_hours`: Preferred weekly hours for each nurse
         - `min_acceptable_weekly_hours`: Minimum acceptable weekly hours for each nurse
+        - `min_weekly_rest`: Minimum number of rest days per week
         - `activate_am_cov`: Whether to activate AM coverage constraints
         - `am_coverage_min_percent`: Minimum percentage of AM shifts that must be covered
         - `am_coverage_min_hard`: Whether the minimum percentage is a hard constraint

@@ -22,7 +22,7 @@ from utils.constants import (
 from exceptions.custom_errors import InvalidPreviousScheduleError, InvalidPrioritySettingError
 
 def build_variables(model, nurse_names, num_days, prev_days, shift_types):
-    """ Builds the work[n,d,s] BoolVars for every nurse/day/shift, including previous days. """
+    """ Builds the work[n,d,s] BoolVars for every nurse/day/shift, including previous days."""
     work = {
         (n, d, s): model.NewBoolVar(f'work_{n}_{d}_{s}')
         for n in nurse_names for d in range(-prev_days, num_days) for s in range(shift_types)
@@ -80,15 +80,15 @@ def setup_model(profiles_df, preferences_df, training_shifts_df, prev_schedule_d
     )
 
     training_shifts, training_by_nurse = extract_training_shifts_info(
-        training_shifts_df, profiles_df, date_start, shuffled_nurse_names, num_days, shift_labels, no_work_labels, fixed_assignments
+        training_shifts_df, date_start, shuffled_nurse_names, num_days, shift_labels, no_work_labels, fixed_assignments
     )
 
     shift_preferences, prefs_by_nurse = extract_prefs_info(
-        preferences_df, profiles_df, date_start, shuffled_nurse_names, num_days, shift_labels, no_work_labels, training_by_nurse, fixed_assignments
+        preferences_df, date_start, shuffled_nurse_names, num_days, shift_labels, no_work_labels, training_by_nurse, fixed_assignments
     )
 
     mc_sets, al_sets, el_sets = extract_leave_days(
-        profiles_df, preferences_df, clean_prev_sched, shuffled_nurse_names, date_start, num_days, fixed_assignments
+        preferences_df, clean_prev_sched, shuffled_nurse_names, date_start, num_days, fixed_assignments
     )
     days_with_el = get_days_with_el(el_sets)
 

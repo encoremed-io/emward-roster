@@ -75,6 +75,7 @@ class ScheduleRequest(BaseModel):
     preferred_weekly_hours: int = Field(default=PREFERRED_WEEKLY_HOURS)
     pref_weekly_hours_hard: bool = False
     min_acceptable_weekly_hours: int = Field(default=MIN_ACCEPTABLE_WEEKLY_HOURS)
+    min_weekly_rest: int = Field(default=MIN_WEEKLY_REST)
     activate_am_cov: bool = True
     am_coverage_min_percent: int = Field(default=AM_COVERAGE_MIN_PERCENT)
     am_coverage_min_hard: bool = False

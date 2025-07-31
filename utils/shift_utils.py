@@ -16,9 +16,6 @@ def compute_label_offset(label: Any, date_start: dt_date) -> int:
     return (d - date_start).days
 
 
-from datetime import datetime, date as dt_date
-import pandas as pd
-
 def normalise_date(input_date):
     """
     Convert input to a datetime.date object.
@@ -47,16 +44,15 @@ def make_shift_index(shift_labels: List[str]) -> Dict[str, int]:
 
 def get_mc_days(
     preferences_df: pd.DataFrame,
-    profiles_df: pd.DataFrame,
     prev_sched_df: pd.DataFrame,
     start_date: Union[pd.Timestamp, dt_date],
+    nurse_names: List[str],
     active_days: int
 ) -> Dict[str, Set[int]]:
     """
     Returns nurse_name -> set of medical leave (MC) day-indices (0..active_days-1), considering both previous schedule and current preferences.
     """
-    date_start = start_date.date() if isinstance(start_date, pd.Timestamp) else start_date
-    nurse_names = [n.strip().upper() for n in profiles_df['Name']]
+    date_start = normalise_date(start_date)
     mc_days: Dict[str, Set[int]] = {n: set() for n in nurse_names}
 
     if prev_sched_df is not None and not prev_sched_df.empty:
@@ -89,16 +85,15 @@ def get_mc_days(
 
 def get_al_days(
     preferences_df: pd.DataFrame,
-    profiles_df: pd.DataFrame,
     prev_sched_df: pd.DataFrame,
     start_date: Union[pd.Timestamp, dt_date],
+    nurse_names: List[str],
     active_days: int
 ) -> Dict[str, Set[int]]:
     """
     Returns nurse_name -> set of annual leave (AL) day-indices (0..active_days-1), considering both previous schedule and current preferences.
     """
-    date_start = start_date.date() if isinstance(start_date, pd.Timestamp) else start_date
-    nurse_names = [n.strip().upper() for n in profiles_df['Name']]
+    date_start = normalise_date(start_date)
     al_days: Dict[str, Set[int]] = {n: set() for n in nurse_names}
 
     if prev_sched_df is not None and not prev_sched_df.empty:
@@ -129,10 +124,31 @@ def get_al_days(
     return al_days
 
 
+def parse_prefs(raw_pref) -> Tuple[str, pd.Timestamp]:
+    """
+    Given a raw preference input (e.g. tuple(code, timestamp), string, or None),
+    return a normalized tuple of (code, timestamp) where:
+
+    * code is a string (upper-cased) or None
+    * timestamp is a pd.Timestamp (NaT if no valid timestamp was present)
+
+    If the input is not a tuple, it is treated as a code string and timestamp is set to NaT.
+    If the input is a tuple but the second element is not a valid timestamp, it is set to NaT.
+    """
+    if isinstance(raw_pref, tuple) and len(raw_pref) == 2:
+        code, ts = raw_pref
+    else:
+        code, ts = raw_pref, pd.NaT
+
+    code = str(code).strip().upper()
+    ts = pd.Timestamp.min if pd.isna(ts) else ts
+    return code, ts
+
+
 def get_shift_preferences(
     preferences_df: pd.DataFrame,
-    profiles_df: pd.DataFrame,
     start_date: Union[pd.Timestamp, dt_date],
+    nurse_names: List[str],
     active_days: int,
     shift_labels: List[str],
     no_work_labels: List[str]
@@ -140,8 +156,7 @@ def get_shift_preferences(
     """
     Returns nurse_name -> { day_index: (shift_index, timestamp) } for non-leave preferences.
     """
-    date_start = start_date.date() if isinstance(start_date, pd.Timestamp) else start_date
-    nurse_names = [n.strip().upper() for n in profiles_df['Name']]
+    date_start = normalise_date(start_date)
     shift_str_to_idx = make_shift_index(shift_labels)
     shift_prefs: Dict[str, Dict[int, Tuple[int, pd.Timestamp]]] = {n: {} for n in nurse_names}
 
@@ -154,12 +169,7 @@ def get_shift_preferences(
             continue
         for label, raw in row.items():
             if pd.notna(raw):
-                if isinstance(raw, tuple) and len(raw) == 2:
-                    code, ts = raw
-                    code = str(code).strip().upper()
-                else:
-                    code = str(raw).strip().upper()
-                    ts = pd.Timestamp.min
+                code, ts = parse_prefs(raw)
 
                 if code == "" or code in (lbl.upper() for lbl in no_work_labels):
                     continue
@@ -206,9 +216,9 @@ def filter_fixed_assignments_from_prefs(
                 prefs_by_nurse[nurse].pop(day, None)
 
 
-def extract_prefs_info(preferences_df, profiles_df, date_start, nurse_names, num_days, shift_labels, no_work_labels, training_by_nurse, fixed_assignments=None):
+def extract_prefs_info(preferences_df, date_start, nurse_names, num_days, shift_labels, no_work_labels, training_by_nurse, fixed_assignments=None):
     """ Extracts preferences information and each nurse's preferences from the preferences DataFrame. """
-    shift_preferences = get_shift_preferences(preferences_df, profiles_df, date_start, num_days, shift_labels, no_work_labels)
+    shift_preferences = get_shift_preferences(preferences_df, date_start, nurse_names, num_days, shift_labels, no_work_labels)
     prefs_by_nurse = {n: shift_preferences.get(n, {}) for n in nurse_names}
     filter_fixed_assignments_from_prefs(shift_preferences, prefs_by_nurse, no_work_labels, fixed_assignments)
     filter_prefs_from_training_shifts(shift_preferences, prefs_by_nurse, training_by_nurse)
@@ -246,16 +256,15 @@ def filter_prefs_from_training_shifts(
 
 def get_training_shifts(
     training_shifts_df: pd.DataFrame,
-    profiles_df: pd.DataFrame,
     start_date: Union[pd.Timestamp, dt_date],
+    nurse_names: List[str],
     active_days: int,
     shift_labels: List[str],
 ) -> Dict[str, Dict[int, int]]:
     """
     Returns nurse_name -> { day_index: shift_index } for training shifts.
     """
-    date_start = start_date.date() if isinstance(start_date, pd.Timestamp) else start_date
-    nurse_names = [n.strip().upper() for n in profiles_df['Name']]
+    date_start = normalise_date(start_date)
     shifts_str_to_idx = make_shift_index(shift_labels)
     training_shifts: Dict[str, Dict[int, int]] = {n: {} for n in nurse_names}
 
@@ -318,9 +327,9 @@ def filter_fixed_assignments_from_training_shifts(
                 training_by_nurse[nurse].pop(day, None)
 
 
-def extract_training_shifts_info(training_shifts_df, profiles_df, date_start, nurse_names, num_days, shift_labels, no_work_labels, fixed_assignments=None):
+def extract_training_shifts_info(training_shifts_df, date_start, nurse_names, num_days, shift_labels, no_work_labels, fixed_assignments=None):
     """ Extracts training shifts information from the training_shifts DataFrame. """
-    training_shifts = get_training_shifts(training_shifts_df, profiles_df, date_start, num_days, shift_labels)
+    training_shifts = get_training_shifts(training_shifts_df, date_start, nurse_names, num_days, shift_labels)
     training_by_nurse = {n: training_shifts.get(n, {}) for n in nurse_names}
     filter_fixed_assignments_from_training_shifts(training_shifts, training_by_nurse, no_work_labels, fixed_assignments)
     return training_shifts, training_by_nurse
@@ -335,14 +344,14 @@ def get_el_days(fixed_assignments, nurse_names):
     return el_days
 
 
-def extract_leave_days(profiles_df, preferences_df, prev_sched_df, nurse_names, start_date, num_days, fixed_assignments):
+def extract_leave_days(preferences_df, prev_sched_df, nurse_names, start_date, num_days, fixed_assignments):
     """
     Extracts leave information from profiles and preferences DataFrames, considering previous schedule and fixed assignments, if any.
     
     Returns mc_sets, al_sets, el_sets
     """
-    mc_days = get_mc_days(preferences_df, profiles_df, prev_sched_df, start_date, num_days)
-    al_days = get_al_days(preferences_df, profiles_df, prev_sched_df,start_date, num_days)
+    mc_days = get_mc_days(preferences_df, prev_sched_df, start_date, nurse_names, num_days)
+    al_days = get_al_days(preferences_df, prev_sched_df,start_date, nurse_names, num_days)
 
     mc_sets = {n: mc_days.get(n, set()) for n in nurse_names}
     al_sets = {n: al_days.get(n, set()) for n in nurse_names}
