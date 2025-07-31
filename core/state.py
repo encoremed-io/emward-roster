@@ -75,6 +75,8 @@ class ScheduleState:
     """A boolean indicating if the preferred weekly hours is a hard constraint."""
     min_acceptable_weekly_hours: int
     """The minimum acceptable number of hours a nurse should work in a week."""
+    min_weekly_rest: int
+    """The minimum rest days per week."""
     activate_am_cov: bool
     """A boolean indicating if the morning coverage constraint is active."""
     am_coverage_min_percent: int

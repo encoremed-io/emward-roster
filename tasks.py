@@ -20,7 +20,7 @@ def install(c):
 
 @task
 def back(c):
-    c.run("uvicorn api.main:app --reload --host 127.0.0.1 --port 8001")
+    c.run("uvicorn main:app --reload --host 127.0.0.1 --port 8001")
 
 
 @task
