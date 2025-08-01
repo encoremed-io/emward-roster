@@ -215,6 +215,7 @@ async def generate_schedule(
             shift_balance=request.shift_balance,
             priority_setting=request.priority_setting,
             fixed_assignments=fixed_idx_dict if fixed_assignments_dict else None,
+            shift_details=request.shift_details,
         )
 
         # Convert DataFrames to JSON-friendly format

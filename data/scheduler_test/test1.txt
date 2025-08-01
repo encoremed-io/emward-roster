@@ -460,23 +460,22 @@
       "index": "NURSE42",
       "Wed 2025-07-16": "AM",
       "Thu 2025-07-17": "AM",
-      "Fri 2025-07-18": "Night",
-      "Sat 2025-07-19": "PM",
+      "Fri 2025-07-18": "AM",
+      "Sat 2025-07-19": "AM",
       "Sun 2025-07-20": "Night",
       "Mon 2025-07-21": "REST",
       "Tue 2025-07-22": "REST"
     }
   ],
-  "previous_schedule": [],
   "request": {
-    "start_date": "2025-07-16",
-    "num_days": 7,
+    "start_date": "2025-07-23",
+    "num_days": 14,
     "shift_durations": [
       7,
       7,
       10
     ],
-    "min_nurses_per_shift": 4,
+    "min_nurses_per_shift": 2,
     "min_seniors_per_shift": 1,
     "max_weekly_hours": 42,
     "preferred_weekly_hours": 40,
@@ -495,6 +494,10 @@
     "use_sliding_window": false,
     "shift_balance": false,
     "priority_setting": "preference-leaning",
-    "fixed_assignments": []
+    "fixed_assignments": [],
+    "shift_details": [
+      { "shiftType": "AM", "maxWorkingShift": 3, "restDayEligible": 1 },
+      { "shiftType": "Night", "maxWorkingShift": 3, "restDayEligible": 2 }
+    ]
   }
 }

@@ -3,9 +3,11 @@ from utils.constants import *
 from collections import defaultdict
 from typing import Dict, List, Tuple, Any, Set
 import pandas as pd
+
 """
 This module contains the low priority rules for the nurse scheduling problem.
 """
+
 
 def preference_rule(model, state: ScheduleState):
     """
@@ -30,7 +32,7 @@ def preference_rule(model, state: ScheduleState):
                     s, ts = entry
                 else:
                     s = entry
-                sat = model.NewBoolVar(f'sat_{n}_{d}')
+                sat = model.NewBoolVar(f"sat_{n}_{d}")
                 model.Add(state.work[n, d, s] == 1).OnlyEnforceIf(sat)
                 model.Add(state.work[n, d, s] == 0).OnlyEnforceIf(sat.Not())
                 is_satisfied[(n, d)] = sat
@@ -42,7 +44,7 @@ def preference_rule(model, state: ScheduleState):
                 is_satisfied[(n, d)] = satisfied_const
                 satisfied_list.append(satisfied_const)
 
-        state.total_satisfied[n] = model.NewIntVar(0, state.num_days, f'total_sat_{n}')
+        state.total_satisfied[n] = model.NewIntVar(0, state.num_days, f"total_sat_{n}")
         model.Add(state.total_satisfied[n] == sum(satisfied_list))
 
 
@@ -138,12 +140,14 @@ def fairness_gap_rule(model, state: ScheduleState):
         gap_pct = model.NewIntVar(0, 100, "gap_pct")
         model.Add(gap_pct == max_pct - min_pct)
 
-        state.gap_pct = gap_pct     # Only store gap_pct if we have valid percentages, else remain None
+        state.gap_pct = (
+            gap_pct  # Only store gap_pct if we have valid percentages, else remain None
+        )
         diff = model.NewIntVar(-100, 100, f"diff_{n}")
         model.Add(diff == gap_pct - state.fairness_gap_threshold)
 
         # Start penalise fairness when gap_pct >= 60 based on distance from 60
-        over_gap  = model.NewIntVar(0, 100, "over_gap")
+        over_gap = model.NewIntVar(0, 100, "over_gap")
         model.AddMaxEquality(over_gap, [diff, model.NewConstant(0)])
         state.low_priority_penalty.append(over_gap * state.fairness_gap_penalty)
 
@@ -184,10 +188,16 @@ def shift_balance_rule(model, state: ScheduleState):
             distribution_gap = model.NewIntVar(0, state.num_days, f"gap_{n}")
             model.Add(distribution_gap == maxC - minC)
 
-            diff = model.NewIntVar(-(state.num_days + state.shift_imbalance_threshold), state.num_days + state.shift_imbalance_threshold, f"diff_{n}")
+            diff = model.NewIntVar(
+                -(state.num_days + state.shift_imbalance_threshold),
+                state.num_days + state.shift_imbalance_threshold,
+                f"diff_{n}",
+            )
             model.Add(diff == distribution_gap - state.shift_imbalance_threshold)
 
             # soft penalise when distribution_gap >= 2 based on distance from 2
-            over_gap = model.NewIntVar(0, state.num_days + state.shift_imbalance_threshold, f"over_gap_{n}")
+            over_gap = model.NewIntVar(
+                0, state.num_days + state.shift_imbalance_threshold, f"over_gap_{n}"
+            )
             model.AddMaxEquality(over_gap, [diff, model.NewConstant(0)])
             state.low_priority_penalty.append(over_gap * state.shift_imbalance_penalty)
