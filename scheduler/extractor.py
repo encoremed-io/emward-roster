@@ -54,10 +54,10 @@ def extract_schedule_and_summary(
     violations = {
         "Double Shifts": [] if state.fixed_assignments else [],
         "Low Hours Nurses": [] if not state.pref_weekly_hours_hard else [],
-        "Low AM Days": (
-            [] if state.activate_am_cov and not state.am_coverage_min_hard else []
-        ),
-        "Low Senior AM Days": [] if not state.am_senior_min_hard else [],
+        # "Low AM Days": (
+        #     [] if state.activate_am_cov and not state.am_coverage_min_hard else []
+        # ),
+        # "Low Senior AM Days": [] if not state.am_senior_min_hard else [],
     }
     metrics = {}
     has_prefs = bool(
@@ -199,33 +199,33 @@ def extract_schedule_and_summary(
         )
         summary.append(summary_row)
 
-    if not state.am_coverage_min_hard and not state.am_senior_min_hard:
-        for d in range(state.num_days):
-            am_n = sum(result.cached_values[(n, d, 0)] for n in state.nurse_names)
-            total_n = sum(
-                result.cached_values[(n, d, s)]
-                for n in state.nurse_names
-                for s in range(state.shift_types)
-            )
-            am_snr = sum(result.cached_values[(n, d, 0)] for n in state.senior_names)
+    # if not state.am_coverage_min_hard and not state.am_senior_min_hard:
+    #     for d in range(state.num_days):
+    #         am_n = sum(result.cached_values[(n, d, 0)] for n in state.nurse_names)
+    #         total_n = sum(
+    #             result.cached_values[(n, d, s)]
+    #             for n in state.nurse_names
+    #             for s in range(state.shift_types)
+    #         )
+    #         am_snr = sum(result.cached_values[(n, d, 0)] for n in state.senior_names)
 
-            if (
-                state.activate_am_cov
-                and not state.am_coverage_min_hard
-                and total_n
-                and am_n / total_n < (state.am_coverage_min_percent / 100)
-            ):
-                violations["Low AM Days"].append(
-                    f"{dates[d].strftime('%a %Y-%m-%d')} ({am_n/total_n:.0%})"
-                )
-            if (
-                not state.am_senior_min_hard
-                and am_n
-                and am_snr / am_n < (state.am_senior_min_percent / 100)
-            ):
-                violations["Low Senior AM Days"].append(
-                    f"{dates[d].strftime('%a %Y-%m-%d')} (Seniors {am_snr/am_n:.0%})"
-                )
+    #         if (
+    #             state.activate_am_cov
+    #             and not state.am_coverage_min_hard
+    #             and total_n
+    #             and am_n / total_n < (state.am_coverage_min_percent / 100)
+    #         ):
+    #             violations["Low AM Days"].append(
+    #                 f"{dates[d].strftime('%a %Y-%m-%d')} ({am_n/total_n:.0%})"
+    #             )
+    #         if (
+    #             not state.am_senior_min_hard
+    #             and am_n
+    #             and am_snr / am_n < (state.am_senior_min_percent / 100)
+    #         ):
+    #             violations["Low Senior AM Days"].append(
+    #                 f"{dates[d].strftime('%a %Y-%m-%d')} (Seniors {am_snr/am_n:.0%})"
+    #             )
 
     if violations:
         logger.info("\n⚠️ Soft Constraint Violations Summary:")
