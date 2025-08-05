@@ -41,13 +41,6 @@ def build_schedule_model(
     pref_weekly_hours_hard: bool = False,
     min_acceptable_weekly_hours: int = MIN_ACCEPTABLE_WEEKLY_HOURS,
     min_weekly_rest: int = MIN_WEEKLY_REST,
-    activate_am_cov: bool = False,
-    am_coverage_min_percent: int = AM_COVERAGE_MIN_PERCENT,
-    am_coverage_min_hard: bool = False,
-    am_coverage_relax_step: int = AM_COVERAGE_RELAX_STEP,
-    am_senior_min_percent: int = AM_SENIOR_MIN_PERCENT,
-    am_senior_min_hard: bool = False,
-    am_senior_relax_step: int = AM_SENIOR_RELAX_STEP,
     weekend_rest: bool = True,
     back_to_back_shift: bool = False,
     use_sliding_window: bool = False,
@@ -55,6 +48,14 @@ def build_schedule_model(
     priority_setting: str = "50/50",
     fixed_assignments: Optional[Dict[Tuple[str, int], str]] = None,
     shift_details: Optional[List[ShiftDetails]] = None,
+    # Uncomment if you want to use AM coverage constraints
+    # activate_am_cov: bool = False,
+    # am_coverage_min_percent: int = AM_COVERAGE_MIN_PERCENT,
+    # am_coverage_min_hard: bool = False,
+    # am_coverage_relax_step: int = AM_COVERAGE_RELAX_STEP,
+    # am_senior_min_percent: int = AM_SENIOR_MIN_PERCENT,
+    # am_senior_min_hard: bool = False,
+    # am_senior_relax_step: int = AM_SENIOR_RELAX_STEP,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict]:
     """
     Builds a nurse schedule satisfying hard constraints and optimizing soft preferences.
@@ -139,13 +140,6 @@ def build_schedule_model(
         pref_weekly_hours_hard=pref_weekly_hours_hard,
         min_acceptable_weekly_hours=min_acceptable_weekly_hours,
         min_weekly_rest=min_weekly_rest,
-        activate_am_cov=activate_am_cov,
-        am_coverage_min_percent=am_coverage_min_percent,
-        am_coverage_min_hard=am_coverage_min_hard,
-        am_coverage_relax_step=am_coverage_relax_step,
-        am_senior_min_percent=am_senior_min_percent,
-        am_senior_min_hard=am_senior_min_hard,
-        am_senior_relax_step=am_senior_relax_step,
         weekend_rest=weekend_rest,
         back_to_back_shift=back_to_back_shift,
         use_sliding_window=use_sliding_window,
@@ -161,8 +155,16 @@ def build_schedule_model(
         high_priority_penalty=[],
         low_priority_penalty=[],
         shift_details=shift_details or [],
+        # Uncomment if you want to use AM coverage constraints
+        # activate_am_cov=activate_am_cov,
+        # am_coverage_min_percent=am_coverage_min_percent,
+        # am_coverage_min_hard=am_coverage_min_hard,
+        # am_coverage_relax_step=am_coverage_relax_step,
+        # am_senior_min_percent=am_senior_min_percent,
+        # am_senior_min_hard=am_senior_min_hard,
+        # am_senior_relax_step=am_senior_relax_step,
     )
-
+    logging.debug("State initialized with %s", state.preferred_weekly_hours)
     cm = ConstraintManager(model, state)
     # Fixed rules
     cm.add_rule(previous_schedule_rules)

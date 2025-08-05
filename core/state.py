@@ -80,26 +80,6 @@ class ScheduleState:
     """The minimum acceptable number of hours a nurse should work in a week."""
     min_weekly_rest: int
     """The minimum rest days per week."""
-    activate_am_cov: bool
-    """A boolean indicating if the morning coverage constraint is active."""
-    am_coverage_min_percent: int
-    """The minimum percentage of shifts that must be covered by senior nurses in
-    the morning.
-    """
-    am_coverage_min_hard: bool
-    """A boolean indicating if the morning coverage constraint is a hard
-    constraint.
-    """
-    am_coverage_relax_step: int
-    """The step size for relaxing the morning coverage constraint."""
-    am_senior_min_percent: int
-    """The minimum percentage of shifts that must be covered by senior nurses in
-    the morning."""
-    am_senior_min_hard: bool
-    """A boolean indicating if the morning coverage constraint is a hard
-    constraint."""
-    am_senior_relax_step: int
-    """The step size for relaxing the morning coverage constraint."""
     weekend_rest: bool
     """A boolean indicating if weekend rest is enforced."""
     back_to_back_shift: bool
@@ -137,3 +117,25 @@ class ScheduleState:
 
     shift_details: List[Any] = field(default_factory=list)
     """A list of shift details for validation."""
+
+    # Uncomment if you want to use AM coverage constraints
+    # activate_am_cov: bool
+    # """A boolean indicating if the morning coverage constraint is active."""
+    # am_coverage_min_percent: int
+    # """The minimum percentage of shifts that must be covered by senior nurses in
+    # the morning.
+    # """
+    # am_coverage_min_hard: bool
+    # """A boolean indicating if the morning coverage constraint is a hard
+    # constraint.
+    # """
+    # am_coverage_relax_step: int
+    # """The step size for relaxing the morning coverage constraint."""
+    # am_senior_min_percent: int
+    # """The minimum percentage of shifts that must be covered by senior nurses in
+    # the morning."""
+    # am_senior_min_hard: bool
+    # """A boolean indicating if the morning coverage constraint is a hard
+    # constraint."""
+    # am_senior_relax_step: int
+    # """The step size for relaxing the morning coverage constraint."""

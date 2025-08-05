@@ -12,23 +12,23 @@ class NurseProfile(BaseModel):
     name: str
     title: str
     doubleShift: bool
-    years_experience: int
+    yearsExperience: int
 
     @model_validator(mode="before")
     @classmethod
-    def extract_years_experience(cls, values: Any) -> Any:
+    def extract_yearsExperience(cls, values: Any) -> Any:
         """
-        Model validator to extract years_experience from other keys in the input data if not present.
+        Model validator to extract yearsExperience from other keys in the input data if not present.
 
-        This validator is needed to handle the case where the column name for years of experience is not exactly "years_experience", e.g. "Years of Experience", "Year(s) Experience", etc.
+        This validator is needed to handle the case where the column name for years of experience is not exactly "yearsExperience", e.g. "Years of Experience", "Year(s) Experience", etc.
 
-        If the "years_experience" key is not present, the validator iterates over all the keys in the input data and checks if the key contains the words "year" or "experience". If a matching key is found, the value associated with that key is moved to the "years_experience" key, and the original key is removed from the input data.
+        If the "yearsExperience" key is not present, the validator iterates over all the keys in the input data and checks if the key contains the words "year" or "experience". If a matching key is found, the value associated with that key is moved to the "yearsExperience" key, and the original key is removed from the input data.
         """
-        if "years_experience" not in values:
+        if "yearsExperience" not in values:
             for key in list(values.keys()):
                 lowered = key.lower()
                 if "year" in lowered or "experience" in lowered:
-                    values["years_experience"] = values.pop(key)
+                    values["yearsExperience"] = values.pop(key)
                     break
         return values
 
@@ -75,38 +75,39 @@ class ShiftDetails(BaseModel):
 class ScheduleRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    start_date: date
-    num_days: int
-    shift_durations: List[int] = Field(default=SHIFT_DURATIONS)
-    min_nurses_per_shift: int = Field(default=MIN_NURSES_PER_SHIFT)
-    min_seniors_per_shift: int = Field(default=MIN_SENIORS_PER_SHIFT)
-    max_weekly_hours: int = Field(default=MAX_WEEKLY_HOURS)
-    preferred_weekly_hours: int = Field(default=PREFERRED_WEEKLY_HOURS)
-    pref_weekly_hours_hard: bool = False
-    min_acceptable_weekly_hours: int = Field(default=MIN_ACCEPTABLE_WEEKLY_HOURS)
-    min_weekly_rest: int = Field(default=MIN_WEEKLY_REST)
-    activate_am_cov: bool = True
-    am_coverage_min_percent: int = Field(default=AM_COVERAGE_MIN_PERCENT)
-    am_coverage_min_hard: bool = False
-    am_coverage_relax_step: int = Field(default=AM_COVERAGE_RELAX_STEP)
-    am_senior_min_percent: int = Field(default=AM_SENIOR_MIN_PERCENT)
-    am_senior_min_hard: bool = False
-    am_senior_relax_step: int = Field(default=AM_SENIOR_RELAX_STEP)
-    weekend_rest: bool = True
-    back_to_back_shift: bool = False
-    use_sliding_window: bool = False
-    shift_balance: bool = False
-    priority_setting: str = "50/50"
-    fixed_assignments: Optional[List[FixedAssignment]] = None
-    shift_details: Optional[List[ShiftDetails]] = None
+    startDate: date
+    numDays: int
+    shiftDurations: List[int] = Field(default=SHIFT_DURATIONS)
+    minNursesPerShift: int = Field(default=MIN_NURSES_PER_SHIFT)
+    minSeniorsPerShift: int = Field(default=MIN_SENIORS_PER_SHIFT)
+    maxWeeklyHours: int = Field(default=MAX_WEEKLY_HOURS)
+    preferredWeeklyHours: int = Field(default=PREFERRED_WEEKLY_HOURS)
+    prefWeeklyHoursHard: bool = False
+    minAcceptableWeeklyHours: int = Field(default=MIN_ACCEPTABLE_WEEKLY_HOURS)
+    minWeeklyRest: int = Field(default=MIN_WEEKLY_REST)
+    weekendRest: bool = True
+    backToBackShift: bool = False
+    useSlidingWindow: bool = False
+    shiftBalance: bool = False
+    prioritySetting: str = "50/50"
+    fixedAssignments: Optional[List[FixedAssignment]] = None
+    shiftDetails: Optional[List[ShiftDetails]] = None
+    # Uncomment if you want to use AM coverage constraints
+    # activate_am_cov: bool = True
+    # am_coverage_min_percent: int = Field(default=AM_COVERAGE_MIN_PERCENT)
+    # am_coverage_min_hard: bool = False
+    # am_coverage_relax_step: int = Field(default=AM_COVERAGE_RELAX_STEP)
+    # am_senior_min_percent: int = Field(default=AM_SENIOR_MIN_PERCENT)
+    # am_senior_min_hard: bool = False
+    # am_senior_relax_step: int = Field(default=AM_SENIOR_RELAX_STEP)
 
     @model_validator(mode="after")
     def validate_shift_details(self) -> "ScheduleRequest":
         seen_keys = set()
         seen_shift_types = set()
 
-        if self.shift_details is not None:
-            for shift in self.shift_details:
+        if self.shiftDetails is not None:
+            for shift in self.shiftDetails:
                 key = (shift.shiftType, shift.maxWorkingShift)
 
                 # Check 1: no duplicate (shiftType, maxWorkingShift) rules

@@ -11,6 +11,7 @@ This module contains the high priority rules for the nurse scheduling problem.
 """
 
 
+# High priority rules are those that must be satisfied for a feasible solution to exist.
 def shifts_per_day_rule(model, state: ScheduleState):
     """Ensure that each nurse works 1 shift per day. If a nurse has an EL day, allow either 1 or 2 shifts."""
     for n in state.nurse_names:
@@ -133,6 +134,7 @@ def pref_min_weekly_hours_rule(model, state: ScheduleState):
     Preferred weekly hours and minimum acceptable weekly hours can be reduced by the number of MC/AL/EL days.
     """
     preferred_weekly_minutes = state.preferred_weekly_hours * 60
+    logging.debug("Preferred weekly hours (mins): %d", state.preferred_weekly_hours)
     min_acceptable_weekly_minutes = state.min_acceptable_weekly_hours * 60
     avg_minutes = statistics.mean(state.shift_durations)
 
@@ -251,134 +253,134 @@ def no_back_to_back_shift_rule(model, state: ScheduleState):
                     ).OnlyEnforceIf(state.hard_rules["No b2b"].flag)
 
 
-def am_coverage_rule(model, state: ScheduleState):
-    """
-    Apply AM coverage rules based on user configuration.
+# def am_coverage_rule(model, state: ScheduleState):
+#     """
+#     Apply AM coverage rules based on user configuration.
 
-    This function applies constraints to ensure a minimum percentage of nurses work the AM shift each day.
-    If `am_coverage_min_hard` is True, it strictly enforces the minimum AM coverage percentage. If False,
-    it employs a series of relaxed levels, penalizing deviations from the desired coverage incrementally.
+#     This function applies constraints to ensure a minimum percentage of nurses work the AM shift each day.
+#     If `am_coverage_min_hard` is True, it strictly enforces the minimum AM coverage percentage. If False,
+#     it employs a series of relaxed levels, penalizing deviations from the desired coverage incrementally.
 
-    Parameters:
-    - model: The constraint model to which rules are added.
-    - state: The current schedule state, containing configuration and data for nurse scheduling.
+#     Parameters:
+#     - model: The constraint model to which rules are added.
+#     - state: The current schedule state, containing configuration and data for nurse scheduling.
 
-    Behavior:
-    - Hard Constraint: Enforces the minimum AM coverage percentage across all shifts if `am_coverage_min_hard` is enabled.
-    - Soft Constraint: Uses relaxed coverage levels and applies penalties for failing to meet each level.
-    - Fallback: Ensures AM shifts outnumber PM and Night shifts if all relaxed levels fail.
+#     Behavior:
+#     - Hard Constraint: Enforces the minimum AM coverage percentage across all shifts if `am_coverage_min_hard` is enabled.
+#     - Soft Constraint: Uses relaxed coverage levels and applies penalties for failing to meet each level.
+#     - Fallback: Ensures AM shifts outnumber PM and Night shifts if all relaxed levels fail.
 
-    This rule supports gradual relaxation using `am_coverage_relax_step` and applies corresponding penalties
-    from `AM_COVERAGE_PENALTY` for each level violation.
-    """
+#     This rule supports gradual relaxation using `am_coverage_relax_step` and applies corresponding penalties
+#     from `AM_COVERAGE_PENALTY` for each level violation.
+#     """
 
-    if state.activate_am_cov:
-        if not state.am_coverage_min_hard:
-            levels = list(
-                range(state.am_coverage_min_percent, 34, -state.am_coverage_relax_step)
-            )  # [65, 60, 55] if step = 5
-            penalties = [
-                (i + 1) * AM_COVERAGE_PENALTY for i in range(len(levels))
-            ]  # [5, 10, 15]
+#     if state.activate_am_cov:
+#         if not state.am_coverage_min_hard:
+#             levels = list(
+#                 range(state.am_coverage_min_percent, 34, -state.am_coverage_relax_step)
+#             )  # [65, 60, 55] if step = 5
+#             penalties = [
+#                 (i + 1) * AM_COVERAGE_PENALTY for i in range(len(levels))
+#             ]  # [5, 10, 15]
 
-        for d in range(-state.prev_days, state.num_days):
-            total_shifts = sum(
-                state.work[n, d, s]
-                for n in state.nurse_names
-                for s in range(state.shift_types)
-            )
-            am_shifts = sum(state.work[n, d, 0] for n in state.nurse_names)
-            pm_shifts = sum(state.work[n, d, 1] for n in state.nurse_names)
-            night_shifts = sum(state.work[n, d, 2] for n in state.nurse_names)
+#         for d in range(-state.prev_days, state.num_days):
+#             total_shifts = sum(
+#                 state.work[n, d, s]
+#                 for n in state.nurse_names
+#                 for s in range(state.shift_types)
+#             )
+#             am_shifts = sum(state.work[n, d, 0] for n in state.nurse_names)
+#             pm_shifts = sum(state.work[n, d, 1] for n in state.nurse_names)
+#             night_shifts = sum(state.work[n, d, 2] for n in state.nurse_names)
 
-            if state.am_coverage_min_hard:
-                model.Add(
-                    am_shifts * 100 >= state.am_coverage_min_percent * total_shifts
-                ).OnlyEnforceIf(state.hard_rules["AM cov min"].flag)
+#             if state.am_coverage_min_hard:
+#                 model.Add(
+#                     am_shifts * 100 >= state.am_coverage_min_percent * total_shifts
+#                 ).OnlyEnforceIf(state.hard_rules["AM cov min"].flag)
 
-            else:
-                flags = [
-                    model.NewBoolVar(f"day_{d}_am_min_{lvl}") for lvl in levels
-                ]  # flags for each level
-                fallback = model.NewBoolVar(
-                    f"day_{d}_all_levels_failed"
-                )  # fallback flag
+#             else:
+#                 flags = [
+#                     model.NewBoolVar(f"day_{d}_am_min_{lvl}") for lvl in levels
+#                 ]  # flags for each level
+#                 fallback = model.NewBoolVar(
+#                     f"day_{d}_all_levels_failed"
+#                 )  # fallback flag
 
-                for flag, lvl in zip(flags, levels):
-                    model.Add(am_shifts * 100 >= lvl * total_shifts).OnlyEnforceIf(flag)
-                    model.Add(am_shifts * 100 < lvl * total_shifts).OnlyEnforceIf(
-                        flag.Not()
-                    )
+#                 for flag, lvl in zip(flags, levels):
+#                     model.Add(am_shifts * 100 >= lvl * total_shifts).OnlyEnforceIf(flag)
+#                     model.Add(am_shifts * 100 < lvl * total_shifts).OnlyEnforceIf(
+#                         flag.Not()
+#                     )
 
-                # Hard fallback: all levels failed
-                model.AddBoolAnd([flag.Not() for flag in flags]).OnlyEnforceIf(fallback)
-                model.AddBoolOr(flags).OnlyEnforceIf(fallback.Not())
-                # Enforce AM > PM and AM > Night if all levels fail (hard constraint)
-                model.Add(am_shifts > pm_shifts).OnlyEnforceIf(fallback).OnlyEnforceIf(
-                    state.hard_rules["AM cov majority"].flag
-                )
-                model.Add(am_shifts > night_shifts).OnlyEnforceIf(
-                    fallback
-                ).OnlyEnforceIf(state.hard_rules["AM cov majority"].flag)
+#                 # Hard fallback: all levels failed
+#                 model.AddBoolAnd([flag.Not() for flag in flags]).OnlyEnforceIf(fallback)
+#                 model.AddBoolOr(flags).OnlyEnforceIf(fallback.Not())
+#                 # Enforce AM > PM and AM > Night if all levels fail (hard constraint)
+#                 model.Add(am_shifts > pm_shifts).OnlyEnforceIf(fallback).OnlyEnforceIf(
+#                     state.hard_rules["AM cov majority"].flag
+#                 )
+#                 model.Add(am_shifts > night_shifts).OnlyEnforceIf(
+#                     fallback
+#                 ).OnlyEnforceIf(state.hard_rules["AM cov majority"].flag)
 
-                # Penalties for AM ratio violations (only failed levels penalised)
-                for i, lvl in enumerate(levels):
-                    penalise = model.NewBoolVar(f"day_{d}_penalise_lvl_{lvl}_am")
-                    model.Add(penalise == flags[i].Not())
-                    state.high_priority_penalty.append(penalise * penalties[i])
+#                 # Penalties for AM ratio violations (only failed levels penalised)
+#                 for i, lvl in enumerate(levels):
+#                     penalise = model.NewBoolVar(f"day_{d}_penalise_lvl_{lvl}_am")
+#                     model.Add(penalise == flags[i].Not())
+#                     state.high_priority_penalty.append(penalise * penalties[i])
 
 
-def am_senior_staffing_lvl_rule(model, state: ScheduleState):
-    """
-    Enforce the minimum percentage of senior nurses on AM shifts. If the flag is set to "hard", the constraint is enforced strictly.
-    If not, the constraint is relaxed by the specified step value, with a penalty incurred for each level that is not met.
+# def am_senior_staffing_lvl_rule(model, state: ScheduleState):
+#     """
+#     Enforce the minimum percentage of senior nurses on AM shifts. If the flag is set to "hard", the constraint is enforced strictly.
+#     If not, the constraint is relaxed by the specified step value, with a penalty incurred for each level that is not met.
 
-    The levels are specified as a list of percentages, e.g. [65, 60, 55] if the step is 5. The penalty for each level is the same as the step value, e.g. [5, 10, 15] in the above example.
+#     The levels are specified as a list of percentages, e.g. [65, 60, 55] if the step is 5. The penalty for each level is the same as the step value, e.g. [5, 10, 15] in the above example.
 
-    The constraint is enforced for each day separately, and the penalty is only incurred if the constraint is not met for that day.
+#     The constraint is enforced for each day separately, and the penalty is only incurred if the constraint is not met for that day.
 
-    """
-    if not state.am_senior_min_hard:
-        levels = list(
-            range(state.am_senior_min_percent, 50, -state.am_senior_relax_step)
-        )  # [65, 60, 55] if step = 5
-        penalties = [
-            (i + 1) * AM_SENIOR_PENALTY for i in range(len(levels))
-        ]  # [5, 10, 15]
+#     """
+#     if not state.am_senior_min_hard:
+#         levels = list(
+#             range(state.am_senior_min_percent, 50, -state.am_senior_relax_step)
+#         )  # [65, 60, 55] if step = 5
+#         penalties = [
+#             (i + 1) * AM_SENIOR_PENALTY for i in range(len(levels))
+#         ]  # [5, 10, 15]
 
-    for d in range(-state.prev_days, state.num_days):
-        am_shifts = sum(state.work[n, d, 0] for n in state.nurse_names)
-        am_seniors = sum(state.work[n, d, 0] for n in state.senior_names)
-        am_juniors = am_shifts - am_seniors  # number of junior nurses on AM shift
+#     for d in range(-state.prev_days, state.num_days):
+#         am_shifts = sum(state.work[n, d, 0] for n in state.nurse_names)
+#         am_seniors = sum(state.work[n, d, 0] for n in state.senior_names)
+#         am_juniors = am_shifts - am_seniors  # number of junior nurses on AM shift
 
-        if state.am_senior_min_hard:
-            model.Add(
-                am_seniors * 100 >= state.am_senior_min_percent * am_shifts
-            ).OnlyEnforceIf(state.hard_rules["AM snr min"].flag)
+#         if state.am_senior_min_hard:
+#             model.Add(
+#                 am_seniors * 100 >= state.am_senior_min_percent * am_shifts
+#             ).OnlyEnforceIf(state.hard_rules["AM snr min"].flag)
 
-        else:
-            flags = [
-                model.NewBoolVar(f"day_{d}_senior_min_{lvl}") for lvl in levels
-            ]  # flags for each level
-            fallback = model.NewBoolVar(f"day_{d}_all_levels_failed")  # fallback flag
+#         else:
+#             flags = [
+#                 model.NewBoolVar(f"day_{d}_senior_min_{lvl}") for lvl in levels
+#             ]  # flags for each level
+#             fallback = model.NewBoolVar(f"day_{d}_all_levels_failed")  # fallback flag
 
-            for flag, lvl in zip(flags, levels):
-                model.Add(am_seniors * 100 >= lvl * am_shifts).OnlyEnforceIf(flag)
-                model.Add(am_seniors * 100 < lvl * am_shifts).OnlyEnforceIf(flag.Not())
+#             for flag, lvl in zip(flags, levels):
+#                 model.Add(am_seniors * 100 >= lvl * am_shifts).OnlyEnforceIf(flag)
+#                 model.Add(am_seniors * 100 < lvl * am_shifts).OnlyEnforceIf(flag.Not())
 
-            # Hard fallback: all levels failed
-            model.AddBoolAnd([flag.Not() for flag in flags]).OnlyEnforceIf(fallback)
-            model.AddBoolOr(flags).OnlyEnforceIf(fallback.Not())
-            # Enforce AM seniors >= AM junior if all levels fail (hard constraint)
-            model.Add(am_seniors >= am_juniors).OnlyEnforceIf(fallback).OnlyEnforceIf(
-                state.hard_rules["AM snr majority"].flag
-            )
+#             # Hard fallback: all levels failed
+#             model.AddBoolAnd([flag.Not() for flag in flags]).OnlyEnforceIf(fallback)
+#             model.AddBoolOr(flags).OnlyEnforceIf(fallback.Not())
+#             # Enforce AM seniors >= AM junior if all levels fail (hard constraint)
+#             model.Add(am_seniors >= am_juniors).OnlyEnforceIf(fallback).OnlyEnforceIf(
+#                 state.hard_rules["AM snr majority"].flag
+#             )
 
-            # Penalties for senior ratio violations (only failed levels penalised)
-            for i, lvl in enumerate(levels):
-                penalise = model.NewBoolVar(f"day_{d}_penalise_lvl_{lvl}_snr")
-                model.Add(penalise == flags[i].Not())
-                state.high_priority_penalty.append(penalise * penalties[i])
+#             # Penalties for senior ratio violations (only failed levels penalised)
+#             for i, lvl in enumerate(levels):
+#                 penalise = model.NewBoolVar(f"day_{d}_penalise_lvl_{lvl}_snr")
+#                 model.Add(penalise == flags[i].Not())
+#                 state.high_priority_penalty.append(penalise * penalties[i])
 
 
 # shift details rule (ICU)

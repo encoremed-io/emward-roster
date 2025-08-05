@@ -31,8 +31,8 @@ router = APIRouter(prefix="/schedule", tags=["Roster"])
 async def generate_schedule(
     profiles: List[NurseProfile],
     preferences: List[NursePreference],
-    training_shifts: List[NurseTraining],
-    previous_schedule: List[PrevSchedule],
+    trainingShifts: List[NurseTraining],
+    previousSchedule: List[PrevSchedule],
     request: ScheduleRequest,
 ):
     try:
@@ -75,8 +75,8 @@ async def generate_schedule(
             prefs_df.index.name = "Name"
 
         # Handle training shifts
-        if training_shifts:
-            raw_train = pd.DataFrame([t.model_dump() for t in training_shifts])
+        if trainingShifts:
+            raw_train = pd.DataFrame([t.model_dump() for t in trainingShifts])
             training_df = raw_train.pivot(
                 index="nurse", columns="date", values="training"
             )
@@ -88,8 +88,8 @@ async def generate_schedule(
             training_df = pd.DataFrame(index=profiles_df["Name"])
             training_df.index.name = "Name"
 
-        if previous_schedule:
-            prev_sched_df = pd.DataFrame([p.model_dump() for p in previous_schedule])
+        if previousSchedule:
+            prev_sched_df = pd.DataFrame([p.model_dump() for p in previousSchedule])
             # set nurse index
             if "index" not in prev_sched_df.columns:
                 raise HTTPException(
@@ -131,16 +131,16 @@ async def generate_schedule(
 
         # Handle fixed assignments
         fixed_assignments_dict = None
-        if request.fixed_assignments:
+        if request.fixedAssignments:
             # build a dict keyed by (nurse, date)
             fixed_assignments_dict = {
-                (fa.nurse, fa.date): fa.fixed for fa in request.fixed_assignments
+                (fa.nurse, fa.date): fa.fixed for fa in request.fixedAssignments
             }
             # now convert dates to day‐indices
             fixed_idx_dict = {}
             for (nurse, dt), shift in fixed_assignments_dict.items():
-                idx = (pd.Timestamp(dt) - pd.Timestamp(request.start_date)).days
-                if idx < 0 or idx >= request.num_days:
+                idx = (pd.Timestamp(dt) - pd.Timestamp(request.startDate)).days
+                if idx < 0 or idx >= request.numDays:
                     raise HTTPException(
                         400,
                         f"Fixed assignment for {nurse} on {dt} is outside the scheduling window",
@@ -148,7 +148,7 @@ async def generate_schedule(
                 fixed_idx_dict[(nurse, idx)] = shift
 
         # Convert hours→minutes so the CP‑SAT model sees minutes everywhere
-        dur_minutes = [h * 60 for h in request.shift_durations]
+        dur_minutes = [h * 60 for h in request.shiftDurations]
 
         # Call scheduling function
 
@@ -164,27 +164,22 @@ async def generate_schedule(
         # logging.info("training_df.columns sample:%r", list(training_df.columns)[:5])
         # logging.info("prev_schedule_df.shape:    %s, index sample: %r",
         #              prev_schedule_df.shape, list(prev_schedule_df.index)[:5])
-        # logging.info("start_date:                %s", request.start_date)
-        # logging.info("num_days:                  %d", request.num_days)
-        # logging.info("shift_durations (hrs):     %r", request.shift_durations)
-        # logging.info("shift_durations (mins):    %r", dur_minutes)
-        # logging.info("min_nurses_per_shift:      %d", request.min_nurses_per_shift)
-        # logging.info("min_seniors_per_shift:     %d", request.min_seniors_per_shift)
-        # logging.info("max_weekly_hours (hrs):    %d", request.max_weekly_hours)
-        # logging.info("max_weekly_hours (mins):   %d", request.max_weekly_hours * 60)
-        # logging.info("preferred_weekly_hours (hrs):  %d", request.preferred_weekly_hours)
-        # logging.info("preferred_weekly_hours (mins): %d", request.preferred_weekly_hours * 60)
-        # logging.info("min_accept_weekly_hours (hrs):  %d", request.min_acceptable_weekly_hours)
-        # logging.info("min_accept_weekly_hours (mins): %d", request.min_acceptable_weekly_hours * 60)
-        # logging.info("activate_am_cov:           %s", request.activate_am_cov)
-        # logging.info("am_coverage_min_percent:   %d", request.am_coverage_min_percent)
-        # logging.info("am_coverage_min_hard:      %s", request.am_coverage_min_hard)
-        # logging.info("am_senior_min_percent:     %d", request.am_senior_min_percent)
-        # logging.info("am_senior_min_hard:        %s", request.am_senior_min_hard)
-        # logging.info("weekend_rest:              %s", request.weekend_rest)
-        # logging.info("back_to_back_shift:        %s", request.back_to_back_shift)
-        # logging.info("use_sliding_window:        %s", request.use_sliding_window)
-        # logging.info("shift_balance:             %s", request.shift_balance)
+        # logging.info("startDate:                %s", request.startDate)
+        # logging.info("numDays:                  %d", request.numDays)
+        # logging.info("shiftDurations (hrs):     %r", request.shiftDurations)
+        # logging.info("shiftDurations (mins):    %r", dur_minutes)
+        # logging.info("minNursesPerShift:      %d", request.minNursesPerShift)
+        # logging.info("minSeniorsPerShift:     %d", request.minSeniorsPerShift)
+        # logging.info("maxWeeklyHours (hrs):    %d", request.maxWeeklyHours)
+        # logging.info("maxWeeklyHours (mins):   %d", request.maxWeeklyHours * 60)
+        # logging.info("preferredWeeklyHours (hrs):  %d", request.preferredWeeklyHours)
+        # logging.info("preferredWeeklyHours (mins): %d", request.preferredWeeklyHours * 60)
+        # logging.info("minAcceptableWeeklyHours (hrs):  %d", request.minAcceptableWeeklyHours)
+        # logging.info("minAcceptableWeeklyHours (mins): %d", request.minAcceptableWeeklyHours * 60)
+        # logging.info("weekendRest:              %s", request.weekendRest)
+        # logging.info("backToBackShift:        %s", request.backToBackShift)
+        # logging.info("useSlidingWindow:        %s", request.useSlidingWindow)
+        # logging.info("shiftBalance:             %s", request.shiftBalance)
         # logging.info("fixed_assignments count:   %s", len(fixed_assignments_dict or {}))
 
         schedule, summary, violations, metrics = build_schedule_model(
@@ -192,30 +187,31 @@ async def generate_schedule(
             preferences_df=prefs_df,
             training_shifts_df=training_df,
             prev_schedule_df=prev_schedule_df,
-            start_date=pd.Timestamp(request.start_date),
-            num_days=request.num_days,
+            start_date=pd.Timestamp(request.startDate),
+            num_days=request.numDays,
             shift_durations=dur_minutes,
-            min_nurses_per_shift=request.min_nurses_per_shift,
-            min_seniors_per_shift=request.min_seniors_per_shift,
-            max_weekly_hours=request.max_weekly_hours,
-            preferred_weekly_hours=request.preferred_weekly_hours,
-            pref_weekly_hours_hard=request.pref_weekly_hours_hard,
-            min_acceptable_weekly_hours=request.min_acceptable_weekly_hours,
-            min_weekly_rest=request.min_weekly_rest,
-            activate_am_cov=request.activate_am_cov,
-            am_coverage_min_percent=request.am_coverage_min_percent,
-            am_coverage_min_hard=request.am_coverage_min_hard,
-            am_coverage_relax_step=request.am_coverage_relax_step,
-            am_senior_min_percent=request.am_senior_min_percent,
-            am_senior_min_hard=request.am_senior_min_hard,
-            am_senior_relax_step=request.am_senior_relax_step,
-            weekend_rest=request.weekend_rest,
-            back_to_back_shift=request.back_to_back_shift,
-            use_sliding_window=request.use_sliding_window,
-            shift_balance=request.shift_balance,
-            priority_setting=request.priority_setting,
-            fixed_assignments=fixed_idx_dict if fixed_assignments_dict else None,
-            shift_details=request.shift_details,
+            min_nurses_per_shift=request.minNursesPerShift,
+            min_seniors_per_shift=request.minSeniorsPerShift,
+            max_weekly_hours=request.maxWeeklyHours,
+            preferred_weekly_hours=request.preferredWeeklyHours,
+            pref_weekly_hours_hard=request.prefWeeklyHoursHard,
+            min_acceptable_weekly_hours=request.minAcceptableWeeklyHours,
+            min_weekly_rest=request.minWeeklyRest,
+            weekend_rest=request.weekendRest,
+            back_to_back_shift=request.backToBackShift,
+            use_sliding_window=request.useSlidingWindow,
+            shift_balance=request.shiftBalance,
+            priority_setting=request.prioritySetting,
+            shift_details=request.shiftDetails,
+            # Uncomment if you want to use AM coverage constraints
+            # fixed_assignments=fixed_idx_dict if fixed_assignments_dict else None,
+            # activate_am_cov=request.activate_am_cov,
+            # am_coverage_min_percent=request.am_coverage_min_percent,
+            # am_coverage_min_hard=request.am_coverage_min_hard,
+            # am_coverage_relax_step=request.am_coverage_relax_step,
+            # am_senior_min_percent=request.am_senior_min_percent,
+            # am_senior_min_hard=request.am_senior_min_hard,
+            # am_senior_relax_step=request.am_senior_relax_step,
         )
 
         # Convert DataFrames to JSON-friendly format
