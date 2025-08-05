@@ -1,8 +1,9 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from ortools.sat.python import cp_model
 from typing import Any, Dict, List, Set, Tuple, Optional
 from datetime import date
 import pandas as pd
+
 
 @dataclass
 class ScheduleState:
@@ -12,7 +13,7 @@ class ScheduleState:
     """
 
     # model inputs
-    work: Dict[Tuple[str,int,int], cp_model.IntVar]
+    work: Dict[Tuple[str, int, int], cp_model.IntVar]
     """A dictionary with keys `(nurse_name, day, shift_type)` and values a
     boolean variable indicating if the nurse is assigned to that shift.
     """
@@ -20,13 +21,15 @@ class ScheduleState:
     """A list of all nurse names."""
     senior_names: Set[str]
     """A set of all senior nurse names."""
-    shift_str_to_idx: Dict[str,int]
+    double_shift_nurses: List[str]
+    """A set of all nurses who can work double shifts."""
+    shift_str_to_idx: Dict[str, int]
     """A dictionary mapping shift strings (e.g. 'AM', 'PM', 'Night') to their
     corresponding integer values.
     """
     previous_schedule: pd.DataFrame
     """A pandas DataFrame of the previous schedule."""
-    fixed_assignments: Dict[Tuple[str,int], str]
+    fixed_assignments: Dict[Tuple[str, int], str]
     """A dictionary mapping `(nurse_name, day)` tuples to shift strings.
     """
     mc_sets: Dict[str, Set[int]]
@@ -41,7 +44,7 @@ class ScheduleState:
     """A dictionary mapping each nurse to a set of days when they are not
     available to work due to Emergency Leave.
     """
-    weekend_pairs: List[Tuple[int,int]]
+    weekend_pairs: List[Tuple[int, int]]
     """A list of tuples of days (Sunday, Monday) indicating weekends."""
     prefs_by_nurse: Dict[str, Dict[int, Tuple[int, Any]]]
     """A dictionary mapping each nurse to a dictionary of their preferred
@@ -131,3 +134,6 @@ class ScheduleState:
     """A list of low priority penalty terms."""
     gap_pct: Optional[cp_model.IntVar] = None
     """A variable to store the gap percentage from the fairness rule."""
+
+    shift_details: List[Any] = field(default_factory=list)
+    """A list of shift details for validation."""

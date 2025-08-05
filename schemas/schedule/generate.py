@@ -11,6 +11,7 @@ class NurseProfile(BaseModel):
 
     name: str
     title: str
+    doubleShift: bool
     years_experience: int
 
     @model_validator(mode="before")
@@ -63,6 +64,14 @@ class FixedAssignment(BaseModel):
     fixed: str
 
 
+class ShiftDetails(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    shiftType: str
+    maxWorkingShift: int
+    restDayEligible: int
+
+
 class ScheduleRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -89,3 +98,29 @@ class ScheduleRequest(BaseModel):
     shift_balance: bool = False
     priority_setting: str = "50/50"
     fixed_assignments: Optional[List[FixedAssignment]] = None
+    shift_details: Optional[List[ShiftDetails]] = None
+
+    @model_validator(mode="after")
+    def validate_shift_details(self) -> "ScheduleRequest":
+        seen_keys = set()
+        seen_shift_types = set()
+
+        if self.shift_details is not None:
+            for shift in self.shift_details:
+                key = (shift.shiftType, shift.maxWorkingShift)
+
+                # Check 1: no duplicate (shiftType, maxWorkingShift) rules
+                if key in seen_keys:
+                    raise ValueError(
+                        f"Duplicate rule for shiftType {shift.shiftType} and maxWorkingShift {shift.maxWorkingShift}"
+                    )
+                seen_keys.add(key)
+
+                # Check 2: only one rule per shiftType allowed (optional)
+                # if shift.shiftType in seen_shift_types:
+                #     raise ValueError(
+                #         f"Only one rule per shiftType is allowed. Found duplicate for shiftType {shift.shiftType}"
+                #     )
+                # seen_shift_types.add(shift.shiftType)
+
+        return self

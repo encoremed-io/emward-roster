@@ -1,31 +1,39 @@
 {
-    "SHIFT_LABELS": ["AM", "PM", "Night"],
-    "SHIFT_DURATIONS": [7, 7, 10],
+    "SHIFT_LABELS": [
+        "AM",
+        "PM",
+        "Night"
+    ],
+    "SHIFT_DURATIONS": [
+        7,
+        7,
+        10
+    ],
     "AVG_HOURS": 8,
     "DAYS_PER_WEEK": 7,
-    "NO_WORK_LABELS": ["REST", "MC", "EL", "AL", "TR"],
-
+    "NO_WORK_LABELS": [
+        "REST",
+        "MC",
+        "EL",
+        "AL",
+        "TR"
+    ],
     "MIN_NURSES_PER_SHIFT": 4,
     "MIN_SENIORS_PER_SHIFT": 1,
     "MAX_WEEKLY_HOURS": 42,
     "MIN_WEEKLY_REST": 1,
     "MAX_MC_DAYS_PER_WEEK": 2,
     "MAX_CONSECUTIVE_MC": 2,
-
     "PREFERRED_WEEKLY_HOURS": 40,
     "MIN_ACCEPTABLE_WEEKLY_HOURS": 30,
     "PREF_HOURS_PENALTY": 5,
-
     "DOUBLE_SHIFT_PENALTY": 1,
-
     "AM_COVERAGE_MIN_PERCENT": 60,
     "AM_COVERAGE_PENALTY": 5,
     "AM_COVERAGE_RELAX_STEP": 5,
-
     "AM_SENIOR_MIN_PERCENT": 60,
     "AM_SENIOR_PENALTY": 5,
     "AM_SENIOR_RELAX_STEP": 5,
-
     "PREF_MISS_PENALTY": 3,
     "FAIRNESS_GAP_PENALTY": 1,
     "FAIRNESS_GAP_THRESHOLD": 50,
