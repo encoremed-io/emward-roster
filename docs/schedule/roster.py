@@ -7,6 +7,7 @@ schedule_roster_description = """
         - `name`: Name of the nurse
         - `title`: Title of the nurse (e.g. "Senior Nurse", "Junior Nurse")
         - `years_experience`: Number of years of experience the nurse has
+        - `doubleShift`: Whether the nurse can work double shifts (True/False)
     - `preferences`: List of `NursePreference` objects, which contain the following information:
         - `nurse`: Name of the nurse
         - `date`: Date of the shift
