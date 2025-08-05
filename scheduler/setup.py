@@ -1,6 +1,12 @@
 from datetime import timedelta
+import logging
 from ortools.sat.python import cp_model
-from utils.nurse_utils import get_senior_set, get_nurse_names, shuffle_order
+from utils.nurse_utils import (
+    get_senior_set,
+    get_nurse_names,
+    shuffle_order,
+    get_doubleShift_nurses,
+)
 from utils.shift_utils import (
     make_shift_index,
     extract_prefs_info,
@@ -89,6 +95,9 @@ def setup_model(
     senior_names = get_senior_set(
         profiles_df
     )  # Assume senior nurses have ≥3 years experience
+    double_shift_nurses = get_doubleShift_nurses(
+        profiles_df
+    )  # Nurses who can work double shifts
     shift_str_to_idx = make_shift_index(
         shift_labels
     )  # Map shift code → int index for your decision variables
@@ -160,6 +169,7 @@ def setup_model(
         og_nurse_names,
         clean_prev_sched,
         senior_names,
+        double_shift_nurses,
         shift_str_to_idx,
         date_start,
         hard_rules,

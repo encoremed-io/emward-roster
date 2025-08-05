@@ -21,6 +21,8 @@ class ScheduleState:
     """A list of all nurse names."""
     senior_names: Set[str]
     """A set of all senior nurse names."""
+    double_shift_nurses: List[str]
+    """A set of all nurses who can work double shifts."""
     shift_str_to_idx: Dict[str, int]
     """A dictionary mapping shift strings (e.g. 'AM', 'PM', 'Night') to their
     corresponding integer values.

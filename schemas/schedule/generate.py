@@ -11,6 +11,7 @@ class NurseProfile(BaseModel):
 
     name: str
     title: str
+    doubleShift: bool
     years_experience: int
 
     @model_validator(mode="before")
@@ -116,10 +117,10 @@ class ScheduleRequest(BaseModel):
                 seen_keys.add(key)
 
                 # Check 2: only one rule per shiftType allowed (optional)
-                if shift.shiftType in seen_shift_types:
-                    raise ValueError(
-                        f"Only one rule per shiftType is allowed. Found duplicate for shiftType {shift.shiftType}"
-                    )
-                seen_shift_types.add(shift.shiftType)
+                # if shift.shiftType in seen_shift_types:
+                #     raise ValueError(
+                #         f"Only one rule per shiftType is allowed. Found duplicate for shiftType {shift.shiftType}"
+                #     )
+                # seen_shift_types.add(shift.shiftType)
 
         return self

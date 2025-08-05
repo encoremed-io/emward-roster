@@ -1,3 +1,4 @@
+from core import state
 from core.state import ScheduleState
 from utils.constants import *
 import statistics
@@ -381,79 +382,7 @@ def am_senior_staffing_lvl_rule(model, state: ScheduleState):
 
 
 # shift details rule (ICU)
-# def shift_details_rule(model, state: ScheduleState):
-#     logging.debug("***** shift_details: %s", state.shift_details)
-
-#     if not state.shift_details:
-#         return
-
-#     for rule in state.shift_details:
-#         shift_label = rule.shiftType
-#         max_shifts = rule.maxWorkingShift
-#         required_rest = rule.restDayEligible
-
-#         # Convert shift label to index
-#         if isinstance(shift_label, str):
-#             shift_type = state.shift_str_to_idx.get(shift_label.upper())
-
-#             if shift_type is None:
-#                 raise ValueError(f"Unknown shiftType '{shift_label}' in shift_details")
-#         else:
-#             shift_type = shift_label  # already an int
-
-#         logging.debug(
-#             "Processing rule: nurse shift '%s' → max %s then %s rest",
-#             shift_label,
-#             max_shifts,
-#             required_rest,
-#         )
-
-#         for nurse in state.nurse_names:
-#             for start_day in range(state.num_days - max_shifts - required_rest + 1):
-#                 # Collect work segment
-#                 work_segment = [
-#                     state.work[nurse, start_day + i, shift_type]
-#                     for i in range(max_shifts)
-#                 ]
-
-#                 overworked = model.NewBoolVar(
-#                     f"{nurse}_overworked_{shift_label}_{start_day}"
-#                 )
-#                 model.Add(sum(work_segment) == max_shifts).OnlyEnforceIf(overworked)
-#                 model.Add(sum(work_segment) != max_shifts).OnlyEnforceIf(
-#                     overworked.Not()
-#                 )
-
-#                 # Collect rest segment
-#                 rest_segment = []
-#                 for i in range(required_rest):
-#                     rest_day = start_day + max_shifts + i
-#                     rest_var = model.NewBoolVar(
-#                         f"{nurse}_rest_after_{shift_label}_{rest_day}"
-#                     )
-#                     model.Add(
-#                         sum(
-#                             state.work[nurse, rest_day, s]
-#                             for s in range(state.shift_types)
-#                         )
-#                         == 0
-#                     ).OnlyEnforceIf(rest_var)
-#                     model.Add(
-#                         sum(
-#                             state.work[nurse, rest_day, s]
-#                             for s in range(state.shift_types)
-#                         )
-#                         != 0
-#                     ).OnlyEnforceIf(rest_var.Not())
-#                     rest_segment.append(rest_var)
-
-#                 # Enforce rest after overwork
-#                 model.AddBoolAnd(rest_segment).OnlyEnforceIf(overworked)
-
-
 def shift_details_rule(model, state: ScheduleState):
-    import logging
-
     logging.debug("***** shift_details: %s", state.shift_details)
 
     if not state.shift_details:
@@ -512,3 +441,29 @@ def shift_details_rule(model, state: ScheduleState):
 
                 # Enforce: if overworked → must rest
                 model.AddBoolAnd(rest_vars).OnlyEnforceIf(worked_full_streak)
+
+
+# nurses who can work double shifts
+def double_shift_rule(model, state: ScheduleState):
+    """Only restrict double shifts for nurses who are not eligible."""
+    for nurse_name in state.nurse_names:
+        for d in range(-state.prev_days, state.num_days):
+            total_shifts = sum(
+                state.work[nurse_name, d, s] for s in range(state.shift_types)
+            )
+
+            if nurse_name in state.double_shift_nurses:
+                model.Add(total_shifts <= 2)
+            else:
+                model.Add(total_shifts <= 1)
+
+            # Apply: if 2 shifts today → no AM tomorrow
+            if d + 1 < state.num_days:
+                double_shift_today = model.NewBoolVar(f"{nurse_name}_double_{d}")
+                model.Add(total_shifts >= 2).OnlyEnforceIf(double_shift_today)
+                model.Add(total_shifts < 2).OnlyEnforceIf(double_shift_today.Not())
+
+                # Block AM shift next day if double shift today
+                model.Add(state.work[nurse_name, d + 1, 0] == 0).OnlyEnforceIf(
+                    double_shift_today
+                )

@@ -3,9 +3,9 @@ import pandas as pd
 
 def standardize_profile_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Standardize the column names of a nurse profile DataFrame to "Name", "Title", and "Years of experience".
+    Standardize the column names of a nurse profile DataFrame to "Name", "Title", "Years of experience", "Double Shift".
 
-    The function takes a DataFrame with columns representing nurse names, titles, and years of experience.
+    The function takes a DataFrame with columns representing nurse names, titles, years of experience, and double shift eligibility.
     It returns a new DataFrame with the same data, but with standardized column names.
 
     The function first builds a dictionary mapping lower-case, stripped column names to the original column names.
@@ -32,8 +32,13 @@ def standardize_profile_columns(df: pd.DataFrame) -> pd.DataFrame:
     name_src = find_col("name")
     title_src = find_col("title")
     exp_src = find_col("experience", "year")
+    double_shift_src = find_col(
+        "double shift", "doubleshift", "can double", "can work double"
+    )
 
-    out = df[[name_src, title_src, exp_src]].copy()
-    out.columns = ["Name", "Title", "Years of experience"]
+    out = df[[name_src, title_src, exp_src, double_shift_src]].copy()
+    out.columns = ["Name", "Title", "Years of experience", "Double Shift"]
     out["Name"] = out["Name"].astype(str).str.strip().str.upper()
+    out["Double Shift"] = out["Double Shift"].astype(bool)
+
     return out

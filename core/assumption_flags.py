@@ -29,6 +29,7 @@ def define_hard_rules(model: cp_model.CpModel) -> dict[str, HardRule]:
     - Min weekly rest: Minimum number of rest days per week
     - Weekend rest: Alternating weekend rest
     - No b2b: Back-to-back shifts cannot be fully prevented across days or within the same day
+
     """
     return {
         "Min nurses": HardRule(
@@ -82,6 +83,10 @@ def define_hard_rules(model: cp_model.CpModel) -> dict[str, HardRule]:
         "all_consecutive_work": HardRule(
             model.NewBoolVar("assume_all_consecutive_work"),
             "All consecutive work days cannot be guaranteed.\n",
+        ),
+        "no_double_shift": HardRule(
+            model.NewBoolVar("assume_no_double_shift"),
+            "Double shifts cannot be fully prevented.\n",
         ),
         # Add others as needed
     }

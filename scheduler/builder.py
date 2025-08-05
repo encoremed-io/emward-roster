@@ -73,6 +73,7 @@ def build_schedule_model(
         og_nurse_names,
         clean_prev_sched,
         senior_names,
+        double_shift_nurses,
         shift_str_to_idx,
         date_start,
         hard_rules,
@@ -116,6 +117,7 @@ def build_schedule_model(
         work=work,
         nurse_names=nurse_names,
         senior_names=senior_names,
+        double_shift_nurses=double_shift_nurses,
         shift_str_to_idx=shift_str_to_idx,
         previous_schedule=clean_prev_sched,
         fixed_assignments=fixed_assignments,
@@ -169,20 +171,21 @@ def build_schedule_model(
     cm.add_rule(training_shift_rules)
 
     # High priority rules
-    cm.add_rule(shifts_per_day_rule)
-    cm.add_rule(weekly_working_hours_rules)
-    cm.add_rule(min_staffing_per_shift_rule)
-    cm.add_rule(min_rest_per_week_rule)
-    cm.add_rule(weekend_rest_rule)
-    cm.add_rule(no_back_to_back_shift_rule)
-    cm.add_rule(am_coverage_rule)
-    cm.add_rule(am_senior_staffing_lvl_rule)
-    cm.add_rule(shift_details_rule)
+    cm.add_rule(double_shift_rule)  # Handle double shifts for eligible nurses
+    cm.add_rule(weekly_working_hours_rules)  # Handle weekly working hours
+    cm.add_rule(min_staffing_per_shift_rule)  # Handle minimum staffing per shift
+    cm.add_rule(min_rest_per_week_rule)  # Handle minimum rest days per week
+    cm.add_rule(weekend_rest_rule)  # Handle weekend rest
+    cm.add_rule(no_back_to_back_shift_rule)  # Handle back-to-back shifts
+    cm.add_rule(shift_details_rule)  # Handle shift details if provided
+    # cm.add_rule(shifts_per_day_rule) # temporarily disabled
+    # cm.add_rule(am_coverage_rule) # temporarily disabled (to be improved)
+    # cm.add_rule(am_senior_staffing_lvl_rule) # temporarily disabled (to be improved)
 
     # Low priority rules
     # cm.add_rule(preference_rule)
-    cm.add_rule(preference_rule_ts)
-    cm.add_rule(fairness_gap_rule)
+    cm.add_rule(preference_rule_ts)  # Handle training shift preferences
+    cm.add_rule(fairness_gap_rule)  # Handle fairness gap in preferences
     cm.add_rule(shift_balance_rule)
 
     cm.apply_all()  # Apply all rules
