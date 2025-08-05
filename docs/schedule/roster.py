@@ -31,7 +31,6 @@ schedule_roster_description = """
         - `preferredWeeklyHours`: Preferred weekly hours for each nurse
         - `minAcceptableWeeklyHours`: Minimum acceptable weekly hours for each nurse
         - `minWeeklyRest`: Minimum number of rest days per week
-        - `activateAMCov`: Whether to activate AM coverage constraints
         - `weekendRest`: Whether to ensure that each nurse has a weekend rest
         - `backToBackShift`: Whether to prevent back-to-back shifts
         - `useSlidingWindow`: Whether to use a sliding window for shift assignments
