@@ -49,6 +49,7 @@ def build_schedule_model(
     fixed_assignments: Optional[Dict[Tuple[str, int], str]] = None,
     shift_details: Optional[List[ShiftDetails]] = None,
     staff_allocation: Optional[StaffAllocations] = None,
+    allow_double_shift: bool = False,
     # Uncomment if you want to use AM coverage constraints
     # activate_am_cov: bool = False,
     # am_coverage_min_percent: int = AM_COVERAGE_MIN_PERCENT,
@@ -159,6 +160,7 @@ def build_schedule_model(
         low_priority_penalty=[],
         shift_details=shift_details or [],
         staff_allocation=staff_allocation,
+        allow_double_shift=allow_double_shift,
         # Uncomment if you want to use AM coverage constraints
         # activate_am_cov=activate_am_cov,
         # am_coverage_min_percent=am_coverage_min_percent,

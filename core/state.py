@@ -122,6 +122,9 @@ class ScheduleState:
     staff_allocation: Optional[StaffAllocations] = None
     """A dictionary containing staff allocation details, if applicable."""
 
+    allow_double_shift: bool = False
+    """A boolean indicating if double shifts are allowed."""
+
     # Uncomment if you want to use AM coverage constraints
     # activate_am_cov: bool
     # """A boolean indicating if the morning coverage constraint is active."""
