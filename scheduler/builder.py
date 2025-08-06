@@ -12,7 +12,7 @@ from core.state import ScheduleState
 from core.constraint_manager import ConstraintManager
 from scheduler.rules import *
 from scheduler.runner import solve_schedule
-from schemas.schedule.generate import ShiftDetails
+from schemas.schedule.generate import ShiftDetails, StaffAllocations
 
 logging.basicConfig(
     filename=LOG_PATH,
@@ -48,6 +48,7 @@ def build_schedule_model(
     priority_setting: str = "50/50",
     fixed_assignments: Optional[Dict[Tuple[str, int], str]] = None,
     shift_details: Optional[List[ShiftDetails]] = None,
+    staff_allocation: Optional[StaffAllocations] = None,
     # Uncomment if you want to use AM coverage constraints
     # activate_am_cov: bool = False,
     # am_coverage_min_percent: int = AM_COVERAGE_MIN_PERCENT,
@@ -93,6 +94,7 @@ def build_schedule_model(
         prev_days,
         total_days,
         shift_details,
+        staff_allocation,
     ) = setup_model(
         profiles_df,
         preferences_df,
@@ -104,6 +106,7 @@ def build_schedule_model(
         NO_WORK_LABELS,
         fixed_assignments,
         shift_details,
+        staff_allocation,
     )
 
     (
@@ -155,6 +158,7 @@ def build_schedule_model(
         high_priority_penalty=[],
         low_priority_penalty=[],
         shift_details=shift_details or [],
+        staff_allocation=staff_allocation,
         # Uncomment if you want to use AM coverage constraints
         # activate_am_cov=activate_am_cov,
         # am_coverage_min_percent=am_coverage_min_percent,
@@ -180,6 +184,7 @@ def build_schedule_model(
     cm.add_rule(weekend_rest_rule)  # Handle weekend rest
     cm.add_rule(no_back_to_back_shift_rule)  # Handle back-to-back shifts
     cm.add_rule(shift_details_rule)  # Handle shift details if provided
+    cm.add_rule(staff_allocation_rule)  # Handle staff allocation if provided
     # cm.add_rule(shifts_per_day_rule) # temporarily disabled
     # cm.add_rule(am_coverage_rule) # temporarily disabled (to be improved)
     # cm.add_rule(am_senior_staffing_lvl_rule) # temporarily disabled (to be improved)

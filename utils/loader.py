@@ -5,6 +5,7 @@ from pathlib import Path
 from config.paths import DATA_DIR
 from exceptions.custom_errors import FileContentError, FileReadingError
 
+
 def load_nurse_profiles(
     path_or_buffer: Union[str, Path, bytes, IO, None] = None,
     drop_duplicates: bool = True,
@@ -19,7 +20,7 @@ def load_nurse_profiles(
         allow_missing: Allow rows with missing values if True.
 
     Returns:
-        Cleaned DataFrame with standardized columns: Name, Title, Years of experience.
+        Cleaned DataFrame with standardized columns: Name, Title, Years of experience, Double Shift.
     """
     if path_or_buffer is None:
         path_or_buffer = DATA_DIR / "nurse_profiles.xlsx"
@@ -42,16 +43,20 @@ def load_nurse_profiles(
         name_col = find_col("name")
         title_col = find_col("title")
         exp_col = find_col("experience", "year")
+        double_shift_col = find_col("double shift", "double_shift", "double")
     except Exception as e:
         raise FileContentError(f"Missing expected column: {e}")
 
-    df = df[[name_col, title_col, exp_col]]
-    df.columns = ["Name", "Title", "Years of experience"]
+    df = df[[name_col, title_col, exp_col, double_shift_col]]
+    df.columns = ["Name", "Title", "Years of experience", "Double Shift"]
 
     df["Name"] = df["Name"].astype(str).str.strip().str.upper()
 
     if not allow_missing:
-        df.dropna(subset=["Name", "Title", "Years of experience"], inplace=True)
+        df.dropna(
+            subset=["Name", "Title", "Years of experience", "Double Shift"],
+            inplace=True,
+        )
 
     if drop_duplicates:
         df.drop_duplicates(subset=["Name"], inplace=True)
@@ -63,7 +68,8 @@ def load_nurse_profiles(
 
 
 def load_shift_preferences(
-    path_or_buffer: Union[str, Path, bytes, IO, None] = None) -> pd.DataFrame:
+    path_or_buffer: Union[str, Path, bytes, IO, None] = None,
+) -> pd.DataFrame:
     """
     Load nurse shift preferences from an Excel file.
 
@@ -82,8 +88,8 @@ def load_shift_preferences(
     except Exception as e:
         raise FileReadingError(f"Error loading nurse preferences: {e}")
 
-    df.rename(columns={df.columns[0]: 'Name'}, inplace=True)
-    df.set_index('Name', inplace=True)
+    df.rename(columns={df.columns[0]: "Name"}, inplace=True)
+    df.set_index("Name", inplace=True)
 
     invalid_cols = []
     cleaned_cols = []
@@ -92,25 +98,30 @@ def load_shift_preferences(
             col_str = str(col).strip()
 
             # Remove weekday prefix if exists: match "Mon", "Tues", "Thu", etc.
-            col_str = re.sub(r'^[A-Za-z]{3,9}\s+', '', col_str)
+            col_str = re.sub(r"^[A-Za-z]{3,9}\s+", "", col_str)
 
-            dt = pd.to_datetime(col_str, errors='raise').date()
+            dt = pd.to_datetime(col_str, errors="raise").date()
             cleaned_cols.append(dt)
         except Exception as e:
             invalid_cols.append(col)
-            
+
     if invalid_cols:
-        raise FileContentError(f"Invalid date format in columns: {', '.join(invalid_cols)}")
+        raise FileContentError(
+            f"Invalid date format in columns: {', '.join(invalid_cols)}"
+        )
 
     df.columns = cleaned_cols
     df.index = df.index.str.strip().str.upper()
     if df.index.has_duplicates:
-        raise FileContentError(f"Duplicate nurse names found in preferences file in rows. Duplicated values: {df.index[df.index.duplicated()].tolist()}.")
+        raise FileContentError(
+            f"Duplicate nurse names found in preferences file in rows. Duplicated values: {df.index[df.index.duplicated()].tolist()}."
+        )
     return df
 
 
 def load_training_shifts(
-    path_or_buffer: Union[str, Path, bytes, IO, None] = None) -> pd.DataFrame:
+    path_or_buffer: Union[str, Path, bytes, IO, None] = None,
+) -> pd.DataFrame:
     """
     Load nurse training shifts from an Excel file.
 
@@ -129,8 +140,8 @@ def load_training_shifts(
     except Exception as e:
         raise FileReadingError(f"Error loading nurse training shifts: {e}")
 
-    df.rename(columns={df.columns[0]: 'Name'}, inplace=True)
-    df.set_index('Name', inplace=True)
+    df.rename(columns={df.columns[0]: "Name"}, inplace=True)
+    df.set_index("Name", inplace=True)
 
     invalid_cols = []
     cleaned_cols = []
@@ -139,25 +150,30 @@ def load_training_shifts(
             col_str = str(col).strip()
 
             # Remove weekday prefix if exists: match "Mon", "Tues", "Thu", etc.
-            col_str = re.sub(r'^[A-Za-z]{3,9}\s+', '', col_str)
+            col_str = re.sub(r"^[A-Za-z]{3,9}\s+", "", col_str)
 
-            dt = pd.to_datetime(col_str, errors='raise').date()
+            dt = pd.to_datetime(col_str, errors="raise").date()
             cleaned_cols.append(dt)
         except Exception as e:
             invalid_cols.append(col)
-            
+
     if invalid_cols:
-        raise FileContentError(f"Invalid date format in columns: {', '.join(invalid_cols)}")
+        raise FileContentError(
+            f"Invalid date format in columns: {', '.join(invalid_cols)}"
+        )
 
     df.columns = cleaned_cols
     df.index = df.index.str.strip().str.upper()
     if df.index.has_duplicates:
-        raise FileContentError(f"Duplicate nurse names found in training shifts file in rows. Duplicated values: {df.index[df.index.duplicated()].tolist()}.")
+        raise FileContentError(
+            f"Duplicate nurse names found in training shifts file in rows. Duplicated values: {df.index[df.index.duplicated()].tolist()}."
+        )
     return df
 
 
 def load_prev_schedule(
-    path_or_buffer: Union[str, Path, bytes, IO, None] = None) -> pd.DataFrame:
+    path_or_buffer: Union[str, Path, bytes, IO, None] = None,
+) -> pd.DataFrame:
     """
     Load nurse training shifts from an Excel file.
 
@@ -176,8 +192,8 @@ def load_prev_schedule(
     except Exception as e:
         raise FileReadingError(f"Error loading nurse training shifts: {e}")
 
-    df.rename(columns={df.columns[0]: 'Name'}, inplace=True)
-    df.set_index('Name', inplace=True)
+    df.rename(columns={df.columns[0]: "Name"}, inplace=True)
+    df.set_index("Name", inplace=True)
 
     invalid_cols = []
     cleaned_cols = []
@@ -186,18 +202,22 @@ def load_prev_schedule(
             col_str = str(col).strip()
 
             # Remove weekday prefix if exists: match "Mon", "Tues", "Thu", etc.
-            col_str = re.sub(r'^[A-Za-z]{3,9}\s+', '', col_str)
+            col_str = re.sub(r"^[A-Za-z]{3,9}\s+", "", col_str)
 
-            dt = pd.to_datetime(col_str, errors='raise').date()
+            dt = pd.to_datetime(col_str, errors="raise").date()
             cleaned_cols.append(dt)
         except Exception as e:
             invalid_cols.append(col)
-            
+
     if invalid_cols:
-        raise FileContentError(f"Invalid date format in columns: {', '.join(invalid_cols)}")
+        raise FileContentError(
+            f"Invalid date format in columns: {', '.join(invalid_cols)}"
+        )
 
     df.columns = cleaned_cols
     df.index = df.index.str.strip().str.upper()
     if df.index.has_duplicates:
-        raise FileContentError(f"Duplicate nurse names found in previous schedule file in rows. Duplicated values: {df.index[df.index.duplicated()].tolist()}.")
+        raise FileContentError(
+            f"Duplicate nurse names found in previous schedule file in rows. Duplicated values: {df.index[df.index.duplicated()].tolist()}."
+        )
     return df

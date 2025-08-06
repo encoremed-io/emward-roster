@@ -252,6 +252,14 @@ def extract_schedule_and_summary(
                 for item in sorted(items):
                     logger.info(f"   - {item}")
 
+    # ✅ Append hard rule violations
+    for rule_name, rule in state.hard_rules.items():
+        try:
+            if result.solver.BooleanValue(rule.flag):
+                violations[rule_name] = rule.message.strip()
+        except Exception as e:
+            logger.warning(f"⚠️ Unable to check hard rule '{rule_name}': {e}")
+
     schedule_df = pd.DataFrame.from_dict(
         schedule, orient="index", columns=headers
     ).reindex(og_nurse_order)

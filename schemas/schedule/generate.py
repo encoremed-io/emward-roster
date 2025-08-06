@@ -72,6 +72,27 @@ class ShiftDetails(BaseModel):
     restDayEligible: int
 
 
+class StaffAllocations(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    seniorStaffAllocation: bool = False
+    seniorStaffPercentage: int = Field(default=SENIOR_STAFF_PERCENTAGE)
+    seniorStaffAllocationRefinement: bool = False
+    # must have a value if seniorStaffAllocationRefinement is True
+    seniorStaffAllocationRefinementValue: Optional[int] = None
+
+    @model_validator(mode="after")
+    def check_refinement_value(self) -> "StaffAllocations":
+        if (
+            self.seniorStaffAllocationRefinement
+            and self.seniorStaffAllocationRefinementValue is None
+        ):
+            raise ValueError(
+                "seniorStaffAllocationRefinementValue is required when seniorStaffAllocationRefinement is True."
+            )
+        return self
+
+
 class ScheduleRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -92,6 +113,9 @@ class ScheduleRequest(BaseModel):
     prioritySetting: str = "50/50"
     fixedAssignments: Optional[List[FixedAssignment]] = None
     shiftDetails: Optional[List[ShiftDetails]] = None
+
+    staffAllocation: Optional[StaffAllocations] = None
+
     # Uncomment if you want to use AM coverage constraints
     # activate_am_cov: bool = True
     # am_coverage_min_percent: int = Field(default=AM_COVERAGE_MIN_PERCENT)

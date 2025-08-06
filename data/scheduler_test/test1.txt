@@ -70,6 +70,12 @@
     "useSlidingWindow": false,
     "shiftBalance": false,
     "prioritySetting": "preference-leaning",
-    "fixedAssignments": []
+    "fixedAssignments": [],
+    "staffAllocation": {
+      "seniorStaffAllocation": true,
+      "seniorStaffPercentage": 50,
+      "seniorStaffAllocationRefinement": true,
+      "seniorStaffAllocationRefinementValue": 5
+    }
   }
 }
