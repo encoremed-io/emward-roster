@@ -76,6 +76,7 @@
       "seniorStaffPercentage": 50,
       "seniorStaffAllocationRefinement": true,
       "seniorStaffAllocationRefinementValue": 5
-    }
+    },
+    "allowDoubleShift": true
   }
 }

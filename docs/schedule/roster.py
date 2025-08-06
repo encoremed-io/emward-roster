@@ -36,7 +36,13 @@ schedule_roster_description = """
         - `useSlidingWindow`: Whether to use a sliding window for shift assignments
         - `shiftBalance`: Whether to balance the number of shifts between nurses
         - `prioritySetting`: Priority setting for the solver (e.g. "Fairness", "Fairness-leaning", "50/50", "Preference-leaning", "Preference"). Only activated when `shiftBalance` is `True`.
-
+        - `staffAllocation`: Optional `StaffAllocations` object, which contains the following information:
+            - `seniorStaffAllocation`: Whether to allocate senior staff
+            - `seniorStaffPercentage`: Percentage of senior staff required per shift
+            - `seniorStaffAllocationRefinement`: Whether to refine the senior staff allocation
+            - `seniorStaffAllocationRefinementValue`: Value for refining the senior staff allocation
+        - `allowDoubleShift`: Whether to allow double shifts
+        
     The API endpoint returns a JSON object with the following keys:
 
     - `schedule`: List of shift assignments, where each assignment is a dictionary with the following keys:
