@@ -14,5 +14,5 @@ services:
       - .:/app
     ports:
       - "8501:8501"
-    command: streamlit run ui.py
+    command: streamlit run ui.py --server.runOnSave true
     working_dir: /app

@@ -3,6 +3,7 @@ from ortools.sat.python import cp_model
 from typing import Any, Dict, List, Set, Tuple, Optional
 from datetime import date
 import pandas as pd
+from schemas.schedule.generate import StaffAllocations
 
 
 @dataclass
@@ -117,6 +118,9 @@ class ScheduleState:
 
     shift_details: List[Any] = field(default_factory=list)
     """A list of shift details for validation."""
+
+    staff_allocation: Optional[StaffAllocations] = None
+    """A dictionary containing staff allocation details, if applicable."""
 
     # Uncomment if you want to use AM coverage constraints
     # activate_am_cov: bool

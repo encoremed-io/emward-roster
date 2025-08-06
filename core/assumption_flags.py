@@ -88,5 +88,9 @@ def define_hard_rules(model: cp_model.CpModel) -> dict[str, HardRule]:
             model.NewBoolVar("assume_no_double_shift"),
             "Double shifts cannot be fully prevented.\n",
         ),
+        "staff_allocation_not_satisfied": HardRule(
+            model.NewBoolVar("assume_staff_allocation"),
+            "Unable to generate a valid schedule: required percentage of senior staff per shift could not be satisfied.\n",
+        ),
         # Add others as needed
     }
