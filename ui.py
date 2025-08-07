@@ -18,6 +18,7 @@ from utils.constants import *
 from utils.download import download_excel
 from utils.shift_utils import shift_duration_minutes
 from exceptions.custom_errors import *
+from schemas.schedule.generate import StaffAllocations
 
 LOG_PATH = os.path.join(os.path.dirname(__file__), "ui_error.log")
 
@@ -67,86 +68,186 @@ This uses CP-SAT under the hood.
 )
 
 
+# def show_editable_schedule():
+#     logging.info("Showing editable schedule")
+#     """
+#     Show the schedule in an editable grid. The user can type "EL" for emergency leave or "MC" for medical leave.
+#     Invalid inputs are detected and an error message is shown. New EL/MC overrides are collected and stored in the session state.
+#     """
+#     st.subheader("📅 Editable Schedule")
+#     st.caption("Type 'EL' for emergency leave or 'MC' for medical leave")
+#     sched_df = st.session_state.sched_df
+#     if sched_df.empty:
+#         st.write("No schedule data to show.")
+#         return
+
+#     disp = sched_df.reset_index().rename(columns={"index": "Nurse"})
+#     disp = disp.map(lambda x: ", ".join(x) if isinstance(x, list) else x)
+
+#     gb = GridOptionsBuilder.from_dataframe(disp)
+#     for c in disp.columns:
+#         if c != "Nurse":
+#             gb.configure_column(c, editable=True)
+
+#     grid = AgGrid(
+#         disp,
+#         gridOptions=gb.build(),
+#         update_mode=GridUpdateMode.MODEL_CHANGED,
+#         fit_columns_on_grid_load=True,
+#         height=300,
+#         key="editable_schedule_grid",
+#     )
+#     edited = pd.DataFrame(grid["data"]).set_index("Nurse")
+#     st.write("Edited result", edited.head())
+#     invalid = []  # error handling
+
+#     # Collect new EL/MC overrides
+#     new_el = {}
+#     new_mc = {}
+
+#     for nurse in edited.index:
+#         for col in edited.columns:
+#             val = edited.at[nurse, col]
+#             # print("$$$$$$:\n", val)
+#             # print("Error! Exiting.")
+#             # sys.exit()
+
+#             # # Normalize old value
+#             # old_val = st.session_state.sched_df.at[nurse, col]
+#             # if isinstance(old_val, list):
+#             #     old = old_val[0].strip().upper() if old_val else ""
+#             # else:
+#             #     old = str(old_val).strip().upper()
+
+#             # # Normalize new value
+#             # if isinstance(val, list):
+#             #     val = val[0] if val else None  # get first item or None
+#             # if val is None or (not isinstance(val, (list, tuple)) and pd.isna(val)):
+#             #     val = None
+#             # else:
+#             #     val = str(val).strip().upper()
+
+#             def normalize_cell(v):
+#                 if isinstance(v, list):
+#                     v = v[0] if v else None
+#                 if v is None or (not isinstance(v, (list, tuple)) and pd.isna(v)):
+#                     return None
+#                 return str(v).strip().upper()
+
+#             old_val = st.session_state.sched_df.at[nurse, col]
+#             old = normalize_cell(old_val)
+#             val = normalize_cell(val)
+
+#             # Skip if no change
+#             if val == old:
+#                 continue
+
+#             # Allow only EL or MC
+#             if val not in {"EL", "MC"}:
+#                 st.warning(
+#                     f"⚠️ Invalid input for {nurse} on {col}: '{val}' (only 'EL' or 'MC' are allowed)."
+#                 )
+#                 st.stop()
+
+#             # Handle EL and MC override
+#             day_idx = (pd.to_datetime(col).date() - st.session_state.start_date).days
+#             if val == "EL":
+#                 new_el[(nurse, day_idx)] = "EL"
+#             elif val == "MC":
+#                 new_mc[(nurse, day_idx)] = "MC"
+
+#     if invalid:
+#         msg = [
+#             "⚠️ Some inputs are empty or invalid (not 'EL', 'MC', or the original shift). Please correct them:\n"
+#         ]
+#         for nurse, col, val, old in invalid:
+#             msg.append(f"     • {nurse} on {col}: '{val}' (Original shift: '{old}')\n")
+#         st.warning("\n".join(msg))
+#         st.stop()
+
+#     st.session_state.pending_el = new_el
+#     st.session_state.pending_mc = new_mc
+
+#     if not invalid:
+#         st.session_state.sched_df = edited.copy()
+
+#     st.sidebar.write(f"Pending EL overrides: {len(new_el)}")
+#     st.sidebar.write(f"Total EL declarations: {len(st.session_state.all_el_overrides)}")
+#     st.sidebar.write(f"Pending MC overrides: {len(new_mc)}")
+#     st.sidebar.write(f"Total MC declarations: {len(st.session_state.all_mc_overrides)}")
+#     # all_mc_overrides and all_el_overrides only updated after validation
+
+
 def show_editable_schedule():
     logging.info("Showing editable schedule")
-    """
-    Show the schedule in an editable grid. The user can type "EL" for emergency leave or "MC" for medical leave.
-    Invalid inputs are detected and an error message is shown. New EL/MC overrides are collected and stored in the session state.
-    """
     st.subheader("📅 Editable Schedule")
     st.caption("Type 'EL' for emergency leave or 'MC' for medical leave")
+
     sched_df = st.session_state.sched_df
     if sched_df.empty:
         st.write("No schedule data to show.")
         return
 
+    # 1. Display-safe version for grid (stringified values)
     disp = sched_df.reset_index().rename(columns={"index": "Nurse"})
-    # st.write("disp preview:", disp.head())
+    disp = disp.map(
+        lambda x: ", ".join(x) if isinstance(x, list) else str(x) if pd.notna(x) else ""
+    )
+
     gb = GridOptionsBuilder.from_dataframe(disp)
     for c in disp.columns:
         if c != "Nurse":
             gb.configure_column(c, editable=True)
+
+    # 2. Show grid
     grid = AgGrid(
         disp,
         gridOptions=gb.build(),
-        update_mode=GridUpdateMode.VALUE_CHANGED,
+        update_mode=GridUpdateMode.MODEL_CHANGED,
         fit_columns_on_grid_load=True,
         height=300,
         key="editable_schedule_grid",
     )
-    edited = pd.DataFrame(grid["data"]).set_index("Nurse")
-    invalid = []  # error handling
 
-    # Collect new EL/MC overrides
+    # 3. Get edited grid and compare to displayed version
+    edited = pd.DataFrame(grid["data"]).set_index("Nurse")
+    original_disp = disp.set_index("Nurse")
+
+    def normalize(val):
+        return str(val).strip().upper() if pd.notna(val) else ""
+
+    # 4. Track overrides
     new_el = {}
     new_mc = {}
+
     for nurse in edited.index:
         for col in edited.columns:
-            val = edited.at[nurse, col]
+            old = normalize(original_disp.at[nurse, col])
+            new = normalize(edited.at[nurse, col])
 
-            old_val = st.session_state.sched_df.at[nurse, col]
-            if isinstance(old_val, list):
-                old = old_val[0].strip().upper() if old_val else ""
-            else:
-                old = str(old_val).strip().upper()
+            # ✅ Only validate truly edited cells
+            if new == old:
+                continue
 
-            if val is None or pd.isna(val):
-                val = None
-            else:
-                logging.info("$$$$$$$$$$$$$$$$$$$$$")
-                # logging.info(st.session_state)
-                # logging.info(val)
-                # val = val.strip().upper()
+            if new not in {"EL", "MC"}:
+                st.warning(
+                    f"⚠️ Invalid input for {nurse} on {col}: '{new}' (only 'EL' or 'MC' allowed)."
+                )
+                st.stop()
 
-            # if val == "EL" and old != "EL":
-            #     day_idx = (
-            #         pd.to_datetime(col).date() - st.session_state.start_date
-            #     ).days
-            #     new_el[(nurse, day_idx)] = "EL"
-            # if val == "MC" and old != "MC":
-            #     day_idx = (
-            #         pd.to_datetime(col).date() - st.session_state.start_date
-            #     ).days
-            #     new_mc[(nurse, day_idx)] = "MC"
-            # if val not in {"EL", "MC", old}:
-            #     invalid.append((nurse, col, val or "<blank>", old))
+            day_idx = (pd.to_datetime(col).date() - st.session_state.start_date).days
+            if new == "EL":
+                new_el[(nurse, day_idx)] = "EL"
+            elif new == "MC":
+                new_mc[(nurse, day_idx)] = "MC"
 
-    if invalid:
-        msg = [
-            "⚠️ Some inputs are empty or invalid (not 'EL', 'MC', or the original shift). Please correct them:\n"
-        ]
-        for nurse, col, val, old in invalid:
-            msg.append(f"     • {nurse} on {col}: '{val}' (Original shift: '{old}')\n")
-        st.warning("\n".join(msg))
-        st.stop()
-
+    # ✅ Save new overrides and edited state
     st.session_state.pending_el = new_el
     st.session_state.pending_mc = new_mc
+    st.session_state.sched_df = edited.copy()
+
     st.sidebar.write(f"Pending EL overrides: {len(new_el)}")
-    st.sidebar.write(f"Total EL declarations: {len(st.session_state.all_el_overrides)}")
     st.sidebar.write(f"Pending MC overrides: {len(new_mc)}")
-    st.sidebar.write(f"Total MC declarations: {len(st.session_state.all_mc_overrides)}")
-    # all_mc_overrides and all_el_overrides only updated after validation
 
 
 # Sidebar inputs
@@ -187,11 +288,15 @@ else:
         }
     )
 
+# print("df_profiles:\n", df_profiles)
+# print("Error! Exiting.")
+# sys.exit()
 # prefs_file = st.sidebar.file_uploader(
 #     "Upload Nurse Preferences (Optional)",
 #     type=["xlsx"],
 #     help=("• Preferences file only applies to specified dates in file."),
 # )
+prefs_file: Union[str, Path, bytes, IO, None] = None
 
 # training_shifts_file = st.sidebar.file_uploader(
 #     "Upload Training Shifts (Optional)",
@@ -201,6 +306,7 @@ else:
 #         "• Training Shifts file only appied to specified dates in file."
 #     ),
 # )
+training_shifts_file: Union[str, Path, bytes, IO, None] = None
 
 # prev_sched_file = st.sidebar.file_uploader(
 #     "Upload Previous Schedule (Optional)",
@@ -210,6 +316,7 @@ else:
 #         "• Previous Schedule end date must be before current schedule start date."
 #     ),
 # )
+prev_sched_file: Union[str, Path, bytes, IO, None] = None
 
 start_date = pd.to_datetime(
     st.sidebar.date_input("Schedule start date", value=date.today(), key="start_date")
@@ -268,7 +375,6 @@ with st.sidebar.expander("Staff Allocation", expanded=True):
         "Percentage of Senior Nurses",
         min_value=50,
         max_value=100,
-        value=AM_COVERAGE_MIN_PERCENT,
         help="Aim for at least this % of nurses working shift.",
         key="senior_staff_percentage",
         disabled=(senior_staff_allocation == "No"),
@@ -572,6 +678,12 @@ for key, default in {
     "senior_staff_percentage": senior_staff_percentage,
     "senior_staff_allocation_refinement": senior_staff_allocation_refinement,
     "senior_staff_allocation_refinement_value": senior_staff_allocation_refinement_value,
+    "staff_allocation": StaffAllocations(
+        seniorStaffAllocation=(senior_staff_allocation == "Yes"),
+        seniorStaffPercentage=senior_staff_percentage,
+        seniorStaffAllocationRefinement=(senior_staff_allocation_refinement == "Yes"),
+        seniorStaffAllocationRefinementValue=senior_staff_allocation_refinement_value,
+    ),
     "min_acceptable_weekly_hours": min_acceptable_weekly_hours,
     "max_weekly_hours": max_weekly_hours,
     "preferred_weekly_hours": preferred_weekly_hours,
@@ -582,7 +694,7 @@ for key, default in {
     "shift_balance": shift_balance,
     "priority_setting": priority_setting,
     # "use_sliding_window": use_sliding_window,
-    # "pref_weekly_hours_hard": pref_weekly_hours_hard,
+    "pref_weekly_hours_hard": False,
     # "activate_am_cov": activate_am_cov,
     # "am_coverage_min_percent": am_coverage_min_percent,
     # "am_coverage_min_hard": am_coverage_min_hard,
@@ -622,168 +734,186 @@ if st.sidebar.button("Generate Schedule", type="primary"):
         st.error("Please upload a valid profiles excel file.")
         st.stop()
 
-    # try:
-    #     # Load and validate shift preferences and training shifts data
-    #     if prefs_file:
-    #         df_prefs = load_shift_preferences(prefs_file)
-    #         try:
-    #             st.session_state.missing_prefs = validate_data(
-    #                 df_profiles, df_prefs, "profiles", "preferences", False
-    #             )
-    #         except InputMismatchError as e:
-    #             st.error(str(e))
-    #             st.stop()
-    #         logging.info(st.session_state.missing_prefs)
+    try:
+        # Load and validate shift preferences and training shifts data
+        if prefs_file:
+            df_prefs = load_shift_preferences(prefs_file)
+            try:
+                st.session_state.missing_prefs = validate_data(
+                    df_profiles, df_prefs, "profiles", "preferences", False
+                )
+            except InputMismatchError as e:
+                st.error(str(e))
+                st.stop()
+            logging.info(st.session_state.missing_prefs)
 
-    #         for nurse in df_prefs.index:
-    #             for col in df_prefs.columns:
-    #                 v = df_prefs.at[nurse, col]
-    #                 if pd.notna(v) and v != "":
-    #                     df_prefs.at[nurse, col] = (
-    #                         str(v).strip().upper(),
-    #                         file_prefs_ts,
-    #                     )
+            for nurse in df_prefs.index:
+                for col in df_prefs.columns:
+                    v = df_prefs.at[nurse, col]
+                    if pd.notna(v) and v != "":
+                        df_prefs.at[nurse, col] = (
+                            str(v).strip().upper(),
+                            file_prefs_ts,
+                        )
 
-    #     else:
-    #         df_prefs = pd.DataFrame(index=df_profiles["Name"])
-    #         st.session_state.missing_prefs = None
+        else:
+            df_prefs = pd.DataFrame(index=df_profiles["Name"])
+            st.session_state.missing_prefs = None
 
-    #     for p in st.session_state.get("manual_prefs", []):
-    #         n = p["Nurse"].strip().upper()
-    #         d = pd.to_datetime(p["Date"])
-    #         pref = p["Preference"].strip().upper()
+        for p in st.session_state.get("manual_prefs", []):
+            n = p["Nurse"].strip().upper()
+            d = pd.to_datetime(p["Date"])
+            pref = p["Preference"].strip().upper()
 
-    #         if d not in df_prefs.columns:
-    #             df_prefs[d] = ""
-    #         df_prefs.at[n, d] = (pref, p["Timestamp"])
+            if d not in df_prefs.columns:
+                df_prefs[d] = ""
+            df_prefs.at[n, d] = (pref, p["Timestamp"])
 
-    #     # 1) build file‑prefs metadata
-    #     file_ts = st.session_state["file_prefs_ts"]
-    #     file_prefs = []
-    #     for nurse in df_prefs.index:
-    #         for col in df_prefs.columns:
-    #             raw = df_prefs.at[nurse, col]
-    #             if pd.notna(raw) and raw != "":
-    #                 if isinstance(raw, tuple) and len(raw) == 2:
-    #                     val, ts = raw
-    #                 else:
-    #                     val, ts = raw, file_prefs_ts
+        # 1) build file‑prefs metadata
+        file_ts = st.session_state["file_prefs_ts"]
+        file_prefs = []
+        for nurse in df_prefs.index:
+            for col in df_prefs.columns:
+                raw = df_prefs.at[nurse, col]
+                if pd.notna(raw) and raw != "":
+                    if isinstance(raw, tuple) and len(raw) == 2:
+                        val, ts = raw
+                    else:
+                        val, ts = raw, file_prefs_ts
 
-    #                 if ts != file_prefs_ts:
-    #                     continue
+                    if ts != file_prefs_ts:
+                        continue
 
-    #                 val = str(val).strip().upper()
-    #                 file_prefs.append(
-    #                     {
-    #                         "Nurse": nurse,
-    #                         "Date": col,
-    #                         "Preference": val,
-    #                         "Timestamp": ts,
-    #                         "Source": "File",
-    #                     }
-    #                 )
+                    val = str(val).strip().upper()
+                    file_prefs.append(
+                        {
+                            "Nurse": nurse,
+                            "Date": col,
+                            "Preference": val,
+                            "Timestamp": ts,
+                            "Source": "File",
+                        }
+                    )
 
-    #     # all_prefs_meta = st.session_state.get("file_prefs_meta", []) + st.session_state.manual_prefs
-    #     # st.session_state["all_prefs_meta"] = all_prefs_meta
+        # all_prefs_meta = st.session_state.get("file_prefs_meta", []) + st.session_state.manual_prefs
+        # st.session_state["all_prefs_meta"] = all_prefs_meta
 
-    #     # 2) merge with manual prefs and sort by Timestamp
-    #     manual = st.session_state.get("manual_prefs", [])
-    #     all_prefs_sorted = sorted(file_prefs + manual, key=lambda r: r["Timestamp"])
+        # 2) merge with manual prefs and sort by Timestamp
+        manual = st.session_state.get("manual_prefs", [])
+        all_prefs_sorted = sorted(file_prefs + manual, key=lambda r: r["Timestamp"])
 
-    #     st.sidebar.write("🔀 Preference application order (oldest → newest):")
-    #     for i, rec in enumerate(all_prefs_sorted, 1):
-    #         dt = rec["Date"].strftime("%Y-%m-%d")  # <-- added line
-    #         ts = rec["Timestamp"].strftime("%Y-%m-%d %H:%M:%S")
-    #         st.sidebar.write(
-    #             f"{i}. [{rec['Source']}] {rec['Nurse']} on {dt}: "
-    #             f"{rec['Preference']} (at {ts})"
-    #         )
+        st.sidebar.write("🔀 Preference application order (oldest → newest):")
+        for i, rec in enumerate(all_prefs_sorted, 1):
+            dt = rec["Date"].strftime("%Y-%m-%d")  # <-- added line
+            ts = rec["Timestamp"].strftime("%Y-%m-%d %H:%M:%S")
+            st.sidebar.write(
+                f"{i}. [{rec['Source']}] {rec['Nurse']} on {dt}: "
+                f"{rec['Preference']} (at {ts})"
+            )
 
-    #     # 3) store the merged+sorted metadata if needed elsewhere
-    #     st.session_state["all_prefs_meta"] = all_prefs_sorted
+        # 3) store the merged+sorted metadata if needed elsewhere
+        st.session_state["all_prefs_meta"] = all_prefs_sorted
 
-    #     # Training Shifts
-    #     if training_shifts_file:
-    #         df_train_shifts = load_training_shifts(training_shifts_file)
-    #         try:
-    #             st.session_state.missing_train_shifts = validate_data(
-    #                 df_profiles, df_train_shifts, "profiles", "training shifts", False
-    #             )
-    #         except InputMismatchError as e:
-    #             st.error(str(e))
-    #             st.stop()
-    #     else:
-    #         df_train_shifts = pd.DataFrame(index=df_profiles["Name"])
-    #         st.session_state.missing_train_shifts = None
+        # Training Shifts
+        if training_shifts_file:
+            df_train_shifts = load_training_shifts(training_shifts_file)
+            try:
+                st.session_state.missing_train_shifts = validate_data(
+                    df_profiles, df_train_shifts, "profiles", "training shifts", False
+                )
+            except InputMismatchError as e:
+                st.error(str(e))
+                st.stop()
+        else:
+            df_train_shifts = pd.DataFrame(index=df_profiles["Name"])
+            st.session_state.missing_train_shifts = None
 
-    #     # Previous schedule
-    #     if prev_sched_file:
-    #         df_prev_sched = load_prev_schedule(prev_sched_file)
-    #         try:
-    #             validate_data(
-    #                 df_profiles, df_prev_sched, "profiles", "previous schedule", False
-    #             )
-    #         except InputMismatchError as e:
-    #             st.error(str(e))
-    #             st.stop()
-    #     else:
-    #         df_prev_sched = pd.DataFrame(index=df_profiles["Name"])
+        # Previous schedule
+        if prev_sched_file:
+            df_prev_sched = load_prev_schedule(prev_sched_file)
+            try:
+                validate_data(
+                    df_profiles, df_prev_sched, "profiles", "previous schedule", False
+                )
+            except InputMismatchError as e:
+                st.error(str(e))
+                st.stop()
+        else:
+            df_prev_sched = pd.DataFrame(index=df_profiles["Name"])
 
-    #     # Build initial schedule
-    #     st.session_state.df_profiles = df_profiles
-    #     st.session_state.df_prefs = df_prefs
-    #     st.session_state.df_train_shifts = df_train_shifts
-    #     st.session_state.df_prev_sched = df_prev_sched
-    #     print("df_profiles:\n", st.session_state.df_profiles)
+        # Build initial schedule
+        st.session_state.df_profiles = df_profiles
+        st.session_state.df_prefs = df_prefs
+        st.session_state.df_train_shifts = df_train_shifts
+        st.session_state.df_prev_sched = df_prev_sched
 
-    #     sched, summ, violations, metrics = build_schedule_model(
-    #         df_profiles,
-    #         df_prefs,
-    #         df_train_shifts,
-    #         df_prev_sched,
-    #         pd.to_datetime(start_date),
-    #         num_days,
-    #         shift_durations,
-    #         min_nurses_per_shift=st.session_state.min_nurses_per_shift,
-    #         min_seniors_per_shift=st.session_state.min_seniors_per_shift,
-    #         max_weekly_hours=st.session_state.max_weekly_hours,
-    #         preferred_weekly_hours=st.session_state.preferred_weekly_hours,
-    #         min_acceptable_weekly_hours=st.session_state.min_acceptable_weekly_hours,
-    #         min_weekly_rest=st.session_state.min_weekly_rest,
-    #         pref_weekly_hours_hard=st.session_state.pref_weekly_hours_hard,
-    #         # activate_am_cov=st.session_state.activate_am_cov,
-    #         # am_coverage_min_percent=st.session_state.am_coverage_min_percent,
-    #         # am_coverage_min_hard=st.session_state.am_coverage_min_hard,
-    #         # am_coverage_relax_step=st.session_state.am_coverage_relax_step,
-    #         # am_senior_min_percent=st.session_state.am_senior_min_percent,
-    #         # am_senior_min_hard=st.session_state.am_senior_min_hard,
-    #         # am_senior_relax_step=st.session_state.am_senior_relax_step,
-    #         weekend_rest=st.session_state.weekend_rest,
-    #         back_to_back_shift=st.session_state.back_to_back_shift,
-    #         use_sliding_window=st.session_state.use_sliding_window,
-    #         shift_balance=st.session_state.shift_balance,
-    #         priority_setting=st.session_state.priority_setting,
-    #         fixed_assignments=st.session_state.fixed,
-    #         allow_double_shift=st.session_state.allow_double_shift,
-    #     )
-    #     st.session_state.sched_df = sched
-    #     st.session_state.summary_df = summ
-    #     st.session_state.violations = violations
-    #     st.session_state.metrics = metrics
-    #     st.session_state.original_sched_df = sched.copy()
+        # print("profiles:\n", df_profiles)
+        # print("Error1! Exiting.")
+        # sys.exit()
 
-    #     st.session_state.show_schedule_expanded = False
-    #     st.session_state["editable_toggle"] = "Hide"
-    #     st.rerun()
+        sched, summ, violations, metrics = build_schedule_model(
+            df_profiles,
+            df_prefs,
+            df_train_shifts,
+            df_prev_sched,
+            pd.to_datetime(start_date),
+            num_days,
+            shift_durations,
+            min_nurses_per_shift=st.session_state.min_nurses_per_shift,
+            min_seniors_per_shift=st.session_state.min_seniors_per_shift,
+            max_weekly_hours=st.session_state.max_weekly_hours,
+            preferred_weekly_hours=st.session_state.preferred_weekly_hours,
+            min_acceptable_weekly_hours=st.session_state.min_acceptable_weekly_hours,
+            min_weekly_rest=st.session_state.min_weekly_rest,
+            pref_weekly_hours_hard=st.session_state.pref_weekly_hours_hard,
+            # activate_am_cov=st.session_state.activate_am_cov,
+            # am_coverage_min_percent=st.session_state.am_coverage_min_percent,
+            # am_coverage_min_hard=st.session_state.am_coverage_min_hard,
+            # am_coverage_relax_step=st.session_state.am_coverage_relax_step,
+            # am_senior_min_percent=st.session_state.am_senior_min_percent,
+            # am_senior_min_hard=st.session_state.am_senior_min_hard,
+            # am_senior_relax_step=st.session_state.am_senior_relax_step,
+            # use_sliding_window=st.session_state.use_sliding_window,
+            weekend_rest=st.session_state.weekend_rest,
+            back_to_back_shift=st.session_state.back_to_back_shift,
+            staff_allocation=StaffAllocations(
+                seniorStaffAllocation=(
+                    st.session_state.senior_staff_allocation == "No"
+                ),
+                seniorStaffPercentage=st.session_state.senior_staff_percentage,
+                seniorStaffAllocationRefinement=(
+                    st.session_state.senior_staff_allocation_refinement == "No"
+                ),
+                seniorStaffAllocationRefinementValue=st.session_state.senior_staff_allocation_refinement_value,
+            ),
+            shift_balance=st.session_state.shift_balance,
+            priority_setting=st.session_state.priority_setting,
+            fixed_assignments=st.session_state.fixed,
+            allow_double_shift=st.session_state.allow_double_shift,
+        )
 
-    # except CUSTOM_ERRORS as e:
-    #     st.error(str(e))
-    #     st.stop()
-    # except Exception as e:
-    #     tb = traceback.format_exc()
-    #     st.error(f"Error: {e}")
-    #     st.text_area("Traceback", tb, height=200)
-    #     st.stop()
+        # print("schedule:\n", sched)
+        # print("Error! Exiting.")
+        # sys.exit()
+
+        st.session_state.sched_df = sched
+        st.session_state.summary_df = summ
+        st.session_state.violations = violations
+        st.session_state.metrics = metrics
+        st.session_state.original_sched_df = sched.copy()
+
+        st.session_state.show_schedule_expanded = False
+        st.session_state["editable_toggle"] = "Hide"
+        st.rerun()
+
+    except CUSTOM_ERRORS as e:
+        st.error(str(e))
+        st.stop()
+    except Exception as e:
+        tb = traceback.format_exc()
+        st.error(f"Error: {e}")
+        st.text_area("Traceback", tb, height=200)
+        st.stop()
 
 if "show_schedule_expanded" not in st.session_state:
     st.session_state.show_schedule_expanded = False
@@ -921,6 +1051,7 @@ if st.session_state.sched_df is not None:
                         st.session_state.priority_setting,
                         st.session_state.fixed,
                         st.session_state.allow_double_shift,
+                        st.session_state.staff_allocation,
                     )
                     st.session_state.sched_df = sched2
                     st.session_state.summary_df = summ2

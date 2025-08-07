@@ -50,6 +50,8 @@ def load_nurse_profiles(
     df = df[[name_col, title_col, exp_col, double_shift_col]]
     df.columns = ["Name", "Title", "Years of experience", "Double Shift"]
 
+    # change value of "Double Shift" to boolean
+    df["Double Shift"] = df["Double Shift"].apply(lambda x: bool(int(x)))
     df["Name"] = df["Name"].astype(str).str.strip().str.upper()
 
     if not allow_missing:
