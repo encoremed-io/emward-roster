@@ -113,8 +113,8 @@ class ScheduleRequest(BaseModel):
     prioritySetting: str = "50/50"
     fixedAssignments: Optional[List[FixedAssignment]] = None
     shiftDetails: Optional[List[ShiftDetails]] = None
-
     staffAllocation: Optional[StaffAllocations] = None
+    allowDoubleShift: bool = False
 
     # Uncomment if you want to use AM coverage constraints
     # activate_am_cov: bool = True
