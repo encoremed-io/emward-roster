@@ -19,6 +19,7 @@ from utils.download import download_excel
 from utils.shift_utils import shift_duration_minutes
 from exceptions.custom_errors import *
 from schemas.schedule.generate import StaffAllocations
+import requests
 
 LOG_PATH = os.path.join(os.path.dirname(__file__), "ui_error.log")
 
@@ -178,6 +179,7 @@ This uses CP-SAT under the hood.
 #     # all_mc_overrides and all_el_overrides only updated after validation
 
 
+# Show the updated schedule
 def show_editable_schedule():
     logging.info("Showing editable schedule")
     st.subheader("📅 Editable Schedule")
@@ -248,6 +250,58 @@ def show_editable_schedule():
 
     st.sidebar.write(f"Pending EL overrides: {len(new_el)}")
     st.sidebar.write(f"Pending MC overrides: {len(new_mc)}")
+
+    # trigger swap suggestions
+    if new_el or new_mc:
+        fetch_swap_suggestions(new_el, new_mc)
+
+
+# Show the swap suggestions format
+def fetch_swap_suggestions(new_el, new_mc):
+    target_nurse_ids = list(
+        set(n for n, _ in list(new_el.keys()) + list(new_mc.keys()))
+    )
+    print("wootie:\n", target_nurse_ids)
+    print("Error! Exiting.")
+    sys.exit()
+    target_shifts = []
+    # for nurse in target_nurse_ids:
+    #     shifts = []
+
+    #     for (n, day), val in new_el.items():
+    #         if n == nurse:
+    #             shifts.append({
+    #                 "date": (st.session_state.start_date + timedelta(days=day)).strftime("%Y-%m-%d"),
+    #                 "shiftTypeId": ["AM"]  # or "PM" / "Night" depending on your logic
+    #             })
+
+    #     for (n, day), val in new_mc.items():
+    #         if n == nurse:
+    #             shifts.append({
+    #                 "date": (st.session_state.start_date + timedelta(days=day)).strftime("%Y-%m-%d"),
+    #                 "shiftTypeId": ["AM"]  # same here
+    #             })
+
+    #     target_shifts.append({
+    #         "nurseId": nurse,
+    #         "targetShift": shifts
+    #     })
+
+    # # Prepare request payload
+    # payload = {
+    #     "targetNurseId": target_shifts,
+    #     "settings": st.session_state.schedule_settings,
+    #     "roster": st.session_state.roster_data,
+    # }
+
+    # try:
+    #     res = requests.post("http://localhost:8000/swap/suggestions", json=payload)
+    #     res.raise_for_status()
+    #     data = res.json()
+    #     st.session_state.swap_suggestions = data["results"]
+    #     st.success("Swap suggestions fetched!")
+    # except Exception as e:
+    #     st.error(f"❌ Failed to fetch suggestions: {e}")
 
 
 # Sidebar inputs
