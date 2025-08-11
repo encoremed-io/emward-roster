@@ -182,9 +182,7 @@ async def generate_schedule(
         # logging.info("useSlidingWindow:        %s", request.useSlidingWindow)
         # logging.info("shiftBalance:             %s", request.shiftBalance)
         # logging.info("fixed_assignments count:   %s", len(fixed_assignments_dict or {}))
-        print("profiles:\n", profiles_df)
-        print("Error0! Exiting.")
-        sys.exit()
+
         schedule, summary, violations, metrics = build_schedule_model(
             profiles_df=profiles_df,
             preferences_df=prefs_df,
