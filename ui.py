@@ -6,7 +6,7 @@ import os
 os.environ["STREAMLIT_SERVER_FILE_WATCHER_TYPE"] = "none"
 sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
 import streamlit as st
-from datetime import date, time, datetime
+from datetime import date, time, datetime, timedelta
 from st_aggrid import GridOptionsBuilder, AgGrid, GridUpdateMode
 from collections import Counter, defaultdict
 import traceback
@@ -20,6 +20,9 @@ from utils.shift_utils import shift_duration_minutes
 from exceptions.custom_errors import *
 from schemas.schedule.generate import StaffAllocations
 import requests
+from typing import Dict, Any, List
+from pprint import pprint
+
 
 LOG_PATH = os.path.join(os.path.dirname(__file__), "ui_error.log")
 
@@ -69,116 +72,6 @@ This uses CP-SAT under the hood.
 )
 
 
-# def show_editable_schedule():
-#     logging.info("Showing editable schedule")
-#     """
-#     Show the schedule in an editable grid. The user can type "EL" for emergency leave or "MC" for medical leave.
-#     Invalid inputs are detected and an error message is shown. New EL/MC overrides are collected and stored in the session state.
-#     """
-#     st.subheader("📅 Editable Schedule")
-#     st.caption("Type 'EL' for emergency leave or 'MC' for medical leave")
-#     sched_df = st.session_state.sched_df
-#     if sched_df.empty:
-#         st.write("No schedule data to show.")
-#         return
-
-#     disp = sched_df.reset_index().rename(columns={"index": "Nurse"})
-#     disp = disp.map(lambda x: ", ".join(x) if isinstance(x, list) else x)
-
-#     gb = GridOptionsBuilder.from_dataframe(disp)
-#     for c in disp.columns:
-#         if c != "Nurse":
-#             gb.configure_column(c, editable=True)
-
-#     grid = AgGrid(
-#         disp,
-#         gridOptions=gb.build(),
-#         update_mode=GridUpdateMode.MODEL_CHANGED,
-#         fit_columns_on_grid_load=True,
-#         height=300,
-#         key="editable_schedule_grid",
-#     )
-#     edited = pd.DataFrame(grid["data"]).set_index("Nurse")
-#     st.write("Edited result", edited.head())
-#     invalid = []  # error handling
-
-#     # Collect new EL/MC overrides
-#     new_el = {}
-#     new_mc = {}
-
-#     for nurse in edited.index:
-#         for col in edited.columns:
-#             val = edited.at[nurse, col]
-#             # print("$$$$$$:\n", val)
-#             # print("Error! Exiting.")
-#             # sys.exit()
-
-#             # # Normalize old value
-#             # old_val = st.session_state.sched_df.at[nurse, col]
-#             # if isinstance(old_val, list):
-#             #     old = old_val[0].strip().upper() if old_val else ""
-#             # else:
-#             #     old = str(old_val).strip().upper()
-
-#             # # Normalize new value
-#             # if isinstance(val, list):
-#             #     val = val[0] if val else None  # get first item or None
-#             # if val is None or (not isinstance(val, (list, tuple)) and pd.isna(val)):
-#             #     val = None
-#             # else:
-#             #     val = str(val).strip().upper()
-
-#             def normalize_cell(v):
-#                 if isinstance(v, list):
-#                     v = v[0] if v else None
-#                 if v is None or (not isinstance(v, (list, tuple)) and pd.isna(v)):
-#                     return None
-#                 return str(v).strip().upper()
-
-#             old_val = st.session_state.sched_df.at[nurse, col]
-#             old = normalize_cell(old_val)
-#             val = normalize_cell(val)
-
-#             # Skip if no change
-#             if val == old:
-#                 continue
-
-#             # Allow only EL or MC
-#             if val not in {"EL", "MC"}:
-#                 st.warning(
-#                     f"⚠️ Invalid input for {nurse} on {col}: '{val}' (only 'EL' or 'MC' are allowed)."
-#                 )
-#                 st.stop()
-
-#             # Handle EL and MC override
-#             day_idx = (pd.to_datetime(col).date() - st.session_state.start_date).days
-#             if val == "EL":
-#                 new_el[(nurse, day_idx)] = "EL"
-#             elif val == "MC":
-#                 new_mc[(nurse, day_idx)] = "MC"
-
-#     if invalid:
-#         msg = [
-#             "⚠️ Some inputs are empty or invalid (not 'EL', 'MC', or the original shift). Please correct them:\n"
-#         ]
-#         for nurse, col, val, old in invalid:
-#             msg.append(f"     • {nurse} on {col}: '{val}' (Original shift: '{old}')\n")
-#         st.warning("\n".join(msg))
-#         st.stop()
-
-#     st.session_state.pending_el = new_el
-#     st.session_state.pending_mc = new_mc
-
-#     if not invalid:
-#         st.session_state.sched_df = edited.copy()
-
-#     st.sidebar.write(f"Pending EL overrides: {len(new_el)}")
-#     st.sidebar.write(f"Total EL declarations: {len(st.session_state.all_el_overrides)}")
-#     st.sidebar.write(f"Pending MC overrides: {len(new_mc)}")
-#     st.sidebar.write(f"Total MC declarations: {len(st.session_state.all_mc_overrides)}")
-#     # all_mc_overrides and all_el_overrides only updated after validation
-
-
 # Show the updated schedule
 def show_editable_schedule():
     logging.info("Showing editable schedule")
@@ -186,6 +79,7 @@ def show_editable_schedule():
     st.caption("Type 'EL' for emergency leave or 'MC' for medical leave")
 
     sched_df = st.session_state.sched_df
+
     if sched_df.empty:
         st.write("No schedule data to show.")
         return
@@ -193,7 +87,11 @@ def show_editable_schedule():
     # 1. Display-safe version for grid (stringified values)
     disp = sched_df.reset_index().rename(columns={"index": "Nurse"})
     disp = disp.map(
-        lambda x: ", ".join(x) if isinstance(x, list) else str(x) if pd.notna(x) else ""
+        lambda x: (
+            ", ".join(map(str, x))
+            if isinstance(x, list)
+            else str(x) if pd.notna(x) else ""
+        )
     )
 
     gb = GridOptionsBuilder.from_dataframe(disp)
@@ -218,9 +116,10 @@ def show_editable_schedule():
     def normalize(val):
         return str(val).strip().upper() if pd.notna(val) else ""
 
-    # 4. Track overrides
+    # 4. Track overrides and shifts
     new_el = {}
     new_mc = {}
+    shift_map = {}
 
     for nurse in edited.index:
         for col in edited.columns:
@@ -231,77 +130,335 @@ def show_editable_schedule():
             if new == old:
                 continue
 
-            if new not in {"EL", "MC"}:
-                st.warning(
-                    f"⚠️ Invalid input for {nurse} on {col}: '{new}' (only 'EL' or 'MC' allowed)."
-                )
+            try:
+                parsed = parse_shift_input(
+                    new
+                )  # may return "EL"/"MC"/"REST"/"TR" or list[str]
+            except ValueError as e:
+                st.warning(f"⚠️ {nurse} on {col}: {e}")
                 st.stop()
 
-            day_idx = (pd.to_datetime(col).date() - st.session_state.start_date).days
-            if new == "EL":
-                new_el[(nurse, day_idx)] = "EL"
-            elif new == "MC":
-                new_mc[(nurse, day_idx)] = "MC"
+            # 🔁 Get original shift code from sched_df
+            shift_val = sched_df.at[nurse, col]
+            if isinstance(shift_val, list):
+                shift_type_ids = shift_val
+            elif pd.isna(shift_val) or shift_val == "":
+                shift_type_ids = []
+            else:
+                shift_type_ids = [shift_val]  # fallback
 
-    # ✅ Save new overrides and edited state
+            CASE_MAP = {
+                "AM": "AM",
+                "PM": "PM",
+                "NIGHT": "Night",
+            }
+
+            if isinstance(parsed, str):  # EL / MC / REST / TR
+                if parsed in {"EL", "MC"}:
+                    if parsed == "EL":
+                        new_el[(nurse, col)] = "EL"
+                    elif parsed == "MC":
+                        new_mc[(nurse, col)] = "MC"
+                    st.session_state.sched_df.at[nurse, col] = [parsed.upper()]
+                else:
+                    st.session_state.sched_df.at[nurse, col] = [
+                        CASE_MAP.get(parsed.upper(), parsed)
+                    ]
+            else:
+                st.session_state.sched_df.at[nurse, col] = [
+                    CASE_MAP.get(p.upper(), p) for p in parsed
+                ]
+
+            # keep a map of original shift ids/labels for your swap payload
+            shift_map[(nurse, col)] = shift_type_ids
+
+    # ✅ Save overrides
     st.session_state.pending_el = new_el
     st.session_state.pending_mc = new_mc
-    st.session_state.sched_df = edited.copy()
+    # st.session_state.sched_df = edited.copy()
 
     st.sidebar.write(f"Pending EL overrides: {len(new_el)}")
     st.sidebar.write(f"Pending MC overrides: {len(new_mc)}")
 
-    # trigger swap suggestions
+    # 🔥 Trigger swap suggestions
     if new_el or new_mc:
-        fetch_swap_suggestions(new_el, new_mc)
+        fetch_swap_suggestions(new_el, new_mc, shift_map)
+
+
+# Shift labels and their IDs
+SHIFT_CODE_MAP = {label: idx + 1 for idx, label in enumerate(SHIFT_LABELS)}
+ALLOWED_SHIFT_LABELS = {"AM", "PM", "NIGHT"}  # case-insensitive input
+NO_WORK_LABELS = {"EL", "MC", "REST", "TR"}  # keep your existing set if defined
+
+
+def parse_shift_input(raw: str) -> list[str] | str:
+    """
+    Returns:
+      - "EL"/"MC"/"REST"/"TR" (string) if a single no-work token is given
+      - list[str] of shift labels, e.g. ["AM", "Night"] for work shifts
+    Raises:
+      ValueError on invalid tokens or disallowed combinations.
+    """
+    s = raw.strip()
+    if not s:
+        raise ValueError("Empty input.")
+
+    # allow comma or slash separators
+    tokens = [t.strip() for t in s.replace("/", ",").split(",") if t.strip()]
+    tokens_up = [t.upper() for t in tokens]
+
+    # single token path (EL/MC/REST/TR/AM/PM/Night)
+    if len(tokens_up) == 1:
+        t = tokens_up[0]
+        if t in NO_WORK_LABELS:
+            return t  # keep as is
+        if t in ALLOWED_SHIFT_LABELS:
+            return [t]  # return in uppercase form from tokens_up
+        raise ValueError(f"Unknown value '{tokens[0]}'.")
+
+    # multiple tokens => only work shifts allowed
+    if any(t in NO_WORK_LABELS for t in tokens_up):
+        raise ValueError("Cannot combine EL/MC/REST/TR with shift labels.")
+
+    # validate all tokens are shift labels
+    if not all(t in ALLOWED_SHIFT_LABELS for t in tokens_up):
+        bad = [
+            tokens[i] for i, t in enumerate(tokens_up) if t not in ALLOWED_SHIFT_LABELS
+        ]
+        raise ValueError(f"Invalid shift(s): {', '.join(bad)}.")
+
+    # no duplicates
+    dedup_up = []
+    for t in tokens_up:
+        if t not in dedup_up:
+            dedup_up.append(t)
+
+    # enforce your UI toggle for double shifts
+    if len(dedup_up) > 2 and not st.session_state.allow_double_shift:
+        raise ValueError("More than 2 shifts not allowed.")
+    if len(dedup_up) == 2 and not st.session_state.allow_double_shift:
+        raise ValueError("Double shift editing is disabled in sidebar settings.")
+
+    # return normalized labels with desired casing
+    def norm(t):
+        return t.title() if t != "NIGHT" else "Night"
+
+    return [norm(t) for t in dedup_up]
+
+
+# Generate the roster format
+def generate_roster_format() -> List[Dict[str, Any]]:
+    result = []
+    shift_id_counter = 1
+
+    for nurse_id, row in st.session_state.sched_df.iterrows():
+        nurse_entry = {
+            "nurseId": nurse_id,
+            "preferences": None,  # fill if needed
+            "isSenior": False,  # fill from profile if you have it
+            "isSpecialist": True,  # fill from profile if you have it
+            "shifts": [],
+        }
+
+        for date_str, cell in row.items():
+            # Normalize to list
+            shifts = cell if isinstance(cell, list) else [cell]
+            # Remove None/NaN
+            shifts = [s for s in shifts if pd.notna(s)]
+
+            for shift_label in shifts:
+                # Skip rest / leave / training
+                if shift_label in NO_WORK_LABELS:
+                    continue
+                # Convert label to ID
+                shift_type_id = SHIFT_CODE_MAP.get(shift_label)
+                if not shift_type_id:
+                    continue
+
+                nurse_entry["shifts"].append(
+                    {
+                        "id": shift_id_counter,
+                        "date": pd.to_datetime(date_str).strftime("%Y-%m-%d"),
+                        "shiftTypeId": shift_type_id,
+                    }
+                )
+                shift_id_counter += 1
+
+        result.append(nurse_entry)
+
+    return result
 
 
 # Show the swap suggestions format
-def fetch_swap_suggestions(new_el, new_mc):
-    target_nurse_ids = list(
-        set(n for n, _ in list(new_el.keys()) + list(new_mc.keys()))
-    )
-    print("wootie:\n", target_nurse_ids)
-    print("Error! Exiting.")
-    sys.exit()
-    target_shifts = []
-    # for nurse in target_nurse_ids:
-    #     shifts = []
+def fetch_swap_suggestions(new_el: dict, new_mc: dict, shift_map: dict):
+    SHIFT_ID_MAP = {label: idx + 1 for idx, label in enumerate(SHIFT_LABELS)}
+    target_nurse_ids: dict[str, list[dict]] = {}
+    edited_cells = {**new_el, **new_mc}
 
-    #     for (n, day), val in new_el.items():
-    #         if n == nurse:
-    #             shifts.append({
-    #                 "date": (st.session_state.start_date + timedelta(days=day)).strftime("%Y-%m-%d"),
-    #                 "shiftTypeId": ["AM"]  # or "PM" / "Night" depending on your logic
-    #             })
+    for (nurse, col_date), _leave in edited_cells.items():
+        raw = shift_map.get((nurse, col_date), [])
+        if isinstance(raw, (str, int)):
+            raw = [raw]
 
-    #     for (n, day), val in new_mc.items():
-    #         if n == nurse:
-    #             shifts.append({
-    #                 "date": (st.session_state.start_date + timedelta(days=day)).strftime("%Y-%m-%d"),
-    #                 "shiftTypeId": ["AM"]  # same here
-    #             })
+        # Convert to 1-based shift ids; skip NO_WORK
+        shift_ids: list[int] = []
+        for v in raw:
+            if isinstance(v, str):
+                label = v.strip()
+                if label in NO_WORK_LABELS:
+                    continue
+                sid = SHIFT_ID_MAP.get(label)
+                if sid:
+                    shift_ids.append(sid)
+            elif isinstance(v, int):
+                # assume already 1-based and valid
+                if 1 <= v <= len(SHIFT_LABELS):
+                    shift_ids.append(v)
 
-    #     target_shifts.append({
-    #         "nurseId": nurse,
-    #         "targetShift": shifts
-    #     })
+        if not shift_ids:
+            continue
 
-    # # Prepare request payload
-    # payload = {
-    #     "targetNurseId": target_shifts,
-    #     "settings": st.session_state.schedule_settings,
-    #     "roster": st.session_state.roster_data,
-    # }
+        date_iso = pd.to_datetime(col_date).strftime("%Y-%m-%d")
+        entry = target_nurse_ids.setdefault(nurse, [])
+        entry.append({"date": date_iso, "shiftTypeId": sorted(set(shift_ids))})
 
-    # try:
-    #     res = requests.post("http://localhost:8000/swap/suggestions", json=payload)
-    #     res.raise_for_status()
-    #     data = res.json()
-    #     st.session_state.swap_suggestions = data["results"]
-    #     st.success("Swap suggestions fetched!")
-    # except Exception as e:
-    #     st.error(f"❌ Failed to fetch suggestions: {e}")
+    if not target_nurse_ids:
+        logging.info("No valid swap targets to send.")
+        return None
+
+    # attach per-date durations (minutes) for convenience
+    for nurse, shifts in target_nurse_ids.items():
+        for shift in shifts:
+            # shiftTypeId is 1-based; durations array is 0-based
+            shift["durationMinutes"] = [
+                st.session_state.shift_durations[i - 1] for i in shift["shiftTypeId"]
+            ]
+
+    # base settings.duration from the first target shift's first id (minutes)
+    first_nurse = next(iter(target_nurse_ids))
+    first_shift = target_nurse_ids[first_nurse][0]
+    first_id = first_shift["shiftTypeId"][0]  # 1-based
+    settings_duration = st.session_state.shift_durations[first_id - 1]  # minutes
+
+    payload = {
+        "targetNurseId": [
+            {"nurseId": nurse, "targetShift": shifts}
+            for nurse, shifts in target_nurse_ids.items()
+        ],
+        "settings": {
+            "shiftDurations": settings_duration / 60,  # minutes (e.g., 420)
+            "minSeniorsPerShift": st.session_state.min_seniors_per_shift,
+            "maxWeeklyHours": st.session_state.max_weekly_hours,
+            "preferredWeeklyHours": st.session_state.preferred_weekly_hours,
+            "minWeeklyHours": st.session_state.min_acceptable_weekly_hours,
+            "enforceWeekendRest": st.session_state.weekend_rest,
+            "backToBackShift": st.session_state.back_to_back_shift,
+            "balanceShiftAssignments": False,
+        },
+        # meta: keep ids 1..3 to match shiftTypeId above
+        "shifts": [
+            {"id": 1, "name": "AM", "duration": "0700-1400"},
+            {"id": 2, "name": "PM", "duration": "1400-2100"},
+            {"id": 3, "name": "Night", "duration": "2100-0700"},
+        ],
+        "roster": generate_roster_format(),  # from earlier helper (grouped by nurse/date)
+    }
+
+    pprint(payload, sort_dicts=False, width=100)
+    # print("wootie:\n", payload)
+    # print("Error! Exiting.")
+    # sys.exit()
+
+    # Send POST request
+    try:
+        resp = requests.post(
+            "http://api:8000/api/swap/suggestions",
+            json=payload,
+            timeout=30,
+        )
+        resp.raise_for_status()
+    except requests.HTTPError as e:
+        print("\n--- API ERROR ---")
+        print(f"Status: {resp.status_code}")
+        try:
+            print(
+                "Response JSON:", json.dumps(resp.json(), indent=2)
+            )  # Shows Pydantic errors
+        except ValueError:
+            print("Response text:", resp.text)  # If not JSON
+        print("--- END API ERROR ---\n")
+        raise
+
+    data = resp.json()
+
+    # Prompt the user with suggestions
+    prompt_suggestions(data)
+
+
+# Prompt the user with swap suggestions
+def prompt_suggestions(data: dict):
+    for item in data.get("results", []):
+        nurse = item.get("originalNurse")
+        repl = item.get("replacementFor", {}) or {}
+        date = repl.get("date")
+        shift_id = repl.get("shiftTypeId")
+
+        # Optional: map shiftTypeId → label if you have SHIFT_LABELS = ["AM","PM","Night"]
+        try:
+            shift_name = (
+                SHIFT_LABELS[shift_id - 1]
+                if isinstance(shift_id, int)
+                else str(shift_id)
+            )
+        except Exception:
+            shift_name = str(shift_id)
+
+        st.warning(
+            f"🩺 `{nurse}` needs a replacement on {date} (shift {shift_name}) — filter: {item.get('filterLevel')}"
+        )
+
+        # ----- Direct swap candidate -----
+        direct = item.get("directSwapCandidate")
+        if direct:
+            swap_from = direct.get("swapFrom") or {}
+            swap_to = direct.get("swapTo") or {}
+
+            # Map shift ids to names (best-effort)
+            def name_for(sid):
+                try:
+                    return SHIFT_LABELS[sid - 1]
+                except Exception:
+                    return str(sid)
+
+            from_name = name_for(swap_from.get("shiftTypeId"))
+            to_name = name_for(swap_to.get("shiftTypeId"))
+
+            st.info(
+                f"🔄 Direct swap: `{direct.get('nurseId')}` "
+                f"from {swap_from.get('date')} ({from_name}) → {swap_to.get('date')} ({to_name}). "
+                f"{direct.get('note','')}"
+            )
+        else:
+            st.info("No direct swap candidate.")
+
+        # ----- Top candidates -----
+        cands = item.get("topCandidates") or []
+        if cands:
+            # Quick readable bullets
+            for c in cands:
+                st.write(
+                    f"• `{c.get('nurseId')}` | "
+                    f"{'Senior' if c.get('isSenior') else 'Junior'} | "
+                    f"Hours: {c.get('currentHours')} | "
+                    f"Violates max: {c.get('violatesMaxHours')} | "
+                    f"{c.get('message','')}"
+                )
+
+            # Or show as a table too (optional)
+            # import pandas as pd
+            # st.dataframe(pd.DataFrame(cands))
+        else:
+            st.write("No top candidates returned.")
 
 
 # Sidebar inputs
@@ -345,12 +502,12 @@ else:
 # print("df_profiles:\n", df_profiles)
 # print("Error! Exiting.")
 # sys.exit()
-# prefs_file = st.sidebar.file_uploader(
-#     "Upload Nurse Preferences (Optional)",
-#     type=["xlsx"],
-#     help=("• Preferences file only applies to specified dates in file."),
-# )
-prefs_file: Union[str, Path, bytes, IO, None] = None
+prefs_file = st.sidebar.file_uploader(
+    "Upload Nurse Preferences (Optional)",
+    type=["xlsx"],
+    help=("• Preferences file only applies to specified dates in file."),
+)
+# prefs_file: Union[str, Path, bytes, IO, None] = None
 
 # training_shifts_file = st.sidebar.file_uploader(
 #     "Upload Training Shifts (Optional)",
