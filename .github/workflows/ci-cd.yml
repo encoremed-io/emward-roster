@@ -81,6 +81,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: ./Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
@@ -96,36 +97,52 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Ensure compose file exists
+        run: test -f docker-compose.prod.yml || { echo "docker-compose.prod.yml missing"; exit 1; }
+
       - name: Copy compose to server
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          source: |
-            docker-compose.prod.yml
+          source: docker-compose.prod.yml
           target: /opt/roster-api
 
-      - name: Deploy via SSH
+      - name: Deploy via SSH (exact SHA)
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_PAT_READ: ${{ secrets.GHCR_PAT_READ }} # optional, read:packages
+          GITHUB_SHA: ${{ github.sha }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           script: |
-            set -e
+            set -euo pipefail
             cd /opt/roster-api
 
-            # Login to registry on server (GHCR example)
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            # Login to GHCR (prefer PAT, fallback to GITHUB_TOKEN). Skip if public.
+            if [ -n "${GHCR_PAT_READ:-}" ]; then
+              echo "${GHCR_PAT_READ}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+            else
+              echo "No GHCR_PAT_READ provided. Using GITHUB_TOKEN (may fail for private images)."
+              echo "${GITHUB_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin || true
+            fi
 
-            # Pull new image + restart
-            IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
-            docker pull "$IMAGE"
+            SHA_TAG="$(echo "${GITHUB_SHA}" | cut -c1-7)"
+            IMAGE="${REGISTRY}/${IMAGE_NAME}:${SHA_TAG}"
+            echo "Deploying ${IMAGE}"
 
-            # Ensure compose file exists and up-to-date
-            docker compose -f docker-compose.prod.yml down
-            docker compose -f docker-compose.prod.yml up -d
+            docker pull "${IMAGE}"
 
-            # Prune old dangling images
+            # Run compose with IMAGE env var so it uses the pulled tag
+            IMAGE="${IMAGE}" docker compose -f docker-compose.prod.yml down
+            IMAGE="${IMAGE}" docker compose -f docker-compose.prod.yml up -d --pull always
+
             docker image prune -f
+
