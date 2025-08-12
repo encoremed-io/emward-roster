@@ -5,7 +5,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      GUNICORN_WORKERS: "${GUNICORN_WORKERS:-$$((2 * $$(nproc) + 1))}"
+      GUNICORN_WORKERS: "4"
       GUNICORN_TIMEOUT: "180"
       GUNICORN_GRACEFUL_TIMEOUT: "30"
       GUNICORN_MAX_REQUESTS: "2000"
@@ -13,18 +13,29 @@ services:
       PYTHONUNBUFFERED: "1"
       PYTHONDONTWRITEBYTECODE: "1"
       TMPDIR: "/tmp"
-    command: >
-      sh -c "gunicorn main:app
-             -k uvicorn.workers.UvicornWorker
-             -w ${GUNICORN_WORKERS:-$$((2 * $$(nproc) + 1))}
-             -b 0.0.0.0:8000
-             --timeout ${GUNICORN_TIMEOUT:-180}
-             --graceful-timeout ${GUNICORN_GRACEFUL_TIMEOUT:-30}
-             --max-requests ${GUNICORN_MAX_REQUESTS:-2000}
-             --max-requests-jitter ${GUNICORN_MAX_REQUESTS_JITTER:-200}
-             --keep-alive 5
-             --access-logfile -
-             --error-logfile -"
+    command:
+      - gunicorn
+      - main:app
+      - --worker-class
+      - uvicorn.workers.UvicornWorker
+      - --workers
+      - "${GUNICORN_WORKERS}"
+      - --bind
+      - 0.0.0.0:8000
+      - --timeout
+      - "${GUNICORN_TIMEOUT:-180}"
+      - --graceful-timeout
+      - "${GUNICORN_GRACEFUL_TIMEOUT:-30}"
+      - --max-requests
+      - "${GUNICORN_MAX_REQUESTS:-2000}"
+      - --max-requests-jitter
+      - "${GUNICORN_MAX_REQUESTS_JITTER:-200}"
+      - --keep-alive
+      - "5"
+      - --access-logfile
+      - "-"
+      - --error-logfile
+      - "-"
     mem_limit: 3g           # hard memory cap
     cpus: 2.0               # hard CPU cap (2 cores)
     healthcheck:

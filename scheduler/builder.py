@@ -15,6 +15,8 @@ from scheduler.runner import solve_schedule
 from schemas.schedule.generate import ShiftDetails, StaffAllocations
 
 logging.basicConfig(
+    # filename=LOG_PATH,
+    # filemode="w",
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
