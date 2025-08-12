@@ -10,7 +10,6 @@ from datetime import datetime, timedelta
 from typing import Dict, List
 from docs.swap.suggestions import swap_suggestions_description
 from schemas.swap.suggestions import SwapSuggestionRequest, SwapCandidate
-import sys
 from pprint import pprint
 
 router = APIRouter(prefix="/swap", tags=["Suggestions"])
@@ -33,8 +32,6 @@ def suggest_swap(data: SwapSuggestionRequest = Body(...)):
     min_seniors = settings.minSeniorsPerShift
     back_to_back = settings.backToBackShift
 
-    print(f"Settings: {settings}")
-    print(f"Target Nurses: {target_nurses}")
     # assign roster
     roster = data.roster
 
@@ -97,7 +94,7 @@ def suggest_swap(data: SwapSuggestionRequest = Body(...)):
 
                         # Check if nurse is already working on the target date
                         if any(s.date == date for s in nurse.shifts):
-                            print(f"  ❌ Already has shift on {date}")
+                            print(f"Already has shift on {date}")
                             continue
 
                         # Enforce back-to-back restriction
@@ -114,13 +111,13 @@ def suggest_swap(data: SwapSuggestionRequest = Body(...)):
                                 for s in nurse.shifts
                             ):
                                 print(
-                                    f"  ❌ Back-to-back conflict with shift on adjacent day"
+                                    f"Back-to-back conflict with shift on adjacent day"
                                 )
                                 continue
 
                         # Optional: Check seniority if required
                         if must_replace_with_senior and not nurse.isSenior:
-                            print(f"  ❌ Not senior and senior required")
+                            print(f"Not senior and senior required")
                             continue
 
                         # Passed all checks — suggest this as a direct swap
