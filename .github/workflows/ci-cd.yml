@@ -145,6 +145,6 @@ jobs:
 
             docker image prune -f
 
-            $COMPOSE ps
+            $COMPOSE -f docker-compose.prod.yml ps
             curl -fsS http://localhost:8000/api/health/check
 
