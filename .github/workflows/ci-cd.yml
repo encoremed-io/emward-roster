@@ -109,40 +109,39 @@ jobs:
           source: docker-compose.prod.yml
           target: /opt/roster-api
 
-      - name: Deploy via SSH (exact SHA)
+      - name: Deploy via SSH (public image, exact SHA)
         uses: appleboy/ssh-action@v1.2.0
-        env:
-          REGISTRY: ${{ env.REGISTRY }}
-          IMAGE_NAME: ${{ env.IMAGE_NAME }}
-          GITHUB_ACTOR: ${{ github.actor }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GHCR_PAT_READ: ${{ secrets.GHCR_PAT_READ }} # optional, read:packages
-          GITHUB_SHA: ${{ github.sha }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           script: |
             set -euo pipefail
+
+            # first run bootstrap
+            mkdir -p /opt/roster-api
             cd /opt/roster-api
 
-            # Login to GHCR (prefer PAT, fallback to GITHUB_TOKEN). Skip if public.
-            if [ -n "${GHCR_PAT_READ:-}" ]; then
-              echo "${GHCR_PAT_READ}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+            # choose compose CLI (plugin or legacy)
+            if docker compose version >/dev/null 2>&1; then
+              COMPOSE="docker compose"
             else
-              echo "No GHCR_PAT_READ provided. Using GITHUB_TOKEN (may fail for private images)."
-              echo "${GITHUB_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin || true
+              COMPOSE="docker-compose"
             fi
 
-            SHA_TAG="$(echo "${GITHUB_SHA}" | cut -c1-7)"
-            IMAGE="${REGISTRY}/${IMAGE_NAME}:${SHA_TAG}"
+            # use the exact SHA tag built by this workflow
+            SHA="${{ github.sha }}"; SHA_TAG="${SHA:0:7}"
+            IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${SHA_TAG}"
             echo "Deploying ${IMAGE}"
 
             docker pull "${IMAGE}"
 
-            # Run compose with IMAGE env var so it uses the pulled tag
-            IMAGE="${IMAGE}" docker compose -f docker-compose.prod.yml down
-            IMAGE="${IMAGE}" docker compose -f docker-compose.prod.yml up -d --pull always
+            # run compose with the injected IMAGE
+            IMAGE="${IMAGE}" $COMPOSE -f docker-compose.prod.yml down
+            IMAGE="${IMAGE}" $COMPOSE -f docker-compose.prod.yml up -d --pull always
 
             docker image prune -f
+
+            $COMPOSE ps
+            curl -fsS http://localhost:8000/api/health/check
 
