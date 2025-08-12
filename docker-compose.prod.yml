@@ -10,32 +10,18 @@ services:
       GUNICORN_GRACEFUL_TIMEOUT: "30"
       GUNICORN_MAX_REQUESTS: "2000"
       GUNICORN_MAX_REQUESTS_JITTER: "200"
-      PYTHONUNBUFFERED: "1"
-      PYTHONDONTWRITEBYTECODE: "1"
-      TMPDIR: "/tmp"
-    command:
-      - gunicorn
-      - main:app
-      - --worker-class
-      - uvicorn.workers.UvicornWorker
-      - --workers
-      - "${GUNICORN_WORKERS}"
-      - --bind
-      - 0.0.0.0:8000
-      - --timeout
-      - "${GUNICORN_TIMEOUT:-180}"
-      - --graceful-timeout
-      - "${GUNICORN_GRACEFUL_TIMEOUT:-30}"
-      - --max-requests
-      - "${GUNICORN_MAX_REQUESTS:-2000}"
-      - --max-requests-jitter
-      - "${GUNICORN_MAX_REQUESTS_JITTER:-200}"
-      - --keep-alive
-      - "5"
-      - --access-logfile
-      - "-"
-      - --error-logfile
-      - "-"
+      GUNICORN_CMD_ARGS: >-
+        --worker-class uvicorn.workers.UvicornWorker
+        --workers 4
+        --bind 0.0.0.0:8000
+        --timeout 180
+        --graceful-timeout 30
+        --max-requests 2000
+        --max-requests-jitter 200
+        --keep-alive 5
+        --access-logfile -
+        --error-logfile -
+    command: ["gunicorn", "main:app"]
     mem_limit: 3g           # hard memory cap
     cpus: 2.0               # hard CPU cap (2 cores)
     healthcheck:
