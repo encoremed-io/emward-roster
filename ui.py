@@ -6,7 +6,7 @@ import os
 os.environ["STREAMLIT_SERVER_FILE_WATCHER_TYPE"] = "none"
 sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
 import streamlit as st
-from datetime import date, time, datetime
+from datetime import date, time, datetime, timedelta
 from st_aggrid import GridOptionsBuilder, AgGrid, GridUpdateMode
 from collections import Counter, defaultdict
 import traceback
@@ -18,6 +18,11 @@ from utils.constants import *
 from utils.download import download_excel
 from utils.shift_utils import shift_duration_minutes
 from exceptions.custom_errors import *
+from schemas.schedule.generate import StaffAllocations
+import requests
+from typing import Dict, Any, List
+from pprint import pprint
+
 
 LOG_PATH = os.path.join(os.path.dirname(__file__), "ui_error.log")
 
@@ -28,7 +33,20 @@ except FileNotFoundError:
     os.makedirs(os.path.dirname(LOG_PATH))
     with open(LOG_PATH, "w") as f:
         pass
-logging.basicConfig(filename=LOG_PATH, level=logging.DEBUG)
+
+# logging.basicConfig(filename=LOG_PATH, level=logging.DEBUG)
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_PATH),
+        logging.StreamHandler(),  # Optional: show logs in terminal
+    ],
+    force=True,  # Ensure this config takes effect even if others were set
+)
+
+logging.getLogger("watchdog.observers.inotify_buffer").setLevel(logging.WARNING)
+logging.getLogger("watchdog").setLevel(logging.WARNING)
 
 CUSTOM_ERRORS = (
     NoFeasibleSolutionError,
@@ -44,7 +62,7 @@ CUSTOM_ERRORS = (
 )
 
 st.set_page_config(page_title="Nurse Roster Scheduler", layout="wide")
-st.title("🩺 Nurse Roster Schedulerss")
+st.title("🩺 Nurse Roster Scheduler")
 st.markdown(
     """
 Upload your nurse profiles and preferences, choose a start and end date, enter schedule parameters,
@@ -54,84 +72,393 @@ This uses CP-SAT under the hood.
 )
 
 
+# Show the updated schedule
 def show_editable_schedule():
-    """
-    Show the schedule in an editable grid. The user can type "EL" for emergency leave or "MC" for medical leave.
-    Invalid inputs are detected and an error message is shown. New EL/MC overrides are collected and stored in the session state.
-    """
+    logging.info("Showing editable schedule")
     st.subheader("📅 Editable Schedule")
     st.caption("Type 'EL' for emergency leave or 'MC' for medical leave")
+
     sched_df = st.session_state.sched_df
+
     if sched_df.empty:
         st.write("No schedule data to show.")
         return
 
+    # 1. Display-safe version for grid (stringified values)
     disp = sched_df.reset_index().rename(columns={"index": "Nurse"})
-    # st.write("disp preview:", disp.head())
+    disp = disp.map(
+        lambda x: (
+            ", ".join(map(str, x))
+            if isinstance(x, list)
+            else str(x) if pd.notna(x) else ""
+        )
+    )
+
     gb = GridOptionsBuilder.from_dataframe(disp)
     for c in disp.columns:
         if c != "Nurse":
             gb.configure_column(c, editable=True)
+
+    # 2. Show grid
     grid = AgGrid(
         disp,
         gridOptions=gb.build(),
-        update_mode=GridUpdateMode.VALUE_CHANGED,
+        update_mode=GridUpdateMode.MODEL_CHANGED,
         fit_columns_on_grid_load=True,
         height=300,
         key="editable_schedule_grid",
     )
-    edited = pd.DataFrame(grid["data"]).set_index("Nurse")
-    invalid = []  # error handling
 
-    # Collect new EL/MC overrides
+    # 3. Get edited grid and compare to displayed version
+    edited = pd.DataFrame(grid["data"]).set_index("Nurse")
+    original_disp = disp.set_index("Nurse")
+
+    def normalize(val):
+        return str(val).strip().upper() if pd.notna(val) else ""
+
+    # 4. Track overrides and shifts
     new_el = {}
     new_mc = {}
+    shift_map = {}
+
     for nurse in edited.index:
         for col in edited.columns:
-            val = edited.at[nurse, col]
+            old = normalize(original_disp.at[nurse, col])
+            new = normalize(edited.at[nurse, col])
 
-            old_val = st.session_state.sched_df.at[nurse, col]
-            if isinstance(old_val, list):
-                old = old_val[0].strip().upper() if old_val else ""
+            # ✅ Only validate truly edited cells
+            if new == old:
+                continue
+
+            try:
+                parsed = parse_shift_input(
+                    new
+                )  # may return "EL"/"MC"/"REST"/"TR" or list[str]
+            except ValueError as e:
+                st.warning(f"⚠️ {nurse} on {col}: {e}")
+                st.stop()
+
+            # 🔁 Get original shift code from sched_df
+            shift_val = sched_df.at[nurse, col]
+            if isinstance(shift_val, list):
+                shift_type_ids = shift_val
+            elif pd.isna(shift_val) or shift_val == "":
+                shift_type_ids = []
             else:
-                old = str(old_val).strip().upper()
+                shift_type_ids = [shift_val]  # fallback
 
-            if val is None or pd.isna(val):
-                val = None
+            CASE_MAP = {
+                "AM": "AM",
+                "PM": "PM",
+                "NIGHT": "Night",
+            }
+
+            if isinstance(parsed, str):  # EL / MC / REST / TR
+                if parsed in {"EL", "MC"}:
+                    if parsed == "EL":
+                        new_el[(nurse, col)] = "EL"
+                    elif parsed == "MC":
+                        new_mc[(nurse, col)] = "MC"
+                    st.session_state.sched_df.at[nurse, col] = [parsed.upper()]
+                else:
+                    st.session_state.sched_df.at[nurse, col] = [
+                        CASE_MAP.get(parsed.upper(), parsed)
+                    ]
             else:
-                logging.info(st.session_state)
-                logging.info(val)
-                # val = val.strip().upper()
+                st.session_state.sched_df.at[nurse, col] = [
+                    CASE_MAP.get(p.upper(), p) for p in parsed
+                ]
 
-            # if val == "EL" and old != "EL":
-            #     day_idx = (
-            #         pd.to_datetime(col).date() - st.session_state.start_date
-            #     ).days
-            #     new_el[(nurse, day_idx)] = "EL"
-            # if val == "MC" and old != "MC":
-            #     day_idx = (
-            #         pd.to_datetime(col).date() - st.session_state.start_date
-            #     ).days
-            #     new_mc[(nurse, day_idx)] = "MC"
-            # if val not in {"EL", "MC", old}:
-            #     invalid.append((nurse, col, val or "<blank>", old))
+            # keep a map of original shift ids/labels for your swap payload
+            shift_map[(nurse, col)] = shift_type_ids
 
-    if invalid:
-        msg = [
-            "⚠️ Some inputs are empty or invalid (not 'EL', 'MC', or the original shift). Please correct them:\n"
-        ]
-        for nurse, col, val, old in invalid:
-            msg.append(f"     • {nurse} on {col}: '{val}' (Original shift: '{old}')\n")
-        st.warning("\n".join(msg))
-        st.stop()
-
+    # ✅ Save overrides
     st.session_state.pending_el = new_el
     st.session_state.pending_mc = new_mc
+    # st.session_state.sched_df = edited.copy()
+
     st.sidebar.write(f"Pending EL overrides: {len(new_el)}")
-    st.sidebar.write(f"Total EL declarations: {len(st.session_state.all_el_overrides)}")
     st.sidebar.write(f"Pending MC overrides: {len(new_mc)}")
-    st.sidebar.write(f"Total MC declarations: {len(st.session_state.all_mc_overrides)}")
-    # all_mc_overrides and all_el_overrides only updated after validation
+
+    # 🔥 Trigger swap suggestions
+    if new_el or new_mc:
+        fetch_swap_suggestions(new_el, new_mc, shift_map)
+
+
+# Shift labels and their IDs
+SHIFT_CODE_MAP = {label: idx + 1 for idx, label in enumerate(SHIFT_LABELS)}
+ALLOWED_SHIFT_LABELS = {"AM", "PM", "NIGHT"}  # case-insensitive input
+NO_WORK_LABELS = {"EL", "MC", "REST", "TR"}  # keep your existing set if defined
+
+
+def parse_shift_input(raw: str) -> list[str] | str:
+    """
+    Returns:
+      - "EL"/"MC"/"REST"/"TR" (string) if a single no-work token is given
+      - list[str] of shift labels, e.g. ["AM", "Night"] for work shifts
+    Raises:
+      ValueError on invalid tokens or disallowed combinations.
+    """
+    s = raw.strip()
+    if not s:
+        raise ValueError("Empty input.")
+
+    # allow comma or slash separators
+    tokens = [t.strip() for t in s.replace("/", ",").split(",") if t.strip()]
+    tokens_up = [t.upper() for t in tokens]
+
+    # single token path (EL/MC/REST/TR/AM/PM/Night)
+    if len(tokens_up) == 1:
+        t = tokens_up[0]
+        if t in NO_WORK_LABELS:
+            return t  # keep as is
+        if t in ALLOWED_SHIFT_LABELS:
+            return [t]  # return in uppercase form from tokens_up
+        raise ValueError(f"Unknown value '{tokens[0]}'.")
+
+    # multiple tokens => only work shifts allowed
+    if any(t in NO_WORK_LABELS for t in tokens_up):
+        raise ValueError("Cannot combine EL/MC/REST/TR with shift labels.")
+
+    # validate all tokens are shift labels
+    if not all(t in ALLOWED_SHIFT_LABELS for t in tokens_up):
+        bad = [
+            tokens[i] for i, t in enumerate(tokens_up) if t not in ALLOWED_SHIFT_LABELS
+        ]
+        raise ValueError(f"Invalid shift(s): {', '.join(bad)}.")
+
+    # no duplicates
+    dedup_up = []
+    for t in tokens_up:
+        if t not in dedup_up:
+            dedup_up.append(t)
+
+    # enforce your UI toggle for double shifts
+    if len(dedup_up) > 2 and not st.session_state.allow_double_shift:
+        raise ValueError("More than 2 shifts not allowed.")
+    if len(dedup_up) == 2 and not st.session_state.allow_double_shift:
+        raise ValueError("Double shift editing is disabled in sidebar settings.")
+
+    # return normalized labels with desired casing
+    def norm(t):
+        return t.title() if t != "NIGHT" else "Night"
+
+    return [norm(t) for t in dedup_up]
+
+
+# Generate the roster format
+def generate_roster_format() -> List[Dict[str, Any]]:
+    result = []
+    shift_id_counter = 1
+
+    for nurse_id, row in st.session_state.sched_df.iterrows():
+        nurse_entry = {
+            "nurseId": nurse_id,
+            "preferences": None,  # fill if needed
+            "isSenior": False,  # fill from profile if you have it
+            "isSpecialist": True,  # fill from profile if you have it
+            "shifts": [],
+        }
+
+        for date_str, cell in row.items():
+            # Normalize to list
+            shifts = cell if isinstance(cell, list) else [cell]
+            # Remove None/NaN
+            shifts = [s for s in shifts if pd.notna(s)]
+
+            for shift_label in shifts:
+                # Skip rest / leave / training
+                if shift_label in NO_WORK_LABELS:
+                    continue
+                # Convert label to ID
+                shift_type_id = SHIFT_CODE_MAP.get(shift_label)
+                if not shift_type_id:
+                    continue
+
+                nurse_entry["shifts"].append(
+                    {
+                        "id": shift_id_counter,
+                        "date": pd.to_datetime(date_str).strftime("%Y-%m-%d"),
+                        "shiftTypeId": shift_type_id,
+                    }
+                )
+                shift_id_counter += 1
+
+        result.append(nurse_entry)
+
+    return result
+
+
+# Show the swap suggestions format
+def fetch_swap_suggestions(new_el: dict, new_mc: dict, shift_map: dict):
+    SHIFT_ID_MAP = {label: idx + 1 for idx, label in enumerate(SHIFT_LABELS)}
+    target_nurse_ids: dict[str, list[dict]] = {}
+    edited_cells = {**new_el, **new_mc}
+
+    for (nurse, col_date), _leave in edited_cells.items():
+        raw = shift_map.get((nurse, col_date), [])
+        if isinstance(raw, (str, int)):
+            raw = [raw]
+
+        # Convert to 1-based shift ids; skip NO_WORK
+        shift_ids: list[int] = []
+        for v in raw:
+            if isinstance(v, str):
+                label = v.strip()
+                if label in NO_WORK_LABELS:
+                    continue
+                sid = SHIFT_ID_MAP.get(label)
+                if sid:
+                    shift_ids.append(sid)
+            elif isinstance(v, int):
+                # assume already 1-based and valid
+                if 1 <= v <= len(SHIFT_LABELS):
+                    shift_ids.append(v)
+
+        if not shift_ids:
+            continue
+
+        date_iso = pd.to_datetime(col_date).strftime("%Y-%m-%d")
+        entry = target_nurse_ids.setdefault(nurse, [])
+        entry.append({"date": date_iso, "shiftTypeId": sorted(set(shift_ids))})
+
+    if not target_nurse_ids:
+        logging.info("No valid swap targets to send.")
+        return None
+
+    # attach per-date durations (minutes) for convenience
+    for nurse, shifts in target_nurse_ids.items():
+        for shift in shifts:
+            # shiftTypeId is 1-based; durations array is 0-based
+            shift["durationMinutes"] = [
+                st.session_state.shift_durations[i - 1] for i in shift["shiftTypeId"]
+            ]
+
+    # base settings.duration from the first target shift's first id (minutes)
+    first_nurse = next(iter(target_nurse_ids))
+    first_shift = target_nurse_ids[first_nurse][0]
+    first_id = first_shift["shiftTypeId"][0]  # 1-based
+    settings_duration = st.session_state.shift_durations[first_id - 1]  # minutes
+
+    payload = {
+        "targetNurseId": [
+            {"nurseId": nurse, "targetShift": shifts}
+            for nurse, shifts in target_nurse_ids.items()
+        ],
+        "settings": {
+            "shiftDurations": settings_duration / 60,  # minutes (e.g., 420)
+            "minSeniorsPerShift": st.session_state.min_seniors_per_shift,
+            "maxWeeklyHours": st.session_state.max_weekly_hours,
+            "preferredWeeklyHours": st.session_state.preferred_weekly_hours,
+            "minWeeklyHours": st.session_state.min_acceptable_weekly_hours,
+            "enforceWeekendRest": st.session_state.weekend_rest,
+            "backToBackShift": st.session_state.back_to_back_shift,
+            "balanceShiftAssignments": False,
+        },
+        # meta: keep ids 1..3 to match shiftTypeId above
+        "shifts": [
+            {"id": 1, "name": "AM", "duration": "0700-1400"},
+            {"id": 2, "name": "PM", "duration": "1400-2100"},
+            {"id": 3, "name": "Night", "duration": "2100-0700"},
+        ],
+        "roster": generate_roster_format(),  # from earlier helper (grouped by nurse/date)
+    }
+
+    pprint(payload, sort_dicts=False, width=100)
+    # print("wootie:\n", payload)
+    # print("Error! Exiting.")
+    # sys.exit()
+
+    # Send POST request
+    try:
+        resp = requests.post(
+            "http://api:8000/api/swap/suggestions",
+            json=payload,
+            timeout=30,
+        )
+        resp.raise_for_status()
+    except requests.HTTPError as e:
+        print("\n--- API ERROR ---")
+        print(f"Status: {resp.status_code}")
+        try:
+            print(
+                "Response JSON:", json.dumps(resp.json(), indent=2)
+            )  # Shows Pydantic errors
+        except ValueError:
+            print("Response text:", resp.text)  # If not JSON
+        print("--- END API ERROR ---\n")
+        raise
+
+    data = resp.json()
+
+    # Prompt the user with suggestions
+    prompt_suggestions(data)
+
+
+# Prompt the user with swap suggestions
+def prompt_suggestions(data: dict):
+    for item in data.get("results", []):
+        nurse = item.get("originalNurse")
+        repl = item.get("replacementFor", {}) or {}
+        date = repl.get("date")
+        shift_id = repl.get("shiftTypeId")
+
+        # Optional: map shiftTypeId → label if you have SHIFT_LABELS = ["AM","PM","Night"]
+        try:
+            shift_name = (
+                SHIFT_LABELS[shift_id - 1]
+                if isinstance(shift_id, int)
+                else str(shift_id)
+            )
+        except Exception:
+            shift_name = str(shift_id)
+
+        st.warning(
+            f"🩺 `{nurse}` needs a replacement on {date} (shift {shift_name}) — filter: {item.get('filterLevel')}"
+        )
+
+        # ----- Direct swap candidate -----
+        direct = item.get("directSwapCandidate")
+        if direct:
+            swap_from = direct.get("swapFrom") or {}
+            swap_to = direct.get("swapTo") or {}
+
+            # Map shift ids to names (best-effort)
+            def name_for(sid):
+                try:
+                    return SHIFT_LABELS[sid - 1]
+                except Exception:
+                    return str(sid)
+
+            from_name = name_for(swap_from.get("shiftTypeId"))
+            to_name = name_for(swap_to.get("shiftTypeId"))
+
+            st.info(
+                f"🔄 Direct swap: `{direct.get('nurseId')}` "
+                f"from {swap_from.get('date')} ({from_name}) → {swap_to.get('date')} ({to_name}). "
+                f"{direct.get('note','')}"
+            )
+        else:
+            st.info("No direct swap candidate.")
+
+        # ----- Top candidates -----
+        cands = item.get("topCandidates") or []
+        if cands:
+            # Quick readable bullets
+            for c in cands:
+                st.write(
+                    f"• `{c.get('nurseId')}` | "
+                    f"{'Senior' if c.get('isSenior') else 'Junior'} | "
+                    f"Hours: {c.get('currentHours')} | "
+                    f"Violates max: {c.get('violatesMaxHours')} | "
+                    f"{c.get('message','')}"
+                )
+
+            # Or show as a table too (optional)
+            # import pandas as pd
+            # st.dataframe(pd.DataFrame(cands))
+        else:
+            st.write("No top candidates returned.")
 
 
 # Sidebar inputs
@@ -172,29 +499,35 @@ else:
         }
     )
 
+# print("df_profiles:\n", df_profiles)
+# print("Error! Exiting.")
+# sys.exit()
 prefs_file = st.sidebar.file_uploader(
     "Upload Nurse Preferences (Optional)",
     type=["xlsx"],
     help=("• Preferences file only applies to specified dates in file."),
 )
+# prefs_file: Union[str, Path, bytes, IO, None] = None
 
-training_shifts_file = st.sidebar.file_uploader(
-    "Upload Training Shifts (Optional)",
-    type=["xlsx"],
-    help=(
-        "• If provided, these shifts will be excluded for the nurse for the schedule on stated days.\n\n"
-        "• Training Shifts file only appied to specified dates in file."
-    ),
-)
+# training_shifts_file = st.sidebar.file_uploader(
+#     "Upload Training Shifts (Optional)",
+#     type=["xlsx"],
+#     help=(
+#         "• If provided, these shifts will be excluded for the nurse for the schedule on stated days.\n\n"
+#         "• Training Shifts file only appied to specified dates in file."
+#     ),
+# )
+training_shifts_file: Union[str, Path, bytes, IO, None] = None
 
-prev_sched_file = st.sidebar.file_uploader(
-    "Upload Previous Schedule (Optional)",
-    type=["xlsx"],
-    help=(
-        "• Upload a previous schedule to ensure continuity.\n\n"
-        "• Previous Schedule end date must be before current schedule start date."
-    ),
-)
+# prev_sched_file = st.sidebar.file_uploader(
+#     "Upload Previous Schedule (Optional)",
+#     type=["xlsx"],
+#     help=(
+#         "• Upload a previous schedule to ensure continuity.\n\n"
+#         "• Previous Schedule end date must be before current schedule start date."
+#     ),
+# )
+prev_sched_file: Union[str, Path, bytes, IO, None] = None
 
 start_date = pd.to_datetime(
     st.sidebar.date_input("Schedule start date", value=date.today(), key="start_date")
@@ -239,6 +572,58 @@ min_seniors_per_shift = st.sidebar.number_input(
     value=MIN_SENIORS_PER_SHIFT,
     key="min_seniors_per_shift",
 )
+
+with st.sidebar.expander("Staff Allocation", expanded=True):
+    senior_staff_allocation = st.radio(
+        "Senior Staff",
+        options=["Yes", "No"],
+        horizontal=True,
+        index=1,
+        key="senior_staff_allocation",
+    )
+
+    senior_staff_percentage = st.slider(
+        "Percentage of Senior Nurses",
+        min_value=50,
+        max_value=100,
+        help="Aim for at least this % of nurses working shift.",
+        key="senior_staff_percentage",
+        disabled=(senior_staff_allocation == "No"),
+    )
+
+    senior_staff_allocation_refinement = st.radio(
+        "Refine Senior Staff Allocation",
+        options=["Yes", "No"],
+        horizontal=True,
+        index=1,
+        key="senior_staff_allocation_refinement",
+        disabled=(senior_staff_allocation == "No"),
+    )
+
+    senior_staff_allocation_refinement_value = st.number_input(
+        "Refinement Value %",
+        min_value=0,
+        max_value=100,
+        value=0,
+        step=5,
+        help="Adjust the percentage of senior nurses allocated to shifts.",
+        key="senior_staff_allocation_refinement_value",
+        disabled=(
+            senior_staff_allocation_refinement == "No"
+            or senior_staff_allocation == "No"
+        ),
+    )
+
+st.sidebar.subheader("Working Hours")
+min_acceptable_weekly_hours = st.sidebar.number_input(
+    "Min weekly hours",
+    min_value=1,
+    value=MIN_ACCEPTABLE_WEEKLY_HOURS,
+    help="The minimum number of hours a nurse must be scheduled for each week. MC and EL days reduce this cap.",
+    key="min_acceptable_weekly_hours",
+    # disabled=pref_weekly_hours_hard,
+)
+
 max_weekly_hours = st.sidebar.number_input(
     "Max weekly hours",
     min_value=1,
@@ -253,106 +638,100 @@ preferred_weekly_hours = st.sidebar.number_input(
     help="The ideal number of hours a nurse should work per week. The model tries to meet this, but may assign less if needed. MC and EL days reduce this cap.",
     key="preferred_weekly_hours",
 )
-pref_weekly_hours_hard = st.sidebar.checkbox(
-    "Preferred weekly hours is a hard constraint",
-    value=False,
-    help="If checked, the preferred weekly hours is enforced strictly.",
-    key="pref_weekly_hours_hard",
-)
-min_acceptable_weekly_hours = st.sidebar.number_input(
-    "Min acceptable weekly hours",
-    min_value=1,
-    value=MIN_ACCEPTABLE_WEEKLY_HOURS,
-    help="The minimum number of hours a nurse must be scheduled for each week. MC and EL days reduce this cap.",
-    key="min_acceptable_weekly_hours",
-    disabled=pref_weekly_hours_hard,
-)
-if pref_weekly_hours_hard:
-    st.caption("Preferred weekly hours would be a hard minimum.")
-    min_acceptable_weekly_hours = preferred_weekly_hours  # Set to preferred weekly  hours if hard constraint is enabled
+# pref_weekly_hours_hard = st.sidebar.checkbox(
+#     "Preferred weekly hours is a hard constraint",
+#     value=False,
+#     help="If checked, the preferred weekly hours is enforced strictly.",
+#     key="pref_weekly_hours_hard",
+# )
+
+# if pref_weekly_hours_hard:
+#     st.caption("Preferred weekly hours would be a hard minimum.")
+#     min_acceptable_weekly_hours = preferred_weekly_hours  # Set to preferred weekly  hours if hard constraint is enabled
 
 min_weekly_rest = st.sidebar.number_input(
-    "Min weekly rest",
+    "Rest day eligible",
     min_value=1,
     value=MIN_WEEKLY_REST,
     help="The minimum number of days a nurse must rest per week.",
     key="min_weekly_rest",
 )
-with st.sidebar.expander("AM Coverage Constraint", expanded=True):
-    activate_am_cov = st.checkbox(
-        "Activate AM Coverage",
-        value=False,
-        help="Activates the minimum AM coverage constraint.",
-        key="activate_am_cov",
-    )
+# with st.sidebar.expander("AM Coverage Constraint", expanded=True):
+#     activate_am_cov = st.checkbox(
+#         "Activate AM Coverage",
+#         value=False,
+#         help="Activates the minimum AM coverage constraint.",
+#         key="activate_am_cov",
+#     )
 
-    am_coverage_min_percent = st.slider(
-        "AM coverage min percent",
-        min_value=34,
-        max_value=100,
-        value=AM_COVERAGE_MIN_PERCENT,
-        help="Aim for at least this % of nurses working AM shift.",
-        key="am_coverage_min_percent",
-        disabled=not activate_am_cov,
-    )
+#     am_coverage_min_percent = st.slider(
+#         "AM coverage min percent",
+#         min_value=34,
+#         max_value=100,
+#         value=AM_COVERAGE_MIN_PERCENT,
+#         help="Aim for at least this % of nurses working AM shift.",
+#         key="am_coverage_min_percent",
+#         disabled=not activate_am_cov,
+#     )
 
-    am_coverage_min_hard = st.checkbox(
-        "Minimum AM coverage is a hard constraint",
-        value=False,
-        help=(
-            "• If checked, the system strictly applies the AM nurse percentage.\n\n"
-            "• If unchecked, it lowers the target gradually using the step value, "
-            "but always ensures AM shifts are not outnumbered by PM or Night shifts."
-        ),
-        key="am_coverage_min_hard",
-        disabled=not activate_am_cov,
-    )
+#     am_coverage_min_hard = st.checkbox(
+#         "Minimum AM coverage is a hard constraint",
+#         value=False,
+#         help=(
+#             "• If checked, the system strictly applies the AM nurse percentage.\n\n"
+#             "• If unchecked, it lowers the target gradually using the step value, "
+#             "but always ensures AM shifts are not outnumbered by PM or Night shifts."
+#         ),
+#         key="am_coverage_min_hard",
+#         disabled=not activate_am_cov,
+#     )
 
-    am_coverage_relax_step = st.number_input(
-        "AM relax step",
-        min_value=1,
-        max_value=66,
-        value=AM_COVERAGE_RELAX_STEP,
-        help="If minimum AM coverage is not met, gradually relax by this % of AM shifts.",
-        disabled=not activate_am_cov or am_coverage_min_hard,
-        key="am_coverage_relax_step",
-    )
+#     am_coverage_relax_step = st.number_input(
+#         "AM relax step",
+#         min_value=1,
+#         max_value=66,
+#         value=AM_COVERAGE_RELAX_STEP,
+#         help="If minimum AM coverage is not met, gradually relax by this % of AM shifts.",
+#         disabled=not activate_am_cov or am_coverage_min_hard,
+#         key="am_coverage_relax_step",
+#     )
 
-    if activate_am_cov and am_coverage_min_hard:
-        am_coverage_relax_step = 0
-        if am_coverage_min_hard:
-            st.caption("AM relax step will be ignored.")
+#     if activate_am_cov and am_coverage_min_hard:
+#         am_coverage_relax_step = 0
+#         if am_coverage_min_hard:
+#             st.caption("AM relax step will be ignored.")
 
-am_senior_min_percent = st.sidebar.slider(
-    "AM senior min percent",
-    min_value=50,
-    max_value=100,
-    value=AM_SENIOR_MIN_PERCENT,
-    help="Aim for at least this % of nurses in AM being seniors.",
-    key="am_senior_min_percent",
-)
-am_senior_min_hard = st.sidebar.checkbox(
-    "Minimum AM senior coverage is a hard constraint",
-    value=False,
-    help=(
-        "• If checked, the system strictly applies the senior percentage for AM shifts.\n\n"
-        "• If unchecked, it lowers the target gradually using the step value, but always ensures seniors are not outnumbered by juniors in AM shifts."
-    ),
-    key="am_senior_min_hard",
-)
-am_senior_relax_step = st.sidebar.number_input(
-    "AM senior relax step",
-    min_value=1,
-    max_value=50,
-    value=AM_SENIOR_RELAX_STEP,
-    help="If minimum AM senior coverage is not met, gradually relax by this % of senior nurses for AM shifts.",
-    disabled=am_senior_min_hard,
-    key="am_senior_relax_step",
-)
-if am_senior_min_hard:
-    st.caption("AM senior relax step will be ignored.")
-    am_senior_relax_step = 0
+# am_senior_min_percent = st.sidebar.slider(
+#     "AM senior min percent",
+#     min_value=50,
+#     max_value=100,
+#     value=AM_SENIOR_MIN_PERCENT,
+#     help="Aim for at least this % of nurses in AM being seniors.",
+#     key="am_senior_min_percent",
+# )
+# am_senior_min_hard = st.sidebar.checkbox(
+#     "Minimum AM senior coverage is a hard constraint",
+#     value=False,
+#     help=(
+#         "• If checked, the system strictly applies the senior percentage for AM shifts.\n\n"
+#         "• If unchecked, it lowers the target gradually using the step value, but always ensures seniors are not outnumbered by juniors in AM shifts."
+#     ),
+#     key="am_senior_min_hard",
+# )
+# am_senior_relax_step = st.sidebar.number_input(
+#     "AM senior relax step",
+#     min_value=1,
+#     max_value=50,
+#     value=AM_SENIOR_RELAX_STEP,
+#     help="If minimum AM senior coverage is not met, gradually relax by this % of senior nurses for AM shifts.",
+#     disabled=am_senior_min_hard,
+#     key="am_senior_relax_step",
+# )
+# if am_senior_min_hard:
+#     st.caption("AM senior relax step will be ignored.")
+#     am_senior_relax_step = 0
 
+st.sidebar.subheader("Others")
 weekend_rest = st.sidebar.checkbox(
     "Enforce alternating weekend rest",
     value=True,
@@ -365,12 +744,18 @@ back_to_back_shift = st.sidebar.checkbox(
     help="If checked, nurses may be scheduled for consecutive shifts (e.g., Night followed by AM).",
     key="back_to_back_shift",
 )
-use_sliding_window = st.sidebar.checkbox(
-    "Use sliding window for weekly hours",
+allow_double_shift = st.sidebar.checkbox(
+    "Allow double shifts",
     value=False,
-    help="If checked, the maximum weekly hours is enforced over any consecutive 7-day window, not just calendar weeks. This provides stricter control over nurse workload.",
-    key="use_sliding_window",
+    help="If checked, nurses may be scheduled for two consecutive shifts (e.g., AM followed by PM).",
+    key="allow_double_shift",
 )
+# use_sliding_window = st.sidebar.checkbox(
+#     "Use sliding window for weekly hours",
+#     value=False,
+#     help="If checked, the maximum weekly hours is enforced over any consecutive 7-day window, not just calendar weeks. This provides stricter control over nurse workload.",
+#     key="use_sliding_window",
+# )
 shift_balance = st.sidebar.checkbox(
     "Balance shift assignments",
     value=False,
@@ -417,74 +802,74 @@ if errors:
     st.error("\n".join(errors))
     st.stop()
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("Add preferences manually")
+# st.sidebar.markdown("---")
+# st.sidebar.subheader("Add preferences manually")
 
-if "manual_prefs" not in st.session_state:
-    st.session_state.manual_prefs = []
+# if "manual_prefs" not in st.session_state:
+#     st.session_state.manual_prefs = []
 
-nurses = sorted(df_profiles["Name"].str.strip().str.upper().tolist())
+# nurses = sorted(df_profiles["Name"].str.strip().str.upper().tolist())
 
-sel_nurse = st.sidebar.selectbox(
-    "Select Nurse for Preferences", options=nurses, index=None, key="sel_nurse"
-)
+# sel_nurse = st.sidebar.selectbox(
+#     "Select Nurse for Preferences", options=nurses, index=None, key="sel_nurse"
+# )
 
-sel_date = st.sidebar.date_input(
-    "Select Date for Preferences",
-    value=None,
-    min_value=start_date,
-    max_value=end_date,
-    key="sel_date",
-)
+# sel_date = st.sidebar.date_input(
+#     "Select Date for Preferences",
+#     value=None,
+#     min_value=start_date,
+#     max_value=end_date,
+#     key="sel_date",
+# )
 
-sel_pref = st.sidebar.selectbox(
-    "Select Preference",
-    options=[
-        lbl for lbl in SHIFT_LABELS + NO_WORK_LABELS if lbl not in ["EL", "REST", "TR"]
-    ],
-    index=None,
-    key="sel_pref",
-)
+# sel_pref = st.sidebar.selectbox(
+#     "Select Preference",
+#     options=[
+#         lbl for lbl in SHIFT_LABELS + NO_WORK_LABELS if lbl not in ["EL", "REST", "TR"]
+#     ],
+#     index=None,
+#     key="sel_pref",
+# )
 
-if st.sidebar.button("Add Preference"):
-    if not sel_nurse or not sel_date or not sel_pref:
-        st.sidebar.error("Please select a nurse, date, and preference.")
-        st.stop()
+# if st.sidebar.button("Add Preference"):
+#     if not sel_nurse or not sel_date or not sel_pref:
+#         st.sidebar.error("Please select a nurse, date, and preference.")
+#         st.stop()
 
-    duplicates = any(
-        p["Nurse"] == sel_nurse and p["Date"] == pd.to_datetime(sel_date)
-        for p in st.session_state.manual_prefs
-    )
+#     duplicates = any(
+#         p["Nurse"] == sel_nurse and p["Date"] == pd.to_datetime(sel_date)
+#         for p in st.session_state.manual_prefs
+#     )
 
-    if duplicates:
-        st.sidebar.warning(f"{sel_nurse} already has a preference for {sel_date}.")
-    else:
-        now = datetime.now()
-        st.session_state.manual_prefs.append(
-            {
-                "Nurse": sel_nurse,
-                "Date": pd.to_datetime(sel_date),
-                "Preference": sel_pref,
-                "Timestamp": now,
-                "Source": "Manual",
-            }
-        )
-        st.sidebar.success(
-            f"Added preference for {sel_nurse} on {sel_date}: {sel_pref} at {now:%H:%M:%S}."
-        )
+#     if duplicates:
+#         st.sidebar.warning(f"{sel_nurse} already has a preference for {sel_date}.")
+#     else:
+#         now = datetime.now()
+#         st.session_state.manual_prefs.append(
+#             {
+#                 "Nurse": sel_nurse,
+#                 "Date": pd.to_datetime(sel_date),
+#                 "Preference": sel_pref,
+#                 "Timestamp": now,
+#                 "Source": "Manual",
+#             }
+#         )
+#         st.sidebar.success(
+#             f"Added preference for {sel_nurse} on {sel_date}: {sel_pref} at {now:%H:%M:%S}."
+#         )
 
-if st.session_state.manual_prefs:
-    st.sidebar.markdown("**Current Manual Preferences**")
-    for idx, pref in enumerate(st.session_state.manual_prefs, 1):
-        col1, col2, _ = st.sidebar.columns([7, 1, 1])
-        col1.markdown(
-            f"{idx}. {pref['Nurse']} on {pref['Date'].date()}: {pref['Preference']}"
-        )
-        if col2.button(label="❌", key=f"remove_{idx}", help="Remove this preference"):
-            st.session_state.manual_prefs.pop(idx - 1)
-            st.rerun()
-else:
-    st.sidebar.markdown("No manual preferences found.")
+# if st.session_state.manual_prefs:
+#     st.sidebar.markdown("**Current Manual Preferences**")
+#     for idx, pref in enumerate(st.session_state.manual_prefs, 1):
+#         col1, col2, _ = st.sidebar.columns([7, 1, 1])
+#         col1.markdown(
+#             f"{idx}. {pref['Nurse']} on {pref['Date'].date()}: {pref['Preference']}"
+#         )
+#         if col2.button(label="❌", key=f"remove_{idx}", help="Remove this preference"):
+#             st.session_state.manual_prefs.pop(idx - 1)
+#             st.rerun()
+# else:
+#     st.sidebar.markdown("No manual preferences found.")
 
 # Store core state
 for key, default in {
@@ -500,29 +885,46 @@ for key, default in {
     "shift_durations": shift_durations,
     "min_nurses_per_shift": min_nurses_per_shift,
     "min_seniors_per_shift": min_seniors_per_shift,
+    "senior_staff_allocation": senior_staff_allocation,
+    "senior_staff_percentage": senior_staff_percentage,
+    "senior_staff_allocation_refinement": senior_staff_allocation_refinement,
+    "senior_staff_allocation_refinement_value": senior_staff_allocation_refinement_value,
+    "staff_allocation": StaffAllocations(
+        seniorStaffAllocation=(senior_staff_allocation == "Yes"),
+        seniorStaffPercentage=senior_staff_percentage,
+        seniorStaffAllocationRefinement=(senior_staff_allocation_refinement == "Yes"),
+        seniorStaffAllocationRefinementValue=senior_staff_allocation_refinement_value,
+    ),
+    "min_acceptable_weekly_hours": min_acceptable_weekly_hours,
     "max_weekly_hours": max_weekly_hours,
     "preferred_weekly_hours": preferred_weekly_hours,
-    "pref_weekly_hours_hard": pref_weekly_hours_hard,
-    "min_acceptable_weekly_hours": min_acceptable_weekly_hours,
     "min_weekly_rest": min_weekly_rest,
-    "activate_am_cov": activate_am_cov,
-    "am_coverage_min_percent": am_coverage_min_percent,
-    "am_coverage_min_hard": am_coverage_min_hard,
-    "am_coverage_relax_step": am_coverage_relax_step,
-    "am_senior_min_percent": am_senior_min_percent,
-    "am_senior_min_hard": am_senior_min_hard,
-    "am_senior_relax_step": am_senior_relax_step,
     "weekend_rest": weekend_rest,
     "back_to_back_shift": back_to_back_shift,
-    "use_sliding_window": use_sliding_window,
+    "allow_double_shift": allow_double_shift,
     "shift_balance": shift_balance,
     "priority_setting": priority_setting,
+    # "use_sliding_window": use_sliding_window,
+    "pref_weekly_hours_hard": False,
+    # "activate_am_cov": activate_am_cov,
+    # "am_coverage_min_percent": am_coverage_min_percent,
+    # "am_coverage_min_hard": am_coverage_min_hard,
+    # "am_coverage_relax_step": am_coverage_relax_step,
+    # "am_senior_min_percent": am_senior_min_percent,
+    # "am_senior_min_hard": am_senior_min_hard,
+    # "am_senior_relax_step": am_senior_relax_step,
     "all_el_overrides": {},
     "all_mc_overrides": {},
     "all_prefs_meta": [],
 }.items():
     if key not in st.session_state:
         st.session_state[key] = default
+
+logging.info(
+    "Senior Staff Allocation: %-5s | Refinement Allowed: %-5s",
+    senior_staff_allocation,
+    senior_staff_allocation_refinement,
+)
 
 if "missing_prefs" not in st.session_state:
     st.session_state.missing_prefs = None
@@ -537,6 +939,7 @@ if st.sidebar.button("Generate Schedule", type="primary"):
     st.session_state.all_mc_overrides = {}
     file_prefs_ts = datetime.now()
     st.session_state["file_prefs_ts"] = file_prefs_ts
+    logging.info("Generate Schedule : %s", st.session_state)
 
     if profile_input_mode == "Upload File" and not profiles_file:
         st.error("Please upload a valid profiles excel file.")
@@ -654,7 +1057,10 @@ if st.sidebar.button("Generate Schedule", type="primary"):
         st.session_state.df_prefs = df_prefs
         st.session_state.df_train_shifts = df_train_shifts
         st.session_state.df_prev_sched = df_prev_sched
-        print("df_profiles:\n", st.session_state.df_profiles)
+
+        # print("profiles:\n", df_profiles)
+        # print("Error1! Exiting.")
+        # sys.exit()
 
         sched, summ, violations, metrics = build_schedule_model(
             df_profiles,
@@ -678,13 +1084,29 @@ if st.sidebar.button("Generate Schedule", type="primary"):
             # am_senior_min_percent=st.session_state.am_senior_min_percent,
             # am_senior_min_hard=st.session_state.am_senior_min_hard,
             # am_senior_relax_step=st.session_state.am_senior_relax_step,
+            # use_sliding_window=st.session_state.use_sliding_window,
             weekend_rest=st.session_state.weekend_rest,
             back_to_back_shift=st.session_state.back_to_back_shift,
-            use_sliding_window=st.session_state.use_sliding_window,
+            staff_allocation=StaffAllocations(
+                seniorStaffAllocation=(
+                    st.session_state.senior_staff_allocation == "No"
+                ),
+                seniorStaffPercentage=st.session_state.senior_staff_percentage,
+                seniorStaffAllocationRefinement=(
+                    st.session_state.senior_staff_allocation_refinement == "No"
+                ),
+                seniorStaffAllocationRefinementValue=st.session_state.senior_staff_allocation_refinement_value,
+            ),
             shift_balance=st.session_state.shift_balance,
             priority_setting=st.session_state.priority_setting,
             fixed_assignments=st.session_state.fixed,
+            allow_double_shift=st.session_state.allow_double_shift,
         )
+
+        # print("schedule:\n", sched)
+        # print("Error! Exiting.")
+        # sys.exit()
+
         st.session_state.sched_df = sched
         st.session_state.summary_df = summ
         st.session_state.violations = violations
@@ -694,6 +1116,7 @@ if st.sidebar.button("Generate Schedule", type="primary"):
         st.session_state.show_schedule_expanded = False
         st.session_state["editable_toggle"] = "Hide"
         st.rerun()
+
     except CUSTOM_ERRORS as e:
         st.error(str(e))
         st.stop()
@@ -838,6 +1261,8 @@ if st.session_state.sched_df is not None:
                         st.session_state.shift_balance,
                         st.session_state.priority_setting,
                         st.session_state.fixed,
+                        st.session_state.allow_double_shift,
+                        st.session_state.staff_allocation,
                     )
                     st.session_state.sched_df = sched2
                     st.session_state.summary_df = summ2

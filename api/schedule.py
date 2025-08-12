@@ -16,7 +16,6 @@ import re
 import traceback
 from docs.schedule.roster import schedule_roster_description
 from utils.helpers.schedule_roster import standardize_profile_columns
-import logging
 
 router = APIRouter(prefix="/schedule", tags=["Roster"])
 

@@ -1,5 +1,6 @@
 fastapi
 uvicorn[standard]
+gunicorn
 pandas
 ortools
 numpy

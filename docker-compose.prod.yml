@@ -1,0 +1,53 @@
+services:
+  api:
+    build: .
+    image: roster-api:prod
+    container_name: roster-api
+    ports:
+      - "8000:8000"
+    environment:
+      GUNICORN_WORKERS: "${GUNICORN_WORKERS:-$$((2 * $$(nproc) + 1))}"
+      GUNICORN_TIMEOUT: "180"
+      GUNICORN_GRACEFUL_TIMEOUT: "30"
+      GUNICORN_MAX_REQUESTS: "2000"
+      GUNICORN_MAX_REQUESTS_JITTER: "200"
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      TMPDIR: "/tmp"
+    command: >
+      sh -c "gunicorn main:app
+             -k uvicorn.workers.UvicornWorker
+             -w ${GUNICORN_WORKERS:-$$((2 * $$(nproc) + 1))}
+             -b 0.0.0.0:8000
+             --timeout ${GUNICORN_TIMEOUT:-180}
+             --graceful-timeout ${GUNICORN_GRACEFUL_TIMEOUT:-30}
+             --max-requests ${GUNICORN_MAX_REQUESTS:-2000}
+             --max-requests-jitter ${GUNICORN_MAX_REQUESTS_JITTER:-200}
+             --keep-alive 5
+             --access-logfile -
+             --error-logfile -"
+    mem_limit: 3g           # hard memory cap
+    cpus: 2.0               # hard CPU cap (2 cores)
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent --max-time 2 http://localhost:8000/api/health/check || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+    stop_grace_period: 45s
+   
+# build command
+# docker compose -f docker-compose.prod.yml build
+
+# run command
+# docker compose -f docker-compose.prod.yml up -d
+
+# stop command
+# docker compose -f docker-compose.prod.yml down
+
+# log command
+# docker compose -f docker-compose.prod.yml logs -f
