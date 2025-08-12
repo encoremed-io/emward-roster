@@ -42,7 +42,7 @@ jobs:
       - uses: actions/checkout@v4
       # Ensure Buildx uses the docker-container driver (required for cache export)
       - name: Set up Buildx
-      - uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v3
         with:
           driver: docker-container
           install: true
