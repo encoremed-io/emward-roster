@@ -137,14 +137,23 @@ jobs:
             IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${SHA_TAG}"
             echo "Deploying ${IMAGE}"
 
-            docker pull "${IMAGE}"
+            # make IMAGE available to all compose commands
+            export IMAGE="${IMAGE}"
+            export COMPOSE_FILE=docker-compose.prod.yml
 
-            # run compose with the injected IMAGE
-            IMAGE="${IMAGE}" $COMPOSE -f docker-compose.prod.yml down
-            IMAGE="${IMAGE}" $COMPOSE -f docker-compose.prod.yml up -d --pull always
+            docker pull "${IMAGE}"
+            $COMPOSE down || true
+            $COMPOSE up -d --pull always --remove-orphans
+
+            $COMPOSE ps
+            for i in {1..12}; do
+              if curl -fsS http://localhost:8000/api/health/check; then
+                echo "Health OK"
+                break
+              fi
+              echo "Waiting for health… ($i/12)"
+              sleep 5
+            done
 
             docker image prune -f
-
-            $COMPOSE -f docker-compose.prod.yml ps
-            curl -fsS http://localhost:8000/api/health/check
 
