@@ -1,7 +1,6 @@
 services:
   api:
-    build: .
-    image: roster-api:prod
+    image: ${IMAGE}
     container_name: roster-api
     ports:
       - "8000:8000"
