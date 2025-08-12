@@ -97,7 +97,6 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           source: |
             docker-compose.prod.yml
-            .env
           target: /opt/roster-api
 
       - name: Deploy via SSH
