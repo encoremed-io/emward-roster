@@ -129,6 +129,9 @@ jobs:
               COMPOSE="docker-compose"
             fi
 
+            # Clear any stale creds that could cause "denied"
+            docker logout ghcr.io || true
+
             # use the exact SHA tag built by this workflow
             SHA="${{ github.sha }}"; SHA_TAG="${SHA:0:7}"
             IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${SHA_TAG}"
