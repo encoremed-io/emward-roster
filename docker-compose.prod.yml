@@ -2,14 +2,10 @@ services:
   api:
     image: ${IMAGE}
     container_name: roster-api
+    user: "10001:10001"
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
-      GUNICORN_WORKERS: "4"
-      GUNICORN_TIMEOUT: "180"
-      GUNICORN_GRACEFUL_TIMEOUT: "30"
-      GUNICORN_MAX_REQUESTS: "2000"
-      GUNICORN_MAX_REQUESTS_JITTER: "200"
       GUNICORN_CMD_ARGS: >-
         --worker-class uvicorn.workers.UvicornWorker
         --workers 4
@@ -21,11 +17,19 @@ services:
         --keep-alive 5
         --access-logfile -
         --error-logfile -
+      # App configs (set real values in CI or server env)
+      API_KEY: "${API_KEY}"
+      CORS_ALLOW_ORIGINS: ""
+      # ALLOWED_HOSTS: "your.domain,localhost"
+      FORCE_HTTPS: "true"
+      MAX_BODY_BYTES: "2097152"    # 2MB
+      GLOBAL_RATE: "60/minute"
+
     command: ["gunicorn", "main:app"]
     mem_limit: 3g           # hard memory cap
     cpus: 2.0               # hard CPU cap (2 cores)
     healthcheck:
-      test: ["CMD-SHELL", "curl --fail --silent --max-time 2 http://localhost:8000/api/health/check || exit 1"]
+      test: ["CMD-SHELL", "curl --fail --silent --max-time 2 http://127.0.0.1:8000/api/health/check || exit 1"]
       interval: 20s
       timeout: 5s
       retries: 5
