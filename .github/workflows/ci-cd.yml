@@ -139,6 +139,7 @@ jobs:
 
             # make IMAGE available to all compose commands
             export IMAGE="${IMAGE}"
+            export API_KEY="${{ vars.API_KEY }}"
             export COMPOSE_FILE=docker-compose.prod.yml
 
             docker pull "${IMAGE}"
@@ -147,7 +148,7 @@ jobs:
 
             $COMPOSE ps
             for i in {1..12}; do
-              if curl -fsS http://localhost:8000/api/health/check; then
+              if curl -fsS http://127.0.0.1:8000/api/health/check; then
                 echo "Health OK"
                 break
               fi

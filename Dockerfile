@@ -6,6 +6,9 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=1
 
+# Create non-root user
+RUN useradd -u 10001 -m appuser
+
 # Set working directory
 WORKDIR /app
 
@@ -25,8 +28,10 @@ COPY . .
 EXPOSE 8501
 
 # Expose FastAPI port
-EXPOSE 8000
+# EXPOSE 8000
+
+USER 10001:10001
 
 # Gunicorn with Uvicorn workers (multiple processes)
 # Tune via env: GUNICORN_WORKERS, GUNICORN_TIMEOUT
-CMD ["sh", "-c", "gunicorn main:app -k uvicorn.workers.UvicornWorker -w ${GUNICORN_WORKERS:-4} -b 0.0.0.0:8000 --timeout ${GUNICORN_TIMEOUT:-180} --keep-alive 5 --access-logfile - --error-logfile -"]
+CMD ["gunicorn", "main:app"]
