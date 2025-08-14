@@ -1,54 +1,92 @@
 {
   "profiles": [
-    {"name": "Nurse1", "title": "Senior", "yearsExperience": 5, "doubleShift": true},
-    {"name": "Nurse2", "title": "Senior", "yearsExperience": 5, "doubleShift": true},
-    {"name": "Nurse3", "title": "Senior", "yearsExperience": 5, "doubleShift": true},
-    {"name": "Nurse4", "title": "Senior", "yearsExperience": 5, "doubleShift": true},
-    {"name": "Nurse5", "title": "Senior", "yearsExperience": 5, "doubleShift": false},
-    {"name": "Nurse6", "title": "Senior", "yearsExperience": 5, "doubleShift": false},
-    {"name": "Nurse7", "title": "Senior", "yearsExperience": 5, "doubleShift": false},
-    {"name": "Nurse8", "title": "Senior", "yearsExperience": 5, "doubleShift": false},
-    {"name": "Nurse9", "title": "Senior", "yearsExperience": 5, "doubleShift": false},
-    {"name": "Nurse10", "title": "Senior", "yearsExperience": 5, "doubleShift": true},
-    {"name": "Nurse11", "title": "Senior", "yearsExperience": 5, "doubleShift": true},
-    {"name": "Nurse12", "title": "Senior", "yearsExperience": 5, "doubleShift": true},
-    {"name": "Nurse13", "title": "Senior", "yearsExperience": 5, "doubleShift": true},
-    {"name": "Nurse14", "title": "Senior", "yearsExperience": 5, "doubleShift": true},
-    {"name": "Nurse15", "title": "Senior", "yearsExperience": 5, "doubleShift": false},
-    {"name": "Nurse16", "title": "Senior", "yearsExperience": 5, "doubleShift": false},
-    {"name": "Nurse17", "title": "Senior", "yearsExperience": 5, "doubleShift": false},
-    {"name": "Nurse18", "title": "Senior", "yearsExperience": 5, "doubleShift": false},
-    {"name": "Nurse19", "title": "Senior", "yearsExperience": 5, "doubleShift": false},
-    {"name": "Nurse20", "title": "Senior", "yearsExperience": 5, "doubleShift": false},
-    {"name": "Nurse21", "title": "Senior", "yearsExperience": 5, "doubleShift": true},
-    {"name": "Nurse22", "title": "Senior", "yearsExperience": 5, "doubleShift": true},
-    {"name": "Nurse23", "title": "Senior", "yearsExperience": 5, "doubleShift": true},
-    {"name": "Nurse24", "title": "Senior", "yearsExperience": 5, "doubleShift": true},
-    {"name": "Nurse25", "title": "Junior", "yearsExperience": 5, "doubleShift": true},
-    {"name": "Nurse26", "title": "Junior", "yearsExperience": 1, "doubleShift": false},
-    {"name": "Nurse27", "title": "Junior", "yearsExperience": 1, "doubleShift": false},
-    {"name": "Nurse28", "title": "Junior", "yearsExperience": 1, "doubleShift": false},
-    {"name": "Nurse29", "title": "Junior", "yearsExperience": 1, "doubleShift": false},
-    {"name": "Nurse30", "title": "Junior", "yearsExperience": 1, "doubleShift": false},
-    {"name": "Nurse31", "title": "Junior", "yearsExperience": 1, "doubleShift": false},
-    {"name": "Nurse32", "title": "Junior", "yearsExperience": 1, "doubleShift": true},
-    {"name": "Nurse33", "title": "Junior", "yearsExperience": 1, "doubleShift": true},
-    {"name": "Nurse34", "title": "Junior", "yearsExperience": 1, "doubleShift": true},
-    {"name": "Nurse35", "title": "Junior", "yearsExperience": 1, "doubleShift": false},
-    {"name": "Nurse36", "title": "Junior", "yearsExperience": 1, "doubleShift": false},
-    {"name": "Nurse37", "title": "Junior", "yearsExperience": 1, "doubleShift": false},
-    {"name": "Nurse38", "title": "Junior", "yearsExperience": 1, "doubleShift": false},
-    {"name": "Nurse39", "title": "Junior", "yearsExperience": 1, "doubleShift": false},
-    {"name": "Nurse40", "title": "Junior", "yearsExperience": 1, "doubleShift": false},
-    {"name": "Nurse41", "title": "Junior", "yearsExperience": 1, "doubleShift": false},
-    {"name": "Nurse42", "title": "Junior", "yearsExperience": 1, "doubleShift": false}
+    {"id": "1", "name": "Nurse1", "title": "Senior", "yearsExperience": 5, "doubleShift": true},
+    {"id": "2", "name": "Nurse2", "title": "Senior", "yearsExperience": 5, "doubleShift": true},
+    {"id": "3", "name": "Nurse3", "title": "Senior", "yearsExperience": 5, "doubleShift": true},
+    {"id": "4", "name": "Nurse4", "title": "Senior", "yearsExperience": 5, "doubleShift": true},
+    {"id": "5", "name": "Nurse5", "title": "Senior", "yearsExperience": 5, "doubleShift": false},
+    {"id": "6", "name": "Nurse6", "title": "Senior", "yearsExperience": 5, "doubleShift": false},
+    {"id": "7", "name": "Nurse7", "title": "Senior", "yearsExperience": 5, "doubleShift": false},
+    {"id": "8", "name": "Nurse8", "title": "Senior", "yearsExperience": 5, "doubleShift": false},
+    {"id": "9", "name": "Nurse9", "title": "Senior", "yearsExperience": 5, "doubleShift": false},
+    {"id": "10", "name": "Nurse10", "title": "Senior", "yearsExperience": 5, "doubleShift": true},
+    {"id": "11", "name": "Nurse11", "title": "Senior", "yearsExperience": 5, "doubleShift": true},
+    {"id": "12", "name": "Nurse12", "title": "Senior", "yearsExperience": 5, "doubleShift": true},
+    {"id": "13", "name": "Nurse13", "title": "Senior", "yearsExperience": 5, "doubleShift": true},
+    {"id": "14", "name": "Nurse14", "title": "Senior", "yearsExperience": 5, "doubleShift": true},
+    {"id": "15", "name": "Nurse15", "title": "Senior", "yearsExperience": 5, "doubleShift": false},
+    {"id": "16", "name": "Nurse16", "title": "Senior", "yearsExperience": 5, "doubleShift": false},
+    {"id": "17", "name": "Nurse17", "title": "Senior", "yearsExperience": 5, "doubleShift": false},
+    {"id": "18", "name": "Nurse18", "title": "Senior", "yearsExperience": 5, "doubleShift": false},
+    {"id": "19", "name": "Nurse19", "title": "Senior", "yearsExperience": 5, "doubleShift": false},
+    {"id": "20", "name": "Nurse20", "title": "Senior", "yearsExperience": 5, "doubleShift": false},
+    {"id": "21", "name": "Nurse21", "title": "Senior", "yearsExperience": 5, "doubleShift": true},
+    {"id": "22", "name": "Nurse22", "title": "Senior", "yearsExperience": 5, "doubleShift": true},
+    {"id": "23", "name": "Nurse23", "title": "Senior", "yearsExperience": 5, "doubleShift": true},
+    {"id": "24", "name": "Nurse24", "title": "Senior", "yearsExperience": 5, "doubleShift": true},
+    {"id": "25", "name": "Nurse25", "title": "Junior", "yearsExperience": 5, "doubleShift": true},
+    {"id": "26", "name": "Nurse26", "title": "Junior", "yearsExperience": 1, "doubleShift": false},
+    {"id": "27", "name": "Nurse27", "title": "Junior", "yearsExperience": 1, "doubleShift": false},
+    {"id": "28", "name": "Nurse28", "title": "Junior", "yearsExperience": 1, "doubleShift": false},
+    {"id": "29", "name": "Nurse29", "title": "Junior", "yearsExperience": 1, "doubleShift": false},
+    {"id": "30", "name": "Nurse30", "title": "Junior", "yearsExperience": 1, "doubleShift": false},
+    {"id": "31", "name": "Nurse31", "title": "Junior", "yearsExperience": 1, "doubleShift": false},
+    {"id": "32", "name": "Nurse32", "title": "Junior", "yearsExperience": 1, "doubleShift": true},
+    {"id": "33", "name": "Nurse33", "title": "Junior", "yearsExperience": 1, "doubleShift": true},
+    {"id": "34", "name": "Nurse34", "title": "Junior", "yearsExperience": 1, "doubleShift": true},
+    {"id": "35", "name": "Nurse35", "title": "Junior", "yearsExperience": 1, "doubleShift": false},
+    {"id": "36", "name": "Nurse36", "title": "Junior", "yearsExperience": 1, "doubleShift": false},
+    {"id": "37", "name": "Nurse37", "title": "Junior", "yearsExperience": 1, "doubleShift": false},
+    {"id": "38", "name": "Nurse38", "title": "Junior", "yearsExperience": 1, "doubleShift": false},
+    {"id": "39", "name": "Nurse39", "title": "Junior", "yearsExperience": 1, "doubleShift": false},
+    {"id": "40", "name": "Nurse40", "title": "Junior", "yearsExperience": 1, "doubleShift": false},
+    {"id": "41", "name": "Nurse41", "title": "Junior", "yearsExperience": 1, "doubleShift": false},
+    {"id": "42", "name": "Nurse42", "title": "Junior", "yearsExperience": 1, "doubleShift": false}
   ],
-  "preferences": [],
-  "trainingShifts": [],
-  "previousSchedule": [],
-  "shiftDetails": [
-    { "shiftType": "AM", "maxWorkingShift": 3, "restDayEligible": 1 },
-    { "shiftType": "Night", "maxWorkingShift": 4, "restDayEligible": 2 }
+  "preferences": [
+    {
+      "id": "1",
+      "nurse": "Nurse1",
+      "date": "2025-07-16",
+      "shift": "1",
+      "timestamp": "2025-07-10T09:00:00"
+    }
+  ],
+  "trainingShifts": [
+    {
+      "id": "1",
+      "nurse": "Nurse1",
+      "date": "2025-07-16",
+      "training": "1"
+    }
+  ],
+  "previousSchedule": [
+    {
+      "nurseId": "1",
+      "nurse": "Nurse1",
+      "schedule": [
+        {
+          "date": "2025-07-01",
+          "shiftTypeId": "1",
+          "shift": "AM"
+        },
+        {
+          "date": "2025-07-02",
+          "shiftTypeId": "2",
+          "shift": "PM"
+        },
+        {
+          "date": "2025-07-03",
+          "shiftTypeId": "3",
+          "shift": "Night"
+        }
+      ]
+    },
+  ],
+  "shifts": [
+    { "id": "1", "name": "AM", "duration": "0700-1400" },
+    { "id": "2", "name": "PM", "duration": "1400-2100" },
+    { "id": "3", "name": "Night", "duration": "2100-0700" }
   ],
   "request": {
     "startDate": "2025-07-23",
@@ -77,6 +115,10 @@
       "seniorStaffAllocationRefinement": true,
       "seniorStaffAllocationRefinementValue": 5
     },
-    "allowDoubleShift": true
+    "allowDoubleShift": true,
+    "shiftDetails": [
+      { "shiftType": "1", "maxWorkingShift": 3, "restDayEligible": 1 },
+      { "shiftType": "3", "maxWorkingShift": 4, "restDayEligible": 2 }
+    ]
   }
 }

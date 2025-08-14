@@ -9,6 +9,7 @@ from utils.constants import *
 class NurseProfile(BaseModel):
     model_config = ConfigDict(extra="allow")
 
+    id: str
     name: str
     title: str
     doubleShift: bool
@@ -36,6 +37,7 @@ class NurseProfile(BaseModel):
 class NursePreference(BaseModel):
     model_config = ConfigDict(extra="allow")
 
+    id: str
     nurse: str
     date: date
     shift: str
@@ -45,6 +47,7 @@ class NursePreference(BaseModel):
 class NurseTraining(BaseModel):
     model_config = ConfigDict(extra="allow")
 
+    id: str
     nurse: str
     date: date
     training: str
@@ -62,6 +65,14 @@ class FixedAssignment(BaseModel):
     nurse: str
     date: date
     fixed: str
+
+
+class Shifts(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    name: str
+    duration: str
 
 
 class ShiftDetails(BaseModel):

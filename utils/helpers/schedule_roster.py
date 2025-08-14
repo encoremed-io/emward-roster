@@ -29,6 +29,7 @@ def standardize_profile_columns(df: pd.DataFrame) -> pd.DataFrame:
                 return original
         raise ValueError(f"No column matching {candidates} in {list(df.columns)}")
 
+    id_src = find_col("id")
     name_src = find_col("name")
     title_src = find_col("title")
     exp_src = find_col("experience", "year")
@@ -36,9 +37,14 @@ def standardize_profile_columns(df: pd.DataFrame) -> pd.DataFrame:
         "double shift", "doubleshift", "can double", "can work double"
     )
 
-    out = df[[name_src, title_src, exp_src, double_shift_src]].copy()
-    out.columns = ["Name", "Title", "Years of experience", "Double Shift"]
+    out = df[[id_src, name_src, title_src, exp_src, double_shift_src]].copy()
+    out.columns = ["Id", "Name", "Title", "Years of experience", "Double Shift"]
     out["Name"] = out["Name"].astype(str).str.strip().str.upper()
     out["Double Shift"] = out["Double Shift"].astype(bool)
 
     return out
+
+
+def normalize_names(series):
+    """Trim, uppercase, ensure string dtype."""
+    return series.astype(str).str.strip().str.upper()

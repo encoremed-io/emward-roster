@@ -2,7 +2,7 @@ import pandas as pd
 from core.state import ScheduleState
 from .solver import SolverResult
 from datetime import timedelta
-from utils.constants import NO_WORK_LABELS, SHIFT_LABELS, DAYS_PER_WEEK
+from utils.constants import NO_WORK_LABELS, DAYS_PER_WEEK
 import statistics
 from typing import List
 import logging
@@ -101,7 +101,7 @@ def extract_schedule_and_summary(
             else:
                 if len(picked) == 2:
                     print(
-                        f"🟡 DOUBLE SHIFT: {n} on {dates[d]} → {[SHIFT_LABELS[p] for p in picked]}"
+                        f"🟡 DOUBLE SHIFT: {n} on {dates[d]} → {[state.shifts[p] for p in picked]}"
                     )
                     double_shift_days.append(dates[d].strftime("%a %Y-%m-%d"))
 
@@ -109,7 +109,7 @@ def extract_schedule_and_summary(
                     shift = ["REST"]
                     shift_counts[3] += 1
                 else:
-                    shift = [SHIFT_LABELS[s] for s in sorted(picked)]
+                    shift = [state.shifts[s] for s in sorted(picked)]
 
             row.append(shift)
 
@@ -131,7 +131,7 @@ def extract_schedule_and_summary(
                     metrics["Preference Met"] += 1
                 else:
                     prefs_unmet.append(
-                        f"{dates[d].strftime('%a %Y-%m-%d')} (wanted {SHIFT_LABELS[idx]})"
+                        f"{dates[d].strftime('%a %Y-%m-%d')} (wanted {state.shifts[idx]})"
                     )
 
         if not state.pref_weekly_hours_hard:

@@ -37,19 +37,19 @@
     },
     "shifts": [
         {
-            "id": 1,
-            "name": "Morning",
-            "duration": "0700-1700"
+            "id": "1",
+            "name": "AM",
+            "duration": "0700-1400"
         },
         {
-            "id": 2,
-            "name": "Noon",
-            "duration": "1200-2100"
+            "id": "2",
+            "name": "PM",
+            "duration": "1400-2100"
         },
         {
-            "id": 3,
-            "name": "Overnight",
-            "duration": "1700-0700"
+            "id": "3",
+            "name": "Night",
+            "duration": "2100-0700"
         }
     ],
     "roster": [

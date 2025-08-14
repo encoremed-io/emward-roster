@@ -5,6 +5,8 @@ import statistics
 import logging
 import math
 from utils.shift_utils import make_shift_index
+import re
+import sys
 
 """
 This module contains the high priority rules for the nurse scheduling problem.
@@ -182,6 +184,7 @@ def pref_min_weekly_hours_rule(model, state: ScheduleState):
 
 
 def min_staffing_per_shift_rule(model, state: ScheduleState):
+    print("senior names\n", state.senior_names)
     """Ensure that each shift has a minimum number of nurses and seniors."""
     for d in range(-state.prev_days, state.num_days):
         for s in range(state.shift_types):
@@ -436,33 +439,105 @@ def staff_allocation_rule(model, state: ScheduleState):
 
 
 # shift details rule (ICU)
-def shift_details_rule(model, state: ScheduleState):
+# def shift_details_rule(model, state: ScheduleState):
 
+#     if not state.shift_details:
+#         return
+
+#     for rule in state.shift_details:
+#         shift_label = rule.shiftType
+#         max_shifts = rule.maxWorkingShift
+#         required_rest = rule.restDayEligible
+
+#         # Convert shift label to index
+#         if isinstance(shift_label, str):
+#             shift_type = state.shift_str_to_idx.get(shift_label.upper())
+#             if shift_type is None:
+#                 raise ValueError(f"Unknown shiftType '{shift_label}' in shift_details")
+#         else:
+#             shift_type = shift_label  # Already an int
+
+#         for nurse in state.nurse_names:
+#             for start_day in range(state.num_days - max_shifts - required_rest + 1):
+#                 # Working streak variables
+#                 work_segment = [
+#                     state.work[nurse, start_day + i, shift_type]
+#                     for i in range(max_shifts)
+#                 ]
+#                 worked_full_streak = model.NewBoolVar(
+#                     f"{nurse}_worked_{shift_label}_{start_day}"
+#                 )
+#                 model.Add(sum(work_segment) == max_shifts).OnlyEnforceIf(
+#                     worked_full_streak
+#                 )
+#                 model.Add(sum(work_segment) != max_shifts).OnlyEnforceIf(
+#                     worked_full_streak.Not()
+#                 )
+
+#                 # Rest day variables after the streak
+#                 rest_vars = []
+#                 for i in range(required_rest):
+#                     rest_day = start_day + max_shifts + i
+#                     is_rest = model.NewBoolVar(f"{nurse}_rest_{rest_day}")
+#                     model.Add(
+#                         sum(
+#                             state.work[nurse, rest_day, s]
+#                             for s in range(state.shift_types)
+#                         )
+#                         == 0
+#                     ).OnlyEnforceIf(is_rest)
+#                     model.Add(
+#                         sum(
+#                             state.work[nurse, rest_day, s]
+#                             for s in range(state.shift_types)
+#                         )
+#                         != 0
+#                     ).OnlyEnforceIf(is_rest.Not())
+#                     rest_vars.append(is_rest)
+
+#                 # Enforce: if overworked → must rest
+#                 model.AddBoolAnd(rest_vars).OnlyEnforceIf(worked_full_streak)
+
+
+def shift_details_rule(model, state: ScheduleState):
     if not state.shift_details:
         return
 
-    for rule in state.shift_details:
-        shift_label = rule.shiftType
-        max_shifts = rule.maxWorkingShift
-        required_rest = rule.restDayEligible
+    # Ensure id→index map exists
+    if not getattr(state, "shift_str_to_idx", None):
+        raise ValueError("shift_str_to_idx is not initialized on state.")
 
-        # Convert shift label to index
-        if isinstance(shift_label, str):
-            shift_type = state.shift_str_to_idx.get(shift_label.upper())
-            if shift_type is None:
-                raise ValueError(f"Unknown shiftType '{shift_label}' in shift_details")
-        else:
-            shift_type = shift_label  # Already an int
+    for rule in state.shift_details:
+        raw = rule.shiftType
+        if not isinstance(raw, str):
+            raise TypeError("shiftType must be a string ID.")
+        shift_id = raw.strip()
+
+        if shift_id not in state.shift_str_to_idx:
+            raise ValueError(
+                f"Unknown shiftType id '{shift_id}'. Known IDs: {list(state.shift_str_to_idx.keys())}"
+            )
+
+        shift_type = state.shift_str_to_idx[shift_id]  # ← integer index for solver
+        max_shifts = int(rule.maxWorkingShift)
+        required_rest = int(rule.restDayEligible)
+
+        horizon = state.num_days - max_shifts - required_rest
+        if horizon < 0:
+            continue
+
+        # sanitize for var names if you log/inspect them
+        safe_lbl = re.sub(r"[^A-Za-z0-9]+", "_", str(shift_id))
 
         for nurse in state.nurse_names:
-            for start_day in range(state.num_days - max_shifts - required_rest + 1):
+            for start_day in range(horizon + 1):
                 # Working streak variables
                 work_segment = [
                     state.work[nurse, start_day + i, shift_type]
                     for i in range(max_shifts)
                 ]
                 worked_full_streak = model.NewBoolVar(
-                    f"{nurse}_worked_{shift_label}_{start_day}"
+                    f"{nurse}_worked_{safe_lbl}_{start_day}"
                 )
                 model.Add(sum(work_segment) == max_shifts).OnlyEnforceIf(
                     worked_full_streak

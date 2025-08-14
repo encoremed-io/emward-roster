@@ -4,16 +4,19 @@ schedule_roster_description = """
     The API endpoint takes the following parameters:
 
     - `profiles`: List of `NurseProfile` objects, which contain the following information:
+        - `id`: Primary key of the nurse
         - `name`: Name of the nurse
         - `title`: Title of the nurse (e.g. "Senior Nurse", "Junior Nurse")
         - `yearsExperience`: Number of years of experience the nurse has
         - `doubleShift`: Whether the nurse can work double shifts (True/False)
     - `preferences`: List of `NursePreference` objects, which contain the following information:
+        - `id`: Primary key of the nurse
         - `nurse`: Name of the nurse
         - `date`: Date of the shift
         - `shift`: Shift preference (e.g. "AM", "PM", "Night")
         - `timestamp`: Timestamp of the preference
     - `trainingShifts`: List of `NurseTraining` objects, which contain the following information:
+        - `id`: Primary key of the nurse
         - `nurse`: Name of the nurse
         - `date`: Date of the training shift
         - `training`: Shift on training (e.g. "AM", "PM", "Night", "FULL")
@@ -21,6 +24,10 @@ schedule_roster_description = """
         - `index`: The name of the nurse.
         - `<Day Date>`: The assigned shift for that day, where the key is a string in the format `"Day YYYY-MM-DD"`
           (e.g., `"Mon 2025-07-07"`), and the value is one of the shift types (e.g. "AM", "PM", "Night") or no work labels (e.g. "MC", "REST", "AL", "EL").
+    - `shifts`: List of `Shifts` objects, which contain the following information:
+        - `id`: Primary key of the shift
+        - `name`: Name of the shift
+        - `duration`: Duration of the shift
     - `request`: `ScheduleRequest` object, which contains the following information:
         - `startDate`: Start date of the schedule
         - `numDays`: Number of days in the schedule
@@ -42,6 +49,11 @@ schedule_roster_description = """
             - `seniorStaffAllocationRefinement`: Whether to refine the senior staff allocation
             - `seniorStaffAllocationRefinementValue`: Value for refining the senior staff allocation
         - `allowDoubleShift`: Whether to allow double shifts
+        - `shiftDetails`: List of shift details rule
+            - `shiftType`: Primary key of the shift
+            - `maxWorkingShift`: Max of the working shift type continuously
+            - `restDayEligible`: Number of rests day after continuously working shift type
+
         
     The API endpoint returns a JSON object with the following keys:
 

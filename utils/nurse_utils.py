@@ -5,27 +5,26 @@ import random
 def get_senior_set(profiles_df):
     """Get set of senior nurses."""
     return {
-        str(row["Name"]).strip().upper()
+        str(row["id"]).strip().upper()
         for _, row in profiles_df.iterrows()
-        if row.get("Title", "").upper() == "SENIOR"
-        or row.get("Years of experience", 0) >= 3
+        if row.get("title", "").upper() == "SENIOR"
+        or row.get("years of experience", 0) >= 3
     }
 
 
 def get_nurse_names(profiles_df: pd.DataFrame) -> list[str]:
     """Get set of nurse names from profiles DataFrame."""
     nurses = profiles_df.to_dict(orient="records")
-    nurse_names = [n["Name"].strip().upper() for n in nurses]
+    nurse_names = [n["id"].strip().upper() for n in nurses]
     return nurse_names
 
 
 def get_doubleShift_nurses(profiles_df: pd.DataFrame) -> list[str]:
-    print(profiles_df.columns.tolist())
     """Get set of nurses who can work double shifts."""
     return [
-        str(row["Name"]).strip().upper()
+        str(row["name"]).strip().upper()
         for _, row in profiles_df.iterrows()
-        if row.get("Double Shift", False) is True
+        if row.get("double shift", False) is True
     ]
 
 

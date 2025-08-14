@@ -119,15 +119,33 @@ def training_shift_rules(model, state: ScheduleState):
 
 
 def define_training_shifts(model, state: ScheduleState):
-    """Ensure that if a nurse is training on a shift, they cannot work that shift that day."""
-    # Cannot assign same shift to nurse when they are training on that shift
+    """
+    Ensure that if a nurse has a training shift in state.training_by_nurse,
+    they are only assigned to that shift and no others on that date.
+    Works dynamically with shifts payload (object-based).
+    """
+    # Create a map from shift_id (string) to shift index in state
+    shift_id_to_index = {str(shift.id): idx for idx, shift in enumerate(state.shifts)}
+
     for n in state.nurse_names:
-        for d, s in state.training_by_nurse.get(n, {}).items():
-            if s == -1:
-                for shift_idx in range(state.shift_types):
+        training_days = state.training_by_nurse.get(n, {})
+        if not training_days:  # Skip nurses with no training
+            continue
+
+        for d, shift_id in training_days.items():
+            shift_id = str(shift_id)  # Ensure string for matching
+            if shift_id not in shift_id_to_index:
+                continue  # Skip if unknown shift_id
+
+            training_shift_idx = shift_id_to_index[shift_id]
+
+            # Force assignment to training shift
+            model.Add(state.work[n, d, training_shift_idx] == 1)
+
+            # Block all other shifts that day
+            for shift_idx in range(state.shift_types):
+                if shift_idx != training_shift_idx:
                     model.Add(state.work[n, d, shift_idx] == 0)
-            else:
-                model.Add(state.work[n, d, s] == 0)
 
 
 def previous_schedule_rules(model, state: ScheduleState):
