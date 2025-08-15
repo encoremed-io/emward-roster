@@ -22,7 +22,7 @@ def get_nurse_names(profiles_df: pd.DataFrame) -> list[str]:
 def get_doubleShift_nurses(profiles_df: pd.DataFrame) -> list[str]:
     """Get set of nurses who can work double shifts."""
     return [
-        str(row["name"]).strip().upper()
+        str(row["id"]).strip().upper()
         for _, row in profiles_df.iterrows()
         if row.get("double shift", False) is True
     ]
