@@ -25,7 +25,6 @@ services:
       MAX_BODY_BYTES: "2097152"    # 2MB
       GLOBAL_RATE: "60/minute"
 
-    command: ["gunicorn", "main:app"]
     mem_limit: 3g           # hard memory cap
     cpus: 2.0               # hard CPU cap (2 cores)
     healthcheck:
