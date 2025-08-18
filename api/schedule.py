@@ -4,6 +4,7 @@ from schemas.schedule.generate import (
     NurseTraining,
     PrevSchedule,
     ScheduleRequest,
+    Shifts,
 )
 from typing import List
 import pandas as pd
@@ -15,7 +16,9 @@ from exceptions.custom_errors import *
 import re
 import traceback
 from docs.schedule.roster import schedule_roster_description
-from utils.helpers.schedule_roster import standardize_profile_columns
+from utils.helpers.schedule_roster import standardize_profile_columns, normalize_names
+from pprint import pprint
+import sys
 
 router = APIRouter(prefix="/schedule", tags=["Roster"])
 
@@ -32,6 +35,7 @@ async def generate_schedule(
     preferences: List[NursePreference],
     trainingShifts: List[NurseTraining],
     previousSchedule: List[PrevSchedule],
+    shifts: List[Shifts],
     request: ScheduleRequest,
 ):
     try:
@@ -39,94 +43,135 @@ async def generate_schedule(
         raw = pd.DataFrame([p.model_dump() for p in profiles])
         # Standardize it to exactly Name/Title/Years of experience
         profiles_df = standardize_profile_columns(raw)
+        profiles_df.columns = profiles_df.columns.str.lower()
+
+        if "id" in profiles_df.columns:
+            profiles_df["id"] = profiles_df["id"].astype(str)
 
         # Handle preferences
+        pref_df = pd.DataFrame()
+
         if preferences:
-            # 1) build raw DataFrame
             pref_df = pd.DataFrame([p.model_dump() for p in preferences])
 
+            # Ensure id and shift are strings
+            if "id" in pref_df.columns:
+                pref_df["id"] = pref_df["id"].astype(str)
+            if "shiftId" in pref_df.columns:
+                pref_df["shiftId"] = pref_df["shiftId"].astype(str)
+
+            # Convert timestamp to datetime and sort
             if "timestamp" in pref_df.columns:
-                # 2) coerce to datetime & sort so earliest come first
-                pref_df["timestamp"] = pd.to_datetime(pref_df["timestamp"])
+                pref_df["timestamp"] = pd.to_datetime(
+                    pref_df["timestamp"], errors="coerce"
+                )
                 pref_df.sort_values(
-                    by=["date", "shift", "timestamp"],
+                    by=["date", "shiftId", "timestamp"],
                     ascending=[True, True, True],
                     inplace=True,
                 )
 
-            # 3) pack shift+ts into one column
-            pref_df["cell"] = list(zip(pref_df["shift"], pref_df["timestamp"]))
+            # Pack shift+ts into one column
+            pref_df["cell"] = list(zip(pref_df["shiftId"], pref_df["timestamp"]))
 
-            # 4) drop any duplicate nurse+date, keeping that earliest row, then pivot
-            prefs_df = (
-                pref_df.drop_duplicates(subset=["nurse", "date"], keep="first")
-                .pivot(index="nurse", columns="date", values="cell")
-                .rename_axis(None, axis=0)
-                .rename_axis(None, axis=1)
-            )
+            # Pivot with nurse id as index
+            prefs_df = pref_df.drop_duplicates(
+                subset=["id", "date"], keep="first"
+            ).pivot(index="id", columns="date", values="cell")
 
-            # normalize to match profiles_df["Name"]
-            prefs_df.index = prefs_df.index.str.strip().str.upper()
-            prefs_df.index.name = "Name"
+            # Ensure index is str (id, not nurse name)
+            prefs_df.index = prefs_df.index.astype(str)
+            prefs_df.index.name = "id"
 
+            # Add nurse name for readability
+            id_to_name = pref_df.set_index("id")["nurse"].to_dict()
+            prefs_df.insert(0, "name", prefs_df.index.map(id_to_name))
         else:
-            prefs_df = pd.DataFrame(index=profiles_df["Name"].str.upper())
-            prefs_df.index.name = "Name"
+            prefs_df = pd.DataFrame(index=profiles_df["id"].astype(str))
+            prefs_df.insert(0, "name", profiles_df["name"])
 
         # Handle training shifts
         if trainingShifts:
             raw_train = pd.DataFrame([t.model_dump() for t in trainingShifts])
-            training_df = raw_train.pivot(
-                index="nurse", columns="date", values="training"
-            )
-            # normalize to match profiles_df["Name"]
-            training_df.index = training_df.index.astype(str).str.strip().str.upper()
-            training_df.index.name = "Name"
-        else:
-            # build an empty table with the same normalized index
-            training_df = pd.DataFrame(index=profiles_df["Name"])
-            training_df.index.name = "Name"
 
+            # Normalize nurse names if column exists
+            if "nurse" in raw_train.columns:
+                raw_train["nurse"] = normalize_names(raw_train["nurse"])
+
+            # Normalize IDs if column exists
+            if "id" in raw_train.columns:
+                raw_train["id"] = raw_train["id"].astype(str)
+
+            if "shiftId" not in raw_train.columns:
+                raw_train["shiftId"] = None
+
+            # Pivot with id as index if available, else fallback to nurse
+            if "id" in raw_train.columns:
+
+                training_df = raw_train.drop_duplicates(
+                    subset=["id", "date"], keep="first"
+                )[["id", "nurse", "date", "shiftId"]]
+
+                training_df = training_df.rename(columns={"nurse": "name"})
+
+            else:
+                training_df = raw_train.drop_duplicates(
+                    subset=["nurse", "date"], keep="first"
+                )[["nurse", "date", "shiftId"]].rename(columns={"nurse": "name"})
+
+        else:
+            # Empty training_df with same structure as prefs_df
+            training_df = pd.DataFrame(index=prefs_df.index)
+            training_df.insert(0, "name", prefs_df["name"])
+
+        # Previous schedule
         if previousSchedule:
-            prev_sched_df = pd.DataFrame([p.model_dump() for p in previousSchedule])
-            # set nurse index
-            if "index" not in prev_sched_df.columns:
-                raise HTTPException(
-                    400, detail="Each prev_schedule row requires an 'index' field"
-                )
-            prev_sched_df = prev_sched_df.set_index("index")
-            prev_sched_df.index = (
-                prev_sched_df.index.astype(str).str.strip().str.upper()
-            )
-            prev_sched_df.index.name = "Name"
-            # robust date‑column parsing
-            converted = {}
-            for col in prev_sched_df.columns:
-                m = re.search(r"\d{4}-\d{2}-\d{2}", col)
-                if not m:
-                    raise HTTPException(
-                        400,
-                        detail=f"Could not parse date in prev-schedule column '{col}'",
+            records = []
+            for nurse_entry in previousSchedule:
+                for item in nurse_entry.schedule:
+                    records.append(
+                        {
+                            "id": nurse_entry.id,
+                            "nurse": nurse_entry.nurse,
+                            "date": pd.to_datetime(item.date),
+                            "shiftId": item.shiftId,
+                            "shift": item.shift,
+                        }
                     )
-                converted[col] = pd.to_datetime(m.group(0))
-            prev_sched_df = prev_sched_df.rename(columns=converted)
-            prev_schedule_df = prev_sched_df
+
+            prev_sched_df = pd.DataFrame(records)
+
+            if prev_sched_df.empty:
+                prev_schedule_df = pd.DataFrame(index=profiles_df["id"].astype(str))
+            else:
+                # Pivot: id as row, date as column, shift name as value
+                prev_schedule_df = prev_sched_df.pivot_table(
+                    index="id", columns="date", values="shiftId", aggfunc="first"
+                )
+
+                # ensure index is string for consistency
+                prev_schedule_df.index = prev_schedule_df.index.astype(str)
+                prev_schedule_df.index.name = "id"
         else:
-            prev_schedule_df = pd.DataFrame(index=profiles_df["Name"])
-            prev_schedule_df.index.name = "Name"
+            prev_schedule_df = pd.DataFrame(index=profiles_df["id"].astype(str))
+            prev_schedule_df.index.name = "id"
 
-        # Ensure indices are string type for validation
-        if not prefs_df.empty and prefs_df.index.dtype != "object":
-            prefs_df.index = prefs_df.index.astype(str)
-        if not training_df.empty and training_df.index.dtype != "object":
-            training_df.index = training_df.index.astype(str)
+        validate_data(
+            profiles_df,
+            pref_df,
+            "profiles",
+            "preferences",
+            False,
+        )
 
-        # === Execute the original validation ===
-        validate_data(profiles_df, prefs_df, "profiles", "preferences", False)
         validate_data(profiles_df, training_df, "profiles", "training shifts", False)
         validate_data(
             profiles_df, prev_schedule_df, "profiles", "previous schedule", False
         )
+        # pprint(profiles_df, sort_dicts=False, width=100)
+        # pprint(prev_schedule_df, sort_dicts=False, width=100)
+        # pprint("woiii")
+        # sys.exit()
 
         # Handle fixed assignments
         fixed_assignments_dict = None
@@ -202,6 +247,7 @@ async def generate_schedule(
             shift_balance=request.shiftBalance,
             priority_setting=request.prioritySetting,
             shift_details=request.shiftDetails,
+            shifts=shifts,
             staff_allocation=request.staffAllocation,
             allow_double_shift=request.allowDoubleShift,
             # Uncomment if you want to use AM coverage constraints
@@ -216,13 +262,63 @@ async def generate_schedule(
         )
 
         # Convert DataFrames to JSON-friendly format
+        # response = {
+        #     "schedule": schedule.reset_index().to_dict(orient="records"),
+        #     "summary": summary.reset_index().to_dict(orient="records"),
+        #     "violations": violations,
+        #     "metrics": metrics,
+        # }
+
+        # ==== Build ID <-> Name maps from profiles_df ====
+        id_to_name = dict(zip(profiles_df["id"].astype(str), profiles_df["name"]))
+        name_to_id = dict(
+            zip(profiles_df["name"].str.strip().str.upper(), profiles_df["id"])
+        )
+
+        # If schedule index contains IDs, map them to names
+        schedule.index = schedule.index.map(lambda x: id_to_name.get(str(x), str(x)))
+        schedule.index.name = "name"  # make sure it's called 'name'
+
+        # Reset index so 'name' becomes a column
+        sched_df = schedule.reset_index()
+
+        # Add the ID column based on the name
+        sched_df.insert(
+            0,
+            "id",
+            sched_df["name"]
+            .str.strip()
+            .str.upper()
+            .map(name_to_id)
+            .fillna("")
+            .astype(str),
+        )
+
+        # ==== summary: keep original casing ====
+        sum_df = summary.reset_index()
+        if "Nurse" in sum_df.columns:
+            sum_df = sum_df.rename(columns={"Nurse": "name"})
+        elif "index" in sum_df.columns:
+            sum_df = sum_df.rename(columns={"index": "name"})
+
+        sum_df.insert(
+            0,
+            "id",
+            sum_df["name"]
+            .str.strip()
+            .str.upper()
+            .map(name_to_id)
+            .fillna("")
+            .astype(str),
+        )
+
+        # ==== final response ====
         response = {
-            "schedule": schedule.reset_index().to_dict(orient="records"),
-            "summary": summary.reset_index().to_dict(orient="records"),
+            "schedule": sched_df.to_dict(orient="records"),
+            "summary": sum_df.to_dict(orient="records"),
             "violations": violations,
             "metrics": metrics,
         }
-
         return response
 
     except tuple(CUSTOM_ERRORS) as e:

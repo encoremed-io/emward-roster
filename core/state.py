@@ -3,7 +3,7 @@ from ortools.sat.python import cp_model
 from typing import Any, Dict, List, Set, Tuple, Optional
 from datetime import date
 import pandas as pd
-from schemas.schedule.generate import StaffAllocations
+from schemas.schedule.generate import StaffAllocations, Shifts
 
 
 @dataclass
@@ -125,6 +125,7 @@ class ScheduleState:
     allow_double_shift: bool = False
     """A boolean indicating if double shifts are allowed."""
 
+    shifts: List[Shifts] = field(default_factory=list)
     # Uncomment if you want to use AM coverage constraints
     # activate_am_cov: bool
     # """A boolean indicating if the morning coverage constraint is active."""

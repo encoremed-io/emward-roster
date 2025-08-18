@@ -1,6 +1,8 @@
 import pandas as pd
 from .nurse_utils import get_senior_set
 from exceptions.custom_errors import InputMismatchError
+from pprint import pprint
+import sys
 
 
 def validate_data(
@@ -66,17 +68,26 @@ def validate_data(
 
 
 def validate_nurse_data(df1: pd.DataFrame, df2: pd.DataFrame):
-    """Validates that the nurse names in two DataFrames match."""
-    df1_names = set(df1["Name"].str.strip())
-    if df2.empty:
-        df2_names = set()
-    else:
-        # Convert index to string if needed
-        if not (isinstance(df2.index, pd.Index) and df2.index.dtype.kind in "OS"):
-            df2.index = df2.index.astype(str)
-        df2_names = set(df2.index.str.strip())
-    missing = df1_names - df2_names  # If found in df1 but not in df2
-    extra = df2_names - df1_names  # If found in df2 but not in df1
+    for df in (df1, df2):
+        if isinstance(df.columns, pd.MultiIndex):
+            # Flatten multiindex into single strings
+            df.columns = ["_".join(map(str, col)).strip() for col in df.columns]
+        else:
+            df.columns = [str(col) for col in df.columns]
+
+        # Lowercase safely
+        df.columns = [col.lower() for col in df.columns]
+
+    # Now your normal validation logic
+    df1_values = set(df1["id"].astype(str).str.strip())
+    df2_values = (
+        set(df2["id"].astype(str).str.strip())
+        if "id" in df2.columns
+        else set(df2.index.astype(str).str.strip())
+    )
+
+    missing = df1_values - df2_values
+    extra = df2_values - df1_values
     return missing, extra
 
 

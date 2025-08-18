@@ -12,7 +12,7 @@ from core.state import ScheduleState
 from core.constraint_manager import ConstraintManager
 from scheduler.rules import *
 from scheduler.runner import solve_schedule
-from schemas.schedule.generate import ShiftDetails, StaffAllocations
+from schemas.schedule.generate import ShiftDetails, StaffAllocations, Shifts
 
 logging.basicConfig(
     # filename=LOG_PATH,
@@ -48,6 +48,7 @@ def build_schedule_model(
     priority_setting: str = "50/50",
     fixed_assignments: Optional[Dict[Tuple[str, int], str]] = None,
     shift_details: Optional[List[ShiftDetails]] = None,
+    shifts: List[Shifts] = [],
     staff_allocation: Optional[StaffAllocations] = None,
     allow_double_shift: bool = False,
     # Uncomment if you want to use AM coverage constraints
@@ -95,6 +96,7 @@ def build_schedule_model(
         prev_days,
         total_days,
         shift_details,
+        shifts,
         staff_allocation,
     ) = setup_model(
         profiles_df,
@@ -107,6 +109,7 @@ def build_schedule_model(
         NO_WORK_LABELS,
         fixed_assignments,
         shift_details,
+        shifts,
         staff_allocation,
     )
 
@@ -159,6 +162,7 @@ def build_schedule_model(
         high_priority_penalty=[],
         low_priority_penalty=[],
         shift_details=shift_details or [],
+        shifts=shifts or [],
         staff_allocation=staff_allocation,
         allow_double_shift=allow_double_shift,
         # Uncomment if you want to use AM coverage constraints
@@ -170,7 +174,7 @@ def build_schedule_model(
         # am_senior_min_hard=am_senior_min_hard,
         # am_senior_relax_step=am_senior_relax_step,
     )
-    logging.debug("State initialized with %s", state.preferred_weekly_hours)
+
     cm = ConstraintManager(model, state)
     # Fixed rules
     cm.add_rule(previous_schedule_rules)

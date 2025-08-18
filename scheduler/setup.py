@@ -1,5 +1,4 @@
 from datetime import timedelta
-import logging
 from ortools.sat.python import cp_model
 from utils.nurse_utils import (
     get_senior_set,
@@ -59,6 +58,7 @@ def setup_model(
     no_work_labels,
     fixed_assignments=None,
     shift_details=None,
+    shifts=[],
     staff_allocation=None,
 ):
     """
@@ -99,9 +99,8 @@ def setup_model(
     double_shift_nurses = get_doubleShift_nurses(
         profiles_df
     )  # Nurses who can work double shifts
-    shift_str_to_idx = make_shift_index(
-        shift_labels
-    )  # Map shift code → int index for your decision variables
+    shift_str_to_idx = make_shift_index(shifts)
+    # Map shift code → int index for your decision variables
     hard_rules = define_hard_rules(model)  # Track hard constraint violations
 
     date_start = normalise_date(
@@ -117,7 +116,7 @@ def setup_model(
         date_start,
         shuffled_nurse_names,
         num_days,
-        shift_labels,
+        shifts,
         no_work_labels,
         fixed_assignments,
     )
@@ -127,7 +126,7 @@ def setup_model(
         date_start,
         shuffled_nurse_names,
         num_days,
-        shift_labels,
+        shifts,
         no_work_labels,
         training_by_nurse,
         fixed_assignments,
@@ -159,7 +158,7 @@ def setup_model(
     raw_pairs = make_weekend_pairs(total_days, date_start - timedelta(days=prev_days))
     weekend_pairs = [(d1 - prev_days, d2 - prev_days) for d1, d2 in raw_pairs]
 
-    shift_types = len(shift_labels)
+    shift_types = len(shifts)
     work = build_variables(
         model, shuffled_nurse_names, num_days, prev_days, shift_types
     )
@@ -189,6 +188,7 @@ def setup_model(
         prev_days,
         total_days,
         shift_details,
+        shifts,
         staff_allocation,
     )
 
