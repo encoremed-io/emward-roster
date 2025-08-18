@@ -8,6 +8,7 @@ on:
 env:
   IMAGE_NAME: roster-api
   REGISTRY: ghcr.io
+  REGISTRY_OWNER: ${{ github.repository_owner }}
   DOCKER_BUILDKIT: 1
 
 concurrency:
@@ -48,12 +49,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Normalize owner to lowercase for GHCR
-      - name: Set REGISTRY_OWNER
-        run: |
-          echo "REGISTRY_OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_ENV
-
-      # QEMU needed to build arm64 on GitHub's x86 runners
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -77,7 +72,7 @@ jobs:
           echo "sha_tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           echo "latest_tag=latest" >> "$GITHUB_OUTPUT"
 
-      - name: Build & Push (ARM64)
+      - name: Build & Push
         id: build
         uses: docker/build-push-action@v6
         with:
