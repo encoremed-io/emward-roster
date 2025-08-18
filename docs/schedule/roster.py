@@ -13,19 +13,19 @@ schedule_roster_description = """
         - `id`: Primary key of the nurse
         - `nurse`: Name of the nurse
         - `date`: Date of the shift
-        - `shift`: Shift id
+        - `shiftId`: Shift id
         - `timestamp`: Timestamp of the preference
     - `trainingShifts`: List of `NurseTraining` objects, which contain the following information: (Optional)
         - `id`: Primary key of the nurse
         - `nurse`: Name of the nurse
         - `date`: Date of the training shift
-        - `training`: Shift on training (shift id)
+        - `shiftId`: Shift id
     - `previousSchedule`: List of `PrevSchedule` objects. Each object represents a nurse's past schedule and contains: (Optional)
         - `id`: Primary key of the nurse
         - `nurse`: Name of the nurse
         - `schedule`: List of `PrevScheduleItem` objects, which contain the following information:
             - `date`: Date of the training shift
-            - `shiftTypeId`: Shift id
+            - `shiftId`: Shift id
             - `shift`: Name of the shift
     - `shifts`: List of `Shifts` objects, which contain the following information:
         - `id`: Primary key of the shift
@@ -53,7 +53,7 @@ schedule_roster_description = """
             - `seniorStaffAllocationRefinementValue`: Value for refining the senior staff allocation
         - `allowDoubleShift`: Whether to allow double shifts
         - `shiftDetails`: List of shift details rule
-            - `shiftType`: Primary key of the shift
+            - `shiftId`: Primary key of the shift
             - `maxWorkingShift`: Max of the working shift type continuously
             - `restDayEligible`: Number of rests day after continuously working shift type
 

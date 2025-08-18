@@ -57,8 +57,8 @@ async def generate_schedule(
             # Ensure id and shift are strings
             if "id" in pref_df.columns:
                 pref_df["id"] = pref_df["id"].astype(str)
-            if "shift" in pref_df.columns:
-                pref_df["shift"] = pref_df["shift"].astype(str)
+            if "shiftId" in pref_df.columns:
+                pref_df["shiftId"] = pref_df["shiftId"].astype(str)
 
             # Convert timestamp to datetime and sort
             if "timestamp" in pref_df.columns:
@@ -66,13 +66,13 @@ async def generate_schedule(
                     pref_df["timestamp"], errors="coerce"
                 )
                 pref_df.sort_values(
-                    by=["date", "shift", "timestamp"],
+                    by=["date", "shiftId", "timestamp"],
                     ascending=[True, True, True],
                     inplace=True,
                 )
 
             # Pack shift+ts into one column
-            pref_df["cell"] = list(zip(pref_df["shift"], pref_df["timestamp"]))
+            pref_df["cell"] = list(zip(pref_df["shiftId"], pref_df["timestamp"]))
 
             # Pivot with nurse id as index
             prefs_df = pref_df.drop_duplicates(
@@ -102,22 +102,22 @@ async def generate_schedule(
             if "id" in raw_train.columns:
                 raw_train["id"] = raw_train["id"].astype(str)
 
-            if "training" not in raw_train.columns:
-                raw_train["training"] = None
+            if "shiftId" not in raw_train.columns:
+                raw_train["shiftId"] = None
 
             # Pivot with id as index if available, else fallback to nurse
             if "id" in raw_train.columns:
 
                 training_df = raw_train.drop_duplicates(
                     subset=["id", "date"], keep="first"
-                )[["id", "nurse", "date", "training"]]
+                )[["id", "nurse", "date", "shiftId"]]
 
                 training_df = training_df.rename(columns={"nurse": "name"})
 
             else:
                 training_df = raw_train.drop_duplicates(
                     subset=["nurse", "date"], keep="first"
-                )[["nurse", "date", "training"]].rename(columns={"nurse": "name"})
+                )[["nurse", "date", "shiftId"]].rename(columns={"nurse": "name"})
 
         else:
             # Empty training_df with same structure as prefs_df
@@ -134,7 +134,7 @@ async def generate_schedule(
                             "id": nurse_entry.id,
                             "nurse": nurse_entry.nurse,
                             "date": pd.to_datetime(item.date),
-                            "shiftTypeId": item.shiftTypeId,
+                            "shiftId": item.shiftId,
                             "shift": item.shift,
                         }
                     )
@@ -146,7 +146,7 @@ async def generate_schedule(
             else:
                 # Pivot: id as row, date as column, shift name as value
                 prev_schedule_df = prev_sched_df.pivot_table(
-                    index="id", columns="date", values="shiftTypeId", aggfunc="first"
+                    index="id", columns="date", values="shiftId", aggfunc="first"
                 )
 
                 # ensure index is string for consistency

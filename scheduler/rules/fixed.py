@@ -172,7 +172,7 @@ def previous_schedule_rules(model, state: ScheduleState):
     The previous schedule is a pandas DataFrame with nurse IDs as index and day
     dates as columns. Each entry is either:
 
-    - a shiftTypeId (string, e.g. "1", "2", "N3", ...)
+    - a shiftId (string, e.g. "1", "2", "N3", ...)
     - a no-work label (EL, MC, AL, TR, REST, ...)
     - blank string or NaN to skip
     - anything else → error
@@ -200,10 +200,10 @@ def previous_schedule_rules(model, state: ScheduleState):
                 for s in range(state.shift_types):
                     model.Add(state.work[nurse_id, day_idx, s] == 0)
 
-            # Directly treat label as shiftTypeId
+            # Directly treat label as shiftId
             elif (
                 label in state.shift_str_to_idx
-            ):  # <-- build this dict from your shiftTypeIds
+            ):  # <-- build this dict from your shiftIds
                 s_fixed = state.shift_str_to_idx[label]
                 for s in range(state.shift_types):
                     model.Add(

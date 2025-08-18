@@ -306,6 +306,8 @@ def get_training_shifts(
     shifts_str_to_idx = make_shift_index(shift_labels)
     training_shifts: Dict[str, Dict[int, int]] = {str(i): {} for i in nurse_ids}
 
+    # print("[code]", training_shifts_df)
+
     # Normalize columns
     if "id" in training_shifts_df.columns:
         training_shifts_df["id"] = training_shifts_df["id"].astype(str).str.strip()
@@ -313,9 +315,9 @@ def get_training_shifts(
         training_shifts_df["date"] = pd.to_datetime(
             training_shifts_df["date"], errors="coerce"
         )
-    if "training" in training_shifts_df.columns:
-        training_shifts_df["training"] = (
-            training_shifts_df["training"].astype(str).str.strip().str.upper()
+    if "shiftid" in training_shifts_df.columns:
+        training_shifts_df["shiftid"] = (
+            training_shifts_df["shiftid"].astype(str).str.strip().str.upper()
         )
 
     # Process each row
@@ -332,7 +334,8 @@ def get_training_shifts(
         if not (0 <= offset < active_days):
             continue
 
-        code = row.get("training", "")
+        code = row.get("shiftid", "")
+
         if code in shifts_str_to_idx:
             training_shifts[nurse_id][offset] = shifts_str_to_idx[code]
         else:
@@ -341,7 +344,6 @@ def get_training_shifts(
                 f"expected one of {shift_labels!r}."
             )
 
-    print("get_training_shifts\n", training_shifts)
     return training_shifts
 
 
@@ -394,8 +396,6 @@ def extract_training_shifts_info(
         training_shifts, training_by_nurse, no_work_labels, fixed_assignments
     )
 
-    print("shift_utils file1\n", training_shifts)
-    print("shift_utils file2\n", training_by_nurse)
     return training_shifts, training_by_nurse
 
 

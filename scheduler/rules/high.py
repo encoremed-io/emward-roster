@@ -184,7 +184,6 @@ def pref_min_weekly_hours_rule(model, state: ScheduleState):
 
 
 def min_staffing_per_shift_rule(model, state: ScheduleState):
-    print("senior names\n", state.senior_names)
     """Ensure that each shift has a minimum number of nurses and seniors."""
     for d in range(-state.prev_days, state.num_days):
         for s in range(state.shift_types):
@@ -445,7 +444,7 @@ def staff_allocation_rule(model, state: ScheduleState):
 #         return
 
 #     for rule in state.shift_details:
-#         shift_label = rule.shiftType
+#         shift_label = rule.shiftId
 #         max_shifts = rule.maxWorkingShift
 #         required_rest = rule.restDayEligible
 
@@ -453,7 +452,7 @@ def staff_allocation_rule(model, state: ScheduleState):
 #         if isinstance(shift_label, str):
 #             shift_type = state.shift_str_to_idx.get(shift_label.upper())
 #             if shift_type is None:
-#                 raise ValueError(f"Unknown shiftType '{shift_label}' in shift_details")
+#                 raise ValueError(f"Unknown shiftId '{shift_label}' in shift_details")
 #         else:
 #             shift_type = shift_label  # Already an int
 
@@ -508,14 +507,14 @@ def shift_details_rule(model, state: ScheduleState):
         raise ValueError("shift_str_to_idx is not initialized on state.")
 
     for rule in state.shift_details:
-        raw = rule.shiftType
+        raw = rule.shiftId
         if not isinstance(raw, str):
-            raise TypeError("shiftType must be a string ID.")
+            raise TypeError("shiftId must be a string ID.")
         shift_id = raw.strip()
 
         if shift_id not in state.shift_str_to_idx:
             raise ValueError(
-                f"Unknown shiftType id '{shift_id}'. Known IDs: {list(state.shift_str_to_idx.keys())}"
+                f"Unknown shiftId '{shift_id}'. Known IDs: {list(state.shift_str_to_idx.keys())}"
             )
 
         shift_type = state.shift_str_to_idx[shift_id]  # ← integer index for solver

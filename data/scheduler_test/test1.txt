@@ -48,7 +48,7 @@
       "id": "1",
       "nurse": "Nurse1",
       "date": "2025-07-23",
-      "shift": "1",
+      "shiftId": "1",
       "timestamp": "2025-07-10T09:00:00"
     }
   ],
@@ -56,8 +56,8 @@
     {
       "id": "1",
       "nurse": "Nurse1",
-      "date": "2025-07-16",
-      "training": "1"
+      "date": "2025-07-23",
+      "shiftId": "1"
     }
   ],
   "previousSchedule": [
@@ -67,17 +67,17 @@
       "schedule": [
         {
           "date": "2025-07-20",
-          "shiftTypeId": "1",
+          "shiftId": "1",
           "shift": "AM"
         },
         {
           "date": "2025-07-21",
-          "shiftTypeId": "2",
+          "shiftId": "2",
           "shift": "PM"
         },
         {
           "date": "2025-07-22",
-          "shiftTypeId": "3",
+          "shiftId": "3",
           "shift": "Night"
         }
       ]
@@ -117,8 +117,8 @@
     },
     "allowDoubleShift": false,
     "shiftDetails": [
-      { "shiftType": "1", "maxWorkingShift": 3, "restDayEligible": 1 },
-      { "shiftType": "3", "maxWorkingShift": 4, "restDayEligible": 2 }
+      { "shiftId": "1", "maxWorkingShift": 3, "restDayEligible": 1 },
+      { "shiftId": "3", "maxWorkingShift": 4, "restDayEligible": 2 }
     ]
   }
 }

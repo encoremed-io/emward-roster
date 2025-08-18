@@ -40,7 +40,7 @@ class NursePreference(BaseModel):
     id: str
     nurse: str
     date: date
-    shift: str
+    shiftId: str
     timestamp: dt.datetime
 
 
@@ -50,12 +50,12 @@ class NurseTraining(BaseModel):
     id: str
     nurse: str
     date: date
-    training: str
+    shiftId: str
 
 
 class PrevScheduleItem(BaseModel):
     date: str = Field(..., description="Date in YYYY-MM-DD format")
-    shiftTypeId: str = Field(..., description="Shift type ID, e.g. '1', '2', '3'")
+    shiftId: str = Field(..., description="Shift type ID, e.g. '1', '2', '3'")
     shift: str = Field(..., description="Shift name, e.g. 'AM', 'PM', 'Night'")
 
 
@@ -86,7 +86,7 @@ class Shifts(BaseModel):
 class ShiftDetails(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    shiftType: str
+    shiftId: str
     maxWorkingShift: int
     restDayEligible: int
 
@@ -151,20 +151,20 @@ class ScheduleRequest(BaseModel):
 
         if self.shiftDetails is not None:
             for shift in self.shiftDetails:
-                key = (shift.shiftType, shift.maxWorkingShift)
+                key = (shift.shiftId, shift.maxWorkingShift)
 
-                # Check 1: no duplicate (shiftType, maxWorkingShift) rules
+                # Check 1: no duplicate (shiftId, maxWorkingShift) rules
                 if key in seen_keys:
                     raise ValueError(
-                        f"Duplicate rule for shiftType {shift.shiftType} and maxWorkingShift {shift.maxWorkingShift}"
+                        f"Duplicate rule for shiftId {shift.shiftId} and maxWorkingShift {shift.maxWorkingShift}"
                     )
                 seen_keys.add(key)
 
-                # Check 2: only one rule per shiftType allowed (optional)
-                # if shift.shiftType in seen_shift_types:
+                # Check 2: only one rule per shiftId allowed (optional)
+                # if shift.shiftId in seen_shift_types:
                 #     raise ValueError(
-                #         f"Only one rule per shiftType is allowed. Found duplicate for shiftType {shift.shiftType}"
+                #         f"Only one rule per shiftId is allowed. Found duplicate for shiftId {shift.shiftId}"
                 #     )
-                # seen_shift_types.add(shift.shiftType)
+                # seen_shift_types.add(shift.shiftId)
 
         return self
