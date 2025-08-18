@@ -67,7 +67,7 @@ def build_schedule_model(
     # === Validate inputs ===
     validate_data(profiles_df, preferences_df, "profiles", "preferences", False)
     validate_data(profiles_df, training_shifts_df, "profiles", "training shifts", False)
-    # validate_data(profiles_df, prev_schedule_df, "profiles", "previous schedule", False)
+    validate_data(profiles_df, prev_schedule_df, "profiles", "previous schedule", False)
 
     # === Model setup ===
     logger.info("📋 Building model...")

@@ -59,6 +59,6 @@ def solve_schedule(
     schedule_df, summary_df, violations, metrics = extract_schedule_and_summary(
         state, best_result, og_nurse_order
     )
-    print("[WOOT]\n", schedule_df)
+
     logger.info("📁 Schedule and summary generated.")
     return schedule_df, summary_df, violations, metrics

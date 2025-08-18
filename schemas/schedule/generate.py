@@ -53,10 +53,18 @@ class NurseTraining(BaseModel):
     training: str
 
 
+class PrevScheduleItem(BaseModel):
+    date: str = Field(..., description="Date in YYYY-MM-DD format")
+    shiftTypeId: str = Field(..., description="Shift type ID, e.g. '1', '2', '3'")
+    shift: str = Field(..., description="Shift name, e.g. 'AM', 'PM', 'Night'")
+
+
 class PrevSchedule(BaseModel):
     model_config = ConfigDict(extra="allow")
-    index: str  # <nurse>
-    # <date>: <shift> fields will be handled via internal logic
+
+    nurseId: str = Field(..., description="Unique nurse ID")
+    nurse: str = Field(..., description="Nurse display name")
+    schedule: List[PrevScheduleItem] = Field(default_factory=list)
 
 
 class FixedAssignment(BaseModel):

@@ -125,30 +125,35 @@ async def generate_schedule(
 
         # Previous schedule
         if previousSchedule:
-            prev_sched_df = pd.DataFrame([p.model_dump() for p in previousSchedule])
-            if "index" not in prev_sched_df.columns:
-                raise HTTPException(
-                    400, detail="Each prev_schedule row requires an 'index' field"
-                )
-            prev_sched_df = prev_sched_df.set_index("index")
-            prev_sched_df.index = normalize_names(prev_sched_df.index)
-            prev_sched_df.index.name = "name"
-
-            # Parse dates
-            converted = {}
-            for col in prev_sched_df.columns:
-                m = re.search(r"\d{4}-\d{2}-\d{2}", col)
-                if not m:
-                    raise HTTPException(
-                        400, detail=f"Could not parse date in column '{col}'"
+            records = []
+            for nurse_entry in previousSchedule:
+                for item in nurse_entry.schedule:
+                    records.append(
+                        {
+                            "nurseId": nurse_entry.nurseId,
+                            "nurse": nurse_entry.nurse,
+                            "date": pd.to_datetime(item.date),
+                            "shiftTypeId": item.shiftTypeId,
+                            "shift": item.shift,
+                        }
                     )
-                converted[col] = pd.to_datetime(m.group(0))
-            prev_sched_df = prev_sched_df.rename(columns=converted)
-            prev_schedule_df = prev_sched_df
+
+            prev_sched_df = pd.DataFrame(records)
+
+            if prev_sched_df.empty:
+                prev_schedule_df = pd.DataFrame(index=profiles_df["id"].astype(str))
+            else:
+                # Pivot: nurseId as row, date as column, shift name as value
+                prev_schedule_df = prev_sched_df.pivot_table(
+                    index="nurseId", columns="date", values="shift", aggfunc="first"
+                )
+
+                # ensure index is string for consistency
+                prev_schedule_df.index = prev_schedule_df.index.astype(str)
+                prev_schedule_df.index.name = "id"
         else:
-            prev_schedule_df = pd.DataFrame(index=profiles_df["name"])
-            prev_schedule_df.index = normalize_names(prev_schedule_df.index)
-            prev_schedule_df.index.name = "name"
+            prev_schedule_df = pd.DataFrame(index=profiles_df["id"].astype(str))
+            prev_schedule_df.index.name = "id"
 
         validate_data(
             profiles_df,
@@ -159,9 +164,9 @@ async def generate_schedule(
         )
 
         validate_data(profiles_df, training_df, "profiles", "training shifts", False)
-        # validate_data(
-        #     profiles_df, prev_schedule_df, "profiles", "previous schedule", False
-        # )
+        validate_data(
+            profiles_df, prev_schedule_df, "profiles", "previous schedule", False
+        )
         # pprint(profiles_df, sort_dicts=False, width=100)
         # pprint(prev_schedule_df, sort_dicts=False, width=100)
         # pprint("woiii")
