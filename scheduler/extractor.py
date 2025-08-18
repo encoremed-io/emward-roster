@@ -341,6 +341,8 @@ def extract_schedule_and_summary(
                 (n, d)
             ].strip().upper() == NO_WORK_LABELS[2]:
                 shift = NO_WORK_LABELS[2]  # EL
+            elif d in state.training_by_nurse.get(n, {}):
+                shift = NO_WORK_LABELS[4]  # TR
             else:
                 if len(picked) == 2:
                     print(
