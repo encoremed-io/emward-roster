@@ -7,7 +7,7 @@ on:
 
 env:
   IMAGE_NAME: roster-api
-  REGISTRY: ghcr.io/${{ toLower(github.repository_owner) }}
+  REGISTRY: ghcr.io
   DOCKER_BUILDKIT: 1
 
 concurrency:
@@ -48,6 +48,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Normalize owner to lowercase for GHCR
+      - name: Set REGISTRY_OWNER
+        run: |
+          echo "REGISTRY_OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_ENV
+
       # QEMU needed to build arm64 on GitHub's x86 runners
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -60,7 +65,6 @@ jobs:
           driver-opts: image=moby/buildkit:buildx-stable-1
 
       - name: Log in to GHCR
-        if: ${{ startsWith(env.REGISTRY, 'ghcr.io') }}
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -84,8 +88,8 @@ jobs:
           build-args: |
             TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.latest_tag }}
+            ${{ env.REGISTRY }}/${{ env.REGISTRY_OWNER }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}
+            ${{ env.REGISTRY }}/${{ env.REGISTRY_OWNER }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.latest_tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: false
@@ -130,7 +134,7 @@ jobs:
 
             docker logout ghcr.io || true
 
-            IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-and-push.outputs.digest }}"
+            IMAGE="${{ env.REGISTRY }}/${{ env.REGISTRY_OWNER }}/${{ env.IMAGE_NAME }}@${{ needs.build-and-push.outputs.digest }}"
             echo "Deploying $IMAGE"
             docker pull "$IMAGE"
 
