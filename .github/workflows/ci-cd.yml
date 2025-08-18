@@ -84,7 +84,7 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          platforms: linux/arm64
+          platforms: linux/amd64
           build-args: |
             TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
           tags: |
