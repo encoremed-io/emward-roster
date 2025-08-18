@@ -34,7 +34,6 @@ schedule_roster_description = """
     - `request`: `ScheduleRequest` object, which contains the following information:
         - `startDate`: Start date of the schedule
         - `numDays`: Number of days in the schedule
-        - `shiftDurations`: List of shift durations in hours
         - `minNursesPerShift`: Minimum number of nurses per shift
         - `minSeniorsPerShift`: Minimum number of senior nurses per shift
         - `maxWeeklyHours`: Maximum weekly hours for each nurse
