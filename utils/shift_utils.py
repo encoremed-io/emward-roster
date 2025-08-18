@@ -472,3 +472,20 @@ def shift_duration_minutes(start: time, end: time) -> int:
     if dt_end <= dt_start:
         dt_end += timedelta(days=1)
     return int((dt_end - dt_start).total_seconds() // 60)
+
+
+def parse_duration(duration_str: str) -> int:
+    """
+    Parse "HHMM-HHMM" into duration in hours (int).
+    Handles overnight shifts (e.g. 2100-0700).
+    """
+    start_str, end_str = duration_str.split("-")
+    start = datetime.strptime(start_str, "%H%M")
+    end = datetime.strptime(end_str, "%H%M")
+
+    # If overnight (end before start), add 1 day
+    if end <= start:
+        end += timedelta(days=1)
+
+    delta = end - start
+    return int(delta.total_seconds() // 3600)  # hours

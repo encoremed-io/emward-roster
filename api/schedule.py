@@ -18,7 +18,7 @@ import traceback
 from docs.schedule.roster import schedule_roster_description
 from utils.helpers.schedule_roster import standardize_profile_columns, normalize_names
 from pprint import pprint
-import sys
+from utils.shift_utils import parse_duration
 
 router = APIRouter(prefix="/schedule", tags=["Roster"])
 
@@ -192,7 +192,10 @@ async def generate_schedule(
                 fixed_idx_dict[(nurse, idx)] = shift
 
         # Convert hours→minutes so the CP‑SAT model sees minutes everywhere
-        dur_minutes = [h * 60 for h in request.shiftDurations]
+
+        shiftDurations = [parse_duration(s.duration) for s in shifts]
+        print("[SHIFT DURATIONS]", shiftDurations)
+        dur_minutes = [h * 60 for h in shiftDurations]
 
         # Call scheduling function
 

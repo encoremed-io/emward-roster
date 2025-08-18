@@ -117,7 +117,6 @@ class ScheduleRequest(BaseModel):
 
     startDate: date
     numDays: int
-    shiftDurations: List[int] = Field(default=SHIFT_DURATIONS)
     minNursesPerShift: int = Field(default=MIN_NURSES_PER_SHIFT)
     minSeniorsPerShift: int = Field(default=MIN_SENIORS_PER_SHIFT)
     maxWeeklyHours: int = Field(default=MAX_WEEKLY_HOURS)
