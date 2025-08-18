@@ -4,8 +4,9 @@
 FROM --platform=linux/amd64 python:3.11-slim
 
 # Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/home/appuser/.local/bin:$PATH"
 
 # Set working directory
 WORKDIR /app
@@ -20,7 +21,6 @@ COPY requirements.txt .
 
 # Use BuildKit cache for pip and prefer wheels
 ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
-
 RUN --mount=type=cache,target=/root/.cache/pip \
     python -m pip install --upgrade pip && \
     pip install --prefer-binary -r requirements.txt --extra-index-url ${TORCH_INDEX_URL}
@@ -28,13 +28,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # Copy all project files
 COPY . .
 
-# Expose Streamlit default port
-EXPOSE 8501
-# EXPOSE 8000  # (uncomment if running FastAPI on 8000)
+# Expose FastAPI port (remove Streamlit if you don’t use it in prod)
+EXPOSE 8000
 
 # Create non-root user
 RUN useradd -u 10001 -m appuser
 USER 10001:10001
 
-# Default CMD (gunicorn)
+# Default CMD (Gunicorn + Uvicorn worker)
 CMD ["gunicorn", "main:app"]
