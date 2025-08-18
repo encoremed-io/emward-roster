@@ -62,7 +62,7 @@ class PrevScheduleItem(BaseModel):
 class PrevSchedule(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    nurseId: str = Field(..., description="Unique nurse ID")
+    id: str = Field(..., description="Unique nurse ID")
     nurse: str = Field(..., description="Nurse display name")
     schedule: List[PrevScheduleItem] = Field(default_factory=list)
 

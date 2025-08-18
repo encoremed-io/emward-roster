@@ -9,21 +9,24 @@ schedule_roster_description = """
         - `title`: Title of the nurse (e.g. "Senior Nurse", "Junior Nurse")
         - `yearsExperience`: Number of years of experience the nurse has
         - `doubleShift`: Whether the nurse can work double shifts (True/False)
-    - `preferences`: List of `NursePreference` objects, which contain the following information:
+    - `preferences`: List of `NursePreference` objects, which contain the following information: (Optional)
         - `id`: Primary key of the nurse
         - `nurse`: Name of the nurse
         - `date`: Date of the shift
-        - `shift`: Shift preference (e.g. "AM", "PM", "Night")
+        - `shift`: Shift id
         - `timestamp`: Timestamp of the preference
-    - `trainingShifts`: List of `NurseTraining` objects, which contain the following information:
+    - `trainingShifts`: List of `NurseTraining` objects, which contain the following information: (Optional)
         - `id`: Primary key of the nurse
         - `nurse`: Name of the nurse
         - `date`: Date of the training shift
-        - `training`: Shift on training (e.g. "AM", "PM", "Night", "FULL")
-    - `previousSchedule`: List of `PrevSchedule` objects. Each object represents a nurse's past schedule and contains:
-        - `index`: The name of the nurse.
-        - `<Day Date>`: The assigned shift for that day, where the key is a string in the format `"Day YYYY-MM-DD"`
-          (e.g., `"Mon 2025-07-07"`), and the value is one of the shift types (e.g. "AM", "PM", "Night") or no work labels (e.g. "MC", "REST", "AL", "EL").
+        - `training`: Shift on training (shift id)
+    - `previousSchedule`: List of `PrevSchedule` objects. Each object represents a nurse's past schedule and contains: (Optional)
+        - `id`: Primary key of the nurse
+        - `nurse`: Name of the nurse
+        - `schedule`: List of `PrevScheduleItem` objects, which contain the following information:
+            - `date`: Date of the training shift
+            - `shiftTypeId`: Shift id
+            - `shift`: Name of the shift
     - `shifts`: List of `Shifts` objects, which contain the following information:
         - `id`: Primary key of the shift
         - `name`: Name of the shift

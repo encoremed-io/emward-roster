@@ -605,8 +605,6 @@ def shift_details_rule(model, state: ScheduleState):
 
 def double_shift_rule(model, state: ScheduleState):
     """Only restrict double shifts for nurses who are not eligible."""
-    print("hahahaha\n", state.double_shift_nurses)
-    print("hahahaha\n", state.nurse_names)
 
     for nurse_name in state.nurse_names:
         for d in range(-state.prev_days, state.num_days):

@@ -152,7 +152,7 @@ def parse_prefs(raw_pref) -> Tuple[str, pd.Timestamp]:
     else:
         code, ts = raw_pref, pd.NaT
 
-    code = str(code).strip().upper()
+    code = str(code).strip()
     ts = pd.Timestamp.min if pd.isna(ts) else ts
     return code, ts
 
@@ -160,44 +160,50 @@ def parse_prefs(raw_pref) -> Tuple[str, pd.Timestamp]:
 def get_shift_preferences(
     preferences_df: pd.DataFrame,
     start_date: Union[pd.Timestamp, dt_date],
-    nurse_names: List[str],
+    nurse_ids: List[str],
     active_days: int,
     shift_labels: List[Shifts],
     no_work_labels: List[str],
 ) -> Dict[str, Dict[int, Tuple[int, pd.Timestamp]]]:
     """
-    Returns nurse_name -> { day_index: (shift_index, timestamp) } for non-leave preferences.
+    Returns nurse_id -> { day_index: (shift_index, timestamp) } for valid preferences.
     """
     date_start = normalise_date(start_date)
-    shift_str_to_idx = make_shift_index(shift_labels)
+    shift_str_to_idx = {str(s.id): idx for idx, s in enumerate(shift_labels)}
+
     shift_prefs: Dict[str, Dict[int, Tuple[int, pd.Timestamp]]] = {
-        n: {} for n in nurse_names
+        str(n): {} for n in nurse_ids
     }
 
-    # logging.warning("cols: %s", preferences_df.columns.tolist())
-    # logging.warning("index name/type: %s %s", preferences_df.index.name, type(preferences_df.index))
+    for id, row in preferences_df.drop(columns=["name"], errors="ignore").iterrows():
+        nid = str(id).strip()
 
-    for nurse, row in preferences_df.iterrows():
-        nm = str(nurse).strip().upper()
-        if nm not in shift_prefs:
+        if nid not in shift_prefs:
             continue
-        for label, raw in row.items():
-            if pd.notna(raw):
-                code, ts = parse_prefs(raw)
 
-                if code == "" or code in (lbl.upper() for lbl in no_work_labels):
-                    continue
-                elif code in shift_str_to_idx:
-                    offset = compute_label_offset(label, date_start)
-                    if 0 <= offset < active_days:
-                        prev = shift_prefs[nm].get(offset)
-                        if prev is None or ts < prev[1]:
-                            shift_prefs[nm][offset] = (shift_str_to_idx[code], ts)
-                else:
-                    raise FileContentError(
-                        f"Invalid preference “{code}” for nurse {nm} on {label} — "
-                        f"expected one of {shift_labels + no_work_labels!r} or blank."
-                    )
+        for label, raw in row.items():
+            if pd.isna(raw):
+                continue
+
+            code, ts = parse_prefs(raw)  # expects (shift_id, timestamp)
+
+            # skip empty or "no work" preferences
+            if not code or code.upper() in (lbl.upper() for lbl in no_work_labels):
+                continue
+
+            # valid shift
+            if code in shift_str_to_idx:
+                offset = compute_label_offset(label, date_start)
+                if 0 <= offset < active_days:
+                    prev = shift_prefs[nid].get(offset)
+                    if prev is None or ts < prev[1]:
+                        shift_prefs[nid][offset] = (shift_str_to_idx[code], ts)
+            else:
+                raise FileContentError(
+                    f"Invalid preference “{code}” for nurse id {nid} on {label} — "
+                    f"expected one of {[s.id for s in shift_labels] + no_work_labels!r} or blank."
+                )
+
     return shift_prefs
 
 

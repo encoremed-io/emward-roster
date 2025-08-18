@@ -62,23 +62,23 @@
   ],
   "previousSchedule": [
     {
-      "nurseId": "1",
+      "id": "1",
       "nurse": "Nurse1",
       "schedule": [
         {
           "date": "2025-07-20",
           "shiftTypeId": "1",
-          "shift": "1"
+          "shift": "AM"
         },
         {
           "date": "2025-07-21",
           "shiftTypeId": "2",
-          "shift": "2"
+          "shift": "PM"
         },
         {
           "date": "2025-07-22",
           "shiftTypeId": "3",
-          "shift": "3"
+          "shift": "Night"
         }
       ]
     }
@@ -115,7 +115,7 @@
       "seniorStaffAllocationRefinement": true,
       "seniorStaffAllocationRefinementValue": 5
     },
-    "allowDoubleShift": true,
+    "allowDoubleShift": false,
     "shiftDetails": [
       { "shiftType": "1", "maxWorkingShift": 3, "restDayEligible": 1 },
       { "shiftType": "3", "maxWorkingShift": 4, "restDayEligible": 2 }
