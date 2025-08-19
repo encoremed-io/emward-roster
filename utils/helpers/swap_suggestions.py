@@ -17,7 +17,7 @@ def generate_warning(nurse, settings):
     preferred_hours = settings.preferredWeeklyHours
 
     weekly_hours = nurse.shiftsThisWeek
-    print("[warning]", nurse)
+
     # Warn if over max hours
     if weekly_hours > max_hours:
         messages.append(
