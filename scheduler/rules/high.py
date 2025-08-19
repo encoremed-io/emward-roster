@@ -386,22 +386,33 @@ def no_back_to_back_shift_rule(model, state: ScheduleState):
 
 # staff allocation rule
 def staff_allocation_rule(model, state: ScheduleState):
-    """Enforce senior staff percentage allocation, with fallback if main target is not met."""
+    """
+    Enforce senior staff percentage allocation per shift.
+    Falls back if main target is not met.
+    """
 
-    alloc = state.staff_allocation
-    if not alloc or not alloc.seniorStaffAllocation:
-        logging.info("Staff allocation not enabled or not required.")
+    # state.shifts should be your list of Shifts models
+    if not state.shifts:
+        logging.info("No shifts configured with staffAllocation.")
         return
 
-    base_percent = alloc.seniorStaffPercentage
-    fallback_step = alloc.seniorStaffAllocationRefinementValue or 0
-    fallback_percent = max(0, base_percent - fallback_step)
+    for shift in state.shifts:
+        alloc = shift.staffAllocation
+        if not alloc or not alloc.seniorStaffAllocation:
+            logging.info(
+                f"Staff allocation not required for shift {shift.id} ({shift.name})."
+            )
+            continue
 
-    for d in range(-state.prev_days, state.num_days):
-        for s in range(state.shift_types):
+        base_percent = alloc.seniorStaffPercentage
+        fallback_step = alloc.seniorStaffAllocationRefinementValue or 0
+        fallback_percent = max(0, base_percent - fallback_step)
+
+        s = state.shift_str_to_idx[shift.id]
+        for d in range(-state.prev_days, state.num_days):
             total_seniors = sum(state.work[n, d, s] for n in state.senior_names)
 
-            # Compute required seniors for base and fallback percent
+            # Required counts
             base_required = max(
                 state.min_seniors_per_shift,
                 math.ceil(state.min_nurses_per_shift * base_percent / 100),
@@ -411,9 +422,9 @@ def staff_allocation_rule(model, state: ScheduleState):
                 math.ceil(state.min_nurses_per_shift * fallback_percent / 100),
             )
 
-            # Create flags
-            base_ok = model.NewBoolVar(f"base_senior_ok_d{d}_s{s}")
-            fallback_ok = model.NewBoolVar(f"fallback_senior_ok_d{d}_s{s}")
+            # Flags
+            base_ok = model.NewBoolVar(f"base_senior_ok_d{d}_s{shift.id}")
+            fallback_ok = model.NewBoolVar(f"fallback_senior_ok_d{d}_s{shift.id}")
 
             model.Add(total_seniors >= base_required).OnlyEnforceIf(base_ok)
             model.Add(total_seniors < base_required).OnlyEnforceIf(base_ok.Not())
@@ -423,14 +434,16 @@ def staff_allocation_rule(model, state: ScheduleState):
                 fallback_ok.Not()
             )
 
-            # Apply at least fallback as hard rule
+            # Hard rule: require at least fallback
             model.AddBoolOr([base_ok, fallback_ok]).OnlyEnforceIf(
                 state.hard_rules["staff_allocation_not_satisfied"].flag
             )
 
-            # Optional: apply soft penalty if base failed but fallback passed
+            # Optional penalty if fallback used
             if fallback_step > 0:
-                penalty_flag = model.NewBoolVar(f"penalty_fallback_used_d{d}_s{s}")
+                penalty_flag = model.NewBoolVar(
+                    f"penalty_fallback_used_d{d}_s{shift.id}"
+                )
                 model.AddBoolAnd([base_ok.Not(), fallback_ok]).OnlyEnforceIf(
                     penalty_flag
                 )

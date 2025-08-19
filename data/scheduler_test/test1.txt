@@ -84,9 +84,27 @@
     }
   ],
   "shifts": [
-    { "id": "1", "name": "AM", "duration": "0700-1400" },
-    { "id": "2", "name": "PM", "duration": "1400-2100" },
-    { "id": "3", "name": "Night", "duration": "2100-0700" }
+    { 
+	    "id": "1", 
+      "name": "AM", 
+      "duration": "0700-1400", 
+      "staffAllocation": {
+        "seniorStaffAllocation": true,
+        "seniorStaffPercentage": 50,
+        "seniorStaffAllocationRefinement": true,
+        "seniorStaffAllocationRefinementValue": 5
+      } 
+    },
+    { 
+	    "id": "2", 
+      "name": "PM", 
+      "duration": "1400-2100"
+    },
+    { 
+	    "id": "3", 
+      "name": "Night", 
+      "duration": "2100-0700"
+    }
   ],
   "request": {
     "startDate": "2025-07-23",
@@ -104,12 +122,6 @@
     "shiftBalance": false,
     "prioritySetting": "preference-leaning",
     "fixedAssignments": [],
-    "staffAllocation": {
-      "seniorStaffAllocation": true,
-      "seniorStaffPercentage": 50,
-      "seniorStaffAllocationRefinement": true,
-      "seniorStaffAllocationRefinementValue": 5
-    },
     "allowDoubleShift": false,
     "shiftDetails": [
       { "shiftId": "1", "maxWorkingShift": 3, "restDayEligible": 1 },

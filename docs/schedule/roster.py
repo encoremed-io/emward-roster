@@ -31,6 +31,11 @@ schedule_roster_description = """
         - `id`: Primary key of the shift
         - `name`: Name of the shift
         - `duration`: Duration of the shift
+        - `staffAllocation`: Optional `StaffAllocations` object, which contains the following information:
+            - `seniorStaffAllocation`: Whether to allocate senior staff
+            - `seniorStaffPercentage`: Percentage of senior staff required per shift
+            - `seniorStaffAllocationRefinement`: Whether to refine the senior staff allocation
+            - `seniorStaffAllocationRefinementValue`: Value for refining the senior staff allocation
     - `request`: `ScheduleRequest` object, which contains the following information:
         - `startDate`: Start date of the schedule
         - `numDays`: Number of days in the schedule
@@ -45,11 +50,6 @@ schedule_roster_description = """
         - `useSlidingWindow`: Whether to use a sliding window for shift assignments
         - `shiftBalance`: Whether to balance the number of shifts between nurses
         - `prioritySetting`: Priority setting for the solver (e.g. "Fairness", "Fairness-leaning", "50/50", "Preference-leaning", "Preference"). Only activated when `shiftBalance` is `True`.
-        - `staffAllocation`: Optional `StaffAllocations` object, which contains the following information:
-            - `seniorStaffAllocation`: Whether to allocate senior staff
-            - `seniorStaffPercentage`: Percentage of senior staff required per shift
-            - `seniorStaffAllocationRefinement`: Whether to refine the senior staff allocation
-            - `seniorStaffAllocationRefinementValue`: Value for refining the senior staff allocation
         - `allowDoubleShift`: Whether to allow double shifts
         - `shiftDetails`: List of shift details rule
             - `shiftId`: Primary key of the shift
