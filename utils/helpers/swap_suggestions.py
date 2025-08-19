@@ -13,11 +13,10 @@ def generate_warning(nurse, settings):
     messages = []
 
     # Calculate shift-based hours
-    shift_duration = settings.shiftDurations
     max_hours = settings.maxWeeklyHours
     preferred_hours = settings.preferredWeeklyHours
 
-    weekly_hours = nurse.shiftsThisWeek * shift_duration
+    weekly_hours = nurse.shiftsThisWeek
 
     # Warn if over max hours
     if weekly_hours > max_hours:
@@ -40,7 +39,6 @@ def generate_warning(nurse, settings):
 
 # process nurse replacement logic
 def preprocess_nurse(nurse, target_date, settings):
-    shift_duration = settings.shiftDurations
     recent_night_window = getattr(
         settings, "recentNightWindowDays", 2
     )  # optional for rest day after night shifts
@@ -57,7 +55,7 @@ def preprocess_nurse(nurse, target_date, settings):
 
     # Check if any shift in the recent night window was a night/overnight shift
     recentNightShift = any(
-        parse_date(s.date) >= recent_night_cutoff and s.shiftTypeId in night_shift_ids
+        parse_date(s.date) >= recent_night_cutoff and s.shiftIds in night_shift_ids
         for s in nurse.shifts
     )
 
@@ -73,9 +71,7 @@ def preprocess_nurse(nurse, target_date, settings):
 def extract_preference_features(pref_data: dict) -> dict:
     shifts = pref_data.get("shifts", [])
 
-    all_shift_ids = [
-        shift_id for day in shifts for shift_id in day.get("shiftTypeId", [])
-    ]
+    all_shift_ids = [shift_id for day in shifts for shift_id in day.get("shiftIds", [])]
 
     total_preferred = len(all_shift_ids)
     unique_shift_types = len(set(all_shift_ids))

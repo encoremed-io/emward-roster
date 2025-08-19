@@ -9,10 +9,12 @@ Suggest replacement candidates or direct swap options for nurses who are taking 
     [
         {
             "nurseId": "N001",
+            "isSenior": false,
+            "isSpecialist": false,
             "targetShift": [
                 {
                     "date": "2025-07-25",
-                    "shiftTypeId": [1, 2]
+                    "shiftIds": ["1", "2"]
                 }
             ]
         }
@@ -21,20 +23,45 @@ Suggest replacement candidates or direct swap options for nurses who are taking 
 
 - `settings` (Object):
     Configuration for swap rules and constraints:
-    - `shiftDurations`: Duration of each shift in hours (e.g. 8)
-    - `minSeniorsPerShift`: Minimum required senior nurses per shift
+    - `minNursesPerShift`: Minimum number of nurses per shift
+
+    - `minSeniorsPerShift`: Minimum number of senior nurses per shift
+    - `minWeeklyHours`: Minimum allowable hours per nurse per week
     - `maxWeeklyHours`: Maximum allowable hours per nurse per week
     - `preferredWeeklyHours`: Target hours per week per nurse
+    - `minWeeklyRest`: Minimum number of rest days per week
+    - `weekendRest`: Whether to ensure that each nurse has a weekend rest
     - `backToBackShift`: Whether to disallow back-to-back shifts
+    - `allowDoubleShift`: Whether to allow double shifts
+    - `shiftBalance`: Whether to balance the number of shifts between nurses
+    - `prioritySetting`: Priority setting for the solver (e.g. "Fairness", "Fairness-leaning", "50/50", "Preference-leaning", "Preference"). Only activated when `shiftBalance` is `True`.
     - Other optional constraints may apply.
 
 - `shifts` (Array):
     Definitions of available shifts:
     ```json
     [
-        { "id": 1, "name": "Morning", "duration": "0700-1700" },
-        { "id": 2, "name": "Noon", "duration": "1200-2100" },
-        { "id": 3, "name": "Overnight", "duration": "1700-0700" }
+        { 
+          "id": 1, 
+          "name": "AM", 
+          "duration": "0700-1400",
+          "staffAllocation": {
+            "seniorStaffAllocation": true,
+            "seniorStaffPercentage": 50,
+            "seniorStaffAllocationRefinement": true,
+            "seniorStaffAllocationRefinementValue": 5
+          }
+        },
+        { 
+          "id": 2, 
+          "name": "PM", 
+          "duration": "1400-2100",
+        },
+        { 
+          "id": 3, 
+          "name": "Night", 
+          "duration": "2100-0700",
+        }
     ]
     ```
 
@@ -44,9 +71,14 @@ Suggest replacement candidates or direct swap options for nurses who are taking 
     [
         {
             "nurseId": "N001",
-            "role": "senior",
+            "isSenior": false,
+            "isSpecialist": false,
             "shifts": [
-                { "date": "2025-07-24", "shiftTypeId": 1 }
+                { 
+                  "id": "1", 
+                  "date": "2025-07-24", 
+                  "shiftIds": ["2"] 
+                }
             ]
         }
     ]

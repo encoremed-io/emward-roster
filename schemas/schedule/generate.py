@@ -123,7 +123,7 @@ class ScheduleRequest(BaseModel):
     maxWeeklyHours: int = Field(default=MAX_WEEKLY_HOURS)
     preferredWeeklyHours: int = Field(default=PREFERRED_WEEKLY_HOURS)
     prefWeeklyHoursHard: bool = False
-    minAcceptableWeeklyHours: int = Field(default=MIN_ACCEPTABLE_WEEKLY_HOURS)
+    minWeeklyHours: int = Field(default=MIN_ACCEPTABLE_WEEKLY_HOURS)
     minWeeklyRest: int = Field(default=MIN_WEEKLY_REST)
     weekendRest: bool = True
     backToBackShift: bool = False

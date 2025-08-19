@@ -1,46 +1,35 @@
 from fastapi import APIRouter, Body
-import pandas as pd
+from datetime import datetime
+from docs.swap.suggestions import swap_suggestions_description
+from schemas.swap.suggestions import SwapSuggestionRequest, SwapCandidate
 from utils.helpers.swap_suggestions import (
-    parse_date,
     generate_warning,
     preprocess_nurse,
 )
-from utils.helpers.swap_suggestions_onnx import run_model_on
-from datetime import datetime, timedelta
-from typing import Dict, List
-from docs.swap.suggestions import swap_suggestions_description
-from schemas.swap.suggestions import SwapSuggestionRequest, SwapCandidate
-from pprint import pprint
+from utils.shift_utils import parse_duration
 
 router = APIRouter(prefix="/swap", tags=["Suggestions"])
 
 
-# get suggestions for swapping nurses shift
 @router.post(
     "/suggestions",
     description=swap_suggestions_description,
     summary="Suggest Swap Candidates",
 )
 def suggest_swap(data: SwapSuggestionRequest = Body(...)):
-    # pprint(data, sort_dicts=False, width=100)
+    # Build lookup map of shiftId → hours
+    shift_hours = {s.id: parse_duration(s.duration) for s in data.shifts}
 
-    # data
-    target_nurses = data.targetNurseId
-    settings = data.settings
-    shift_duration = settings.shiftDurations
-    max_hours = settings.maxWeeklyHours
-    min_seniors = settings.minSeniorsPerShift
-    back_to_back = settings.backToBackShift
-
-    # assign roster
-    roster = data.roster
+    max_hours = data.settings.maxWeeklyHours
+    min_seniors = data.settings.minSeniorsPerShift
+    back_to_back = data.settings.backToBackShift
 
     results = []
 
     # loop through the nurses who are taking leaves
-    for target_entry in target_nurses:
+    for target_entry in data.targetNurseId:
         nurseId = target_entry.nurseId
-        assigned_nurse = next((n for n in roster if n.nurseId == nurseId), None)
+        assigned_nurse = next((n for n in data.roster if n.nurseId == nurseId), None)
 
         # return error if nurse not found
         if not assigned_nurse:
@@ -50,89 +39,76 @@ def suggest_swap(data: SwapSuggestionRequest = Body(...)):
             continue
 
         # get nurse role
-        targetSenior = assigned_nurse.isSenior
+        targetSenior = target_entry.isSenior
 
         # loop through the target shifts
-        for shift in target_entry.targetShift:
-            date = shift.date
+        for target_shift in target_entry.targetShift:
+            date = target_shift.date
 
-            # loop through the shift id
-            for shiftType in shift.shiftTypeId:
-                # Get nurses already assigned to the same date/shift
+            # loop through each shiftTypeId in the list
+            for shiftType in target_shift.shiftIds:
+                # Nurses already assigned to this date/shift
                 same_day_assignments = [
                     n
-                    for n in roster
+                    for n in data.roster
                     for s in n.shifts
-                    if s.date == date and s.shiftTypeId == shiftType
+                    if s.date == date and shiftType in s.shiftIds
                 ]
 
-                # get current seniors
+                # count seniors already assigned
                 current_seniors = sum(1 for n in same_day_assignments if n.isSenior)
 
-                # replace with senior if the min seniors requirement is not met
+                # require senior replacement if not enough seniors
                 must_replace_with_senior = (
                     targetSenior and current_seniors < min_seniors
                 )
 
-                # set rule rigidity
                 strict, fallback = [], []
-
-                # direct swap option
                 directSwap = None
 
                 # loop through roster
-                for nurse in roster:
-
-                    # skip the nurse that is applying leave
+                for nurse in data.roster:
                     if nurse.nurseId == nurseId:
-                        continue
+                        continue  # skip the nurse on leave
 
-                    # check for swap suggestion
-                    for shift in nurse.shifts:
-                        if shift.date == date:
+                    for s in nurse.shifts:
+                        if s.date == date:
                             continue  # Skip if it's the same day as the target
 
-                        # Check if nurse is already working on the target date
-                        if any(s.date == date for s in nurse.shifts):
-                            print(f"Already has shift on {date}")
+                        # nurse already working that day?
+                        if any(date == ns.date for ns in nurse.shifts):
                             continue
 
-                        # Enforce back-to-back restriction
+                        # check back-to-back restriction
                         if not back_to_back:
                             target_dt = datetime.strptime(date, "%Y-%m-%d")
                             if any(
                                 abs(
                                     (
                                         target_dt
-                                        - datetime.strptime(s.date, "%Y-%m-%d")
+                                        - datetime.strptime(ns.date, "%Y-%m-%d")
                                     ).days
                                 )
                                 == 1
-                                for s in nurse.shifts
+                                for ns in nurse.shifts
                             ):
-                                print(
-                                    f"Back-to-back conflict with shift on adjacent day"
-                                )
                                 continue
 
-                        # Optional: Check seniority if required
+                        # seniority required?
                         if must_replace_with_senior and not nurse.isSenior:
-                            print(f"Not senior and senior required")
                             continue
 
-                        # Passed all checks — suggest this as a direct swap
+                        # Passed checks — direct swap candidate
                         directSwap = {
                             "nurseId": nurse.nurseId,
-                            "swapFrom": shift,  # original shift (any type)
+                            "swapFrom": s,
                             "swapTo": {
                                 "date": date,
-                                "shiftTypeId": shiftType,  # target shift needing replacement
+                                "shiftTypeId": shiftType,
                             },
                             "note": (
-                                "Cross-shift swap allowed ({} → {}).".format(
-                                    shift.shiftTypeId, shiftType
-                                )
-                                if shift.shiftTypeId != shiftType
+                                f"Cross-shift swap allowed ({s.shiftIds} → {shiftType})."
+                                if shiftType not in s.shiftIds
                                 else "Same-shift direct swap"
                             ),
                         }
@@ -141,46 +117,48 @@ def suggest_swap(data: SwapSuggestionRequest = Body(...)):
                     if directSwap:
                         break
 
-                    # check if the replacement require senior
+                    # check seniority again for non-direct swaps
                     if must_replace_with_senior and not nurse.isSenior:
                         continue
 
-                    # check if nurse has conflict on the same date shift
-                    has_conflict = any(
-                        s.date == date and s.shiftTypeId == shiftType
-                        for s in nurse.shifts
-                    )
-                    if has_conflict:
+                    # conflict: already working this shift
+                    if any(
+                        ns.date == date and shiftType in ns.shiftIds
+                        for ns in nurse.shifts
+                    ):
                         continue
 
-                    # check for back to back shift
+                    # back-to-back restriction
                     if not back_to_back:
-                        shift_dates = [s.date for s in nurse.shifts]
                         dt = datetime.strptime(date, "%Y-%m-%d")
+                        shift_dates = [ns.date for ns in nurse.shifts]
                         if any(
                             abs((dt - datetime.strptime(d, "%Y-%m-%d")).days) == 1
                             for d in shift_dates
                         ):
                             continue
 
-                    # get the total hours the nurse works
-                    weekly_hours = len(nurse.shifts) * shift_duration
+                    # calculate nurse hours
+                    weekly_hours = sum(
+                        shift_hours.get(str(shiftId), 0)
+                        for ns in nurse.shifts
+                        for shiftId in ns.shiftIds
+                    )
+                    candidate_shift_hours = shift_hours.get(shiftType, 0)
 
-                    # compile the shift details of the nurse
                     processed = preprocess_nurse(
-                        nurse, datetime.strptime(date, "%Y-%m-%d"), settings
+                        nurse, datetime.strptime(date, "%Y-%m-%d"), data.settings
                     )
 
-                    # potential replacement candidate
                     entry = SwapCandidate(
                         nurseId=nurse.nurseId,
                         isSenior=nurse.isSenior,
                         currentHours=weekly_hours,
-                        violatesMaxHours=weekly_hours + shift_duration > max_hours,
-                        message=generate_warning(processed, settings),
+                        violatesMaxHours=weekly_hours + candidate_shift_hours
+                        > max_hours,
+                        message=generate_warning(processed, data.settings),
                     )
 
-                    # append to fallback list if rules being violated
                     if entry.violatesMaxHours:
                         fallback.append(entry)
                     else:
@@ -191,7 +169,6 @@ def suggest_swap(data: SwapSuggestionRequest = Body(...)):
                     "strict" if strict else "fallback" if fallback else "none_available"
                 )
 
-                # append candidates to results
                 results.append(
                     {
                         "originalNurse": nurseId,
@@ -202,5 +179,4 @@ def suggest_swap(data: SwapSuggestionRequest = Body(...)):
                     }
                 )
 
-    # return all candidates suggestions
     return {"results": results}
