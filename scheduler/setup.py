@@ -59,7 +59,6 @@ def setup_model(
     fixed_assignments=None,
     shift_details=None,
     shifts=[],
-    staff_allocation=None,
 ):
     """
     Sets up the scheduling model with necessary data and constraints.
@@ -189,7 +188,6 @@ def setup_model(
         total_days,
         shift_details,
         shifts,
-        staff_allocation,
     )
 
 

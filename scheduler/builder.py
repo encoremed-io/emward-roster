@@ -49,7 +49,6 @@ def build_schedule_model(
     fixed_assignments: Optional[Dict[Tuple[str, int], str]] = None,
     shift_details: Optional[List[ShiftDetails]] = None,
     shifts: List[Shifts] = [],
-    staff_allocation: Optional[StaffAllocations] = None,
     allow_double_shift: bool = False,
     # Uncomment if you want to use AM coverage constraints
     # activate_am_cov: bool = False,
@@ -97,7 +96,6 @@ def build_schedule_model(
         total_days,
         shift_details,
         shifts,
-        staff_allocation,
     ) = setup_model(
         profiles_df,
         preferences_df,
@@ -110,7 +108,6 @@ def build_schedule_model(
         fixed_assignments,
         shift_details,
         shifts,
-        staff_allocation,
     )
 
     (
@@ -163,7 +160,6 @@ def build_schedule_model(
         low_priority_penalty=[],
         shift_details=shift_details or [],
         shifts=shifts or [],
-        staff_allocation=staff_allocation,
         allow_double_shift=allow_double_shift,
         # Uncomment if you want to use AM coverage constraints
         # activate_am_cov=activate_am_cov,

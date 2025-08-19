@@ -75,22 +75,6 @@ class FixedAssignment(BaseModel):
     fixed: str
 
 
-class Shifts(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-    id: str
-    name: str
-    duration: str
-
-
-class ShiftDetails(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-    shiftId: str
-    maxWorkingShift: int
-    restDayEligible: int
-
-
 class StaffAllocations(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -110,6 +94,23 @@ class StaffAllocations(BaseModel):
                 "seniorStaffAllocationRefinementValue is required when seniorStaffAllocationRefinement is True."
             )
         return self
+
+
+class Shifts(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    name: str
+    duration: str
+    staffAllocation: Optional[StaffAllocations] = Field(default=None, exclude=True)
+
+
+class ShiftDetails(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    shiftId: str
+    maxWorkingShift: int
+    restDayEligible: int
 
 
 class ScheduleRequest(BaseModel):

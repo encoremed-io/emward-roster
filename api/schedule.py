@@ -245,7 +245,6 @@ async def generate_schedule(
             priority_setting=request.prioritySetting,
             shift_details=request.shiftDetails,
             shifts=shifts,
-            staff_allocation=request.staffAllocation,
             allow_double_shift=request.allowDoubleShift,
             # Uncomment if you want to use AM coverage constraints
             # fixed_assignments=fixed_idx_dict if fixed_assignments_dict else None,

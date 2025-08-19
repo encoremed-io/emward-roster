@@ -119,9 +119,6 @@ class ScheduleState:
     shift_details: List[Any] = field(default_factory=list)
     """A list of shift details for validation."""
 
-    staff_allocation: Optional[StaffAllocations] = None
-    """A dictionary containing staff allocation details, if applicable."""
-
     allow_double_shift: bool = False
     """A boolean indicating if double shifts are allowed."""
 
