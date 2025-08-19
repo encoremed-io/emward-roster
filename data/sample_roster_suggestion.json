@@ -30,8 +30,6 @@
         }
     ],
     "settings": {
-        "minNursesPerShift": 10,
-        "minSeniorsPerShift": 5,
         "minWeeklyHours": 30,
         "maxWeeklyHours": 40,
         "preferredWeeklyHours": 40,
@@ -47,6 +45,8 @@
             "id": "1",
             "name": "AM",
             "duration": "0700-1400",
+            "minNursesPerShift": 10,
+            "minSeniorsPerShift": 5,
             "staffAllocation": {
                 "seniorStaffAllocation": true,
                 "seniorStaffPercentage": 50,
@@ -57,12 +57,16 @@
         {
             "id": "2",
             "name": "PM",
-            "duration": "1400-2100"
+            "duration": "1400-2100",
+            "minNursesPerShift": 10,
+            "minSeniorsPerShift": 5
         },
         {
             "id": "3",
             "name": "Night",
-            "duration": "2100-0700"
+            "duration": "2100-0700",
+            "minNursesPerShift": 10,
+            "minSeniorsPerShift": 5
         }
     ],
     "roster": [

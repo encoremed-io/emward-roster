@@ -23,10 +23,8 @@ Suggest replacement candidates or direct swap options for nurses who are taking 
 
 - `settings` (Object):
     Configuration for swap rules and constraints:
-    - `minNursesPerShift`: Minimum number of nurses per shift
-
-    - `minSeniorsPerShift`: Minimum number of senior nurses per shift
     - `minWeeklyHours`: Minimum allowable hours per nurse per week
+
     - `maxWeeklyHours`: Maximum allowable hours per nurse per week
     - `preferredWeeklyHours`: Target hours per week per nurse
     - `minWeeklyRest`: Minimum number of rest days per week
@@ -45,6 +43,8 @@ Suggest replacement candidates or direct swap options for nurses who are taking 
           "id": 1, 
           "name": "AM", 
           "duration": "0700-1400",
+          "minNursesPerShift": 10,
+          "minSeniorsPerShift": 5,
           "staffAllocation": {
             "seniorStaffAllocation": true,
             "seniorStaffPercentage": 50,
@@ -56,11 +56,15 @@ Suggest replacement candidates or direct swap options for nurses who are taking 
           "id": 2, 
           "name": "PM", 
           "duration": "1400-2100",
+          "minNursesPerShift": 10,
+          "minSeniorsPerShift": 5
         },
         { 
           "id": 3, 
           "name": "Night", 
           "duration": "2100-0700",
+          "minNursesPerShift": 10,
+          "minSeniorsPerShift": 5
         }
     ]
     ```
