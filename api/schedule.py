@@ -236,7 +236,7 @@ async def generate_schedule(
             max_weekly_hours=request.maxWeeklyHours,
             preferred_weekly_hours=request.preferredWeeklyHours,
             pref_weekly_hours_hard=request.prefWeeklyHoursHard,
-            min_acceptable_weekly_hours=request.minAcceptableWeeklyHours,
+            min_acceptable_weekly_hours=request.minWeeklyHours,
             min_weekly_rest=request.minWeeklyRest,
             weekend_rest=request.weekendRest,
             back_to_back_shift=request.backToBackShift,
