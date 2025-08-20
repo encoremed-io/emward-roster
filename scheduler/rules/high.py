@@ -185,17 +185,23 @@ def pref_min_weekly_hours_rule(model, state: ScheduleState):
 
 
 def min_staffing_per_shift_rule(model, state: ScheduleState):
-    """Ensure that each shift has a minimum number of nurses and seniors."""
+    """Ensure that each shift meets its minNursesPerShift and minSeniorsPerShift requirements."""
     for d in range(-state.prev_days, state.num_days):
-        for s in range(state.shift_types):
-            model.Add(
-                sum(state.work[n, d, s] for n in state.nurse_names)
-                >= state.min_nurses_per_shift
-            ).OnlyEnforceIf(state.hard_rules["Min nurses"].flag)
-            model.Add(
-                sum(state.work[n, d, s] for n in state.senior_names)
-                >= state.min_seniors_per_shift
-            ).OnlyEnforceIf(state.hard_rules["Min seniors"].flag)
+        for s, shift in enumerate(state.shifts):
+            min_nurses = getattr(shift, "minNursesPerShift", 0)
+            min_seniors = getattr(shift, "minSeniorsPerShift", 0)
+
+            # Minimum nurses (any role)
+            if min_nurses > 0:
+                model.Add(
+                    sum(state.work[n, d, s] for n in state.nurse_names) >= min_nurses
+                ).OnlyEnforceIf(state.hard_rules["Min nurses"].flag)
+
+            # Minimum senior nurses
+            if min_seniors > 0:
+                model.Add(
+                    sum(state.work[n, d, s] for n in state.senior_names) >= min_seniors
+                ).OnlyEnforceIf(state.hard_rules["Min seniors"].flag)
 
 
 def min_rest_per_week_rule(model, state: ScheduleState):
@@ -422,7 +428,9 @@ def staff_allocation_rule(model, state: ScheduleState):
     Enforce senior staff percentage allocation per shift.
     Falls back if main target is not met.
     """
-
+    # TEMPORARY
+    min_nurses_per_shift = 1
+    min_seniors_per_shift = 0
     # state.shifts should be your list of Shifts models
     if not state.shifts:
         logging.info("No shifts configured with staffAllocation.")
@@ -446,12 +454,12 @@ def staff_allocation_rule(model, state: ScheduleState):
 
             # Required counts
             base_required = max(
-                state.min_seniors_per_shift,
-                math.ceil(state.min_nurses_per_shift * base_percent / 100),
+                min_seniors_per_shift,
+                math.ceil(min_nurses_per_shift * base_percent / 100),
             )
             fallback_required = max(
-                state.min_seniors_per_shift,
-                math.ceil(state.min_nurses_per_shift * fallback_percent / 100),
+                min_seniors_per_shift,
+                math.ceil(min_nurses_per_shift * fallback_percent / 100),
             )
 
             # Flags
