@@ -8,6 +8,7 @@ from utils.helpers.swap_suggestions import (
     preprocess_nurse,
     build_back_to_back_rules,
     parse_date,
+    is_weekend,
 )
 from utils.shift_utils import parse_duration
 
@@ -97,15 +98,6 @@ def optimize_candidates(
     if not solver:
         raise RuntimeError("Solver not available")
 
-    # helper
-    def count_nurses_on_shift(roster, date, shift_id):
-        return sum(
-            1
-            for nurse in roster
-            for s in nurse.shifts
-            if s.date == date and shift_id in s.shiftIds
-        )
-
     nurses = [n for n in data.roster if n.nurseId != exclude_nurse]
     x = {n.nurseId: solver.BoolVar(n.nurseId) for n in nurses}
 
@@ -117,16 +109,6 @@ def optimize_candidates(
     target_dt = datetime.strptime(target_date, "%Y-%m-%d")
     week_start = target_dt - timedelta(days=6)
     back_to_back_rules = build_back_to_back_rules(data.shifts)
-
-    # enforce min nurses per shift (hard constraint)
-    # current_count = count_nurses_on_shift(data.roster, target_date, shiftType)
-    # min_required = getattr(data.settings, "minNursesPerShift", 1)
-
-    # if current_count <= min_required:
-    #     raise ValueError(
-    #         f"Cannot swap: shift {shiftType} on {target_date} "
-    #         f"already at minimum coverage ({current_count} ≤ {min_required})."
-    #     )
 
     for nurse in nurses:
         # calculate hours in rolling 7-day window
@@ -144,8 +126,6 @@ def optimize_candidates(
         # direct swap handling
         direct_shift = next((s for s in nurse.shifts if s.date == target_date), None)
         if direct_shift and shiftType in direct_shift.shiftIds:
-            # if current_count <= min_required:
-            #     continue
 
             # if valid, record direct swap
             swap_from_names = ", ".join(
@@ -186,6 +166,18 @@ def optimize_candidates(
         # preprocess
         processed = preprocess_nurse(nurse, target_dt, data.settings)
 
+        # Find the most recent past weekend shift before the target date
+        last_weekend = None
+        last_weekend_day = None
+
+        for s in nurse.shifts:
+            s_date = parse_date(s.date)
+            is_wknd, day_idx = is_weekend(s.date)
+            if is_wknd and s_date < target_dt:
+                if not last_weekend or s_date > last_weekend:
+                    last_weekend = s_date
+                    last_weekend_day = day_idx
+
         # run warning generator
         warning_messages, warn_penalty = generate_warning(
             processed,
@@ -195,6 +187,8 @@ def optimize_candidates(
             candidate_shift_hours=candidate_shift_hours,
             must_replace_with_senior=must_replace_with_senior,
             back_to_back_rules=back_to_back_rules,
+            target_date=target_dt,
+            worked_weekends=(last_weekend, last_weekend_day),
         )
 
         penalty = warn_penalty

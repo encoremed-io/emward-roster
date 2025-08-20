@@ -14,6 +14,18 @@ def parse_time(tstr):
     return int(tstr[:2]) * 60 + int(tstr[2:])
 
 
+# check for weekend
+def is_weekend(date_str: str) -> tuple[bool, int | None]:
+    """
+    Return (is_weekend, weekday_index).
+    weekday_index: 5 = Saturday, 6 = Sunday, None otherwise.
+    """
+    dt = datetime.strptime(date_str, "%Y-%m-%d")
+    if dt.weekday() in (5, 6):
+        return True, dt.weekday()
+    return False, None
+
+
 # validation check with warning messages
 def generate_warning(
     nurse: SwapCandidateFeatures,
@@ -23,6 +35,8 @@ def generate_warning(
     candidate_shift_hours,
     must_replace_with_senior,
     back_to_back_rules,
+    target_date=None,
+    worked_weekends=None,
 ):
     messages = []
     penalty = 0
@@ -40,6 +54,7 @@ def generate_warning(
             "already_working": 1000,
             "back_to_back": 500,
             "recent_night": 200,
+            "weekend_rest": 800,
         },
     )
 
@@ -97,6 +112,15 @@ def generate_warning(
             elif rtype == "overnight":
                 messages.append(f"Back-to-back risk: {from_id} → {to_id} (overnight).")
                 penalty += penalties["back_to_back"]
+
+    # weekend rest logic
+    if getattr(settings, "weekendRest", False) and target_date and worked_weekends:
+        last_weekend_date, last_weekend_day = worked_weekends
+        if target_date.weekday() == last_weekend_day:  # same Sat/Sun
+            messages.append(
+                f"{nurse.nurseId} worked last weekend ({last_weekend_date.strftime('%Y-%m-%d')}) → must rest this {target_date.strftime('%A')}."
+            )
+            penalty += penalties["weekend_rest"]
 
     return messages, penalty
 

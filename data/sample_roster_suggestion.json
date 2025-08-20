@@ -35,9 +35,7 @@
         "preferredWeeklyHours": 40,
         "minWeeklyRest": 1,
         "weekendRest": false,
-        "backToBackShift": false,
-        "shiftBalance": false,
-        "prioritySetting": "preference-leaning"
+        "backToBackShift": false
     },
     "shifts": [
         {
