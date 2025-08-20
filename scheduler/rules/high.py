@@ -1,4 +1,3 @@
-from core import state
 from core.state import ScheduleState
 from utils.constants import *
 import statistics
@@ -6,7 +5,9 @@ import logging
 import math
 from utils.shift_utils import make_shift_index
 import re
-import sys
+from utils.helpers.swap_suggestions import (
+    build_back_to_back_rules,
+)
 
 """
 This module contains the high priority rules for the nurse scheduling problem.
@@ -235,23 +236,54 @@ def weekend_rest_rule(model, state: ScheduleState):
                 )
 
 
+# old b2b rule
+# def no_back_to_back_shift_rule(model, state: ScheduleState):
+#     """Ensure that nurses do not work back-to-back shifts on the same day if state.back_to_back_shift is True."""
+#     if not state.back_to_back_shift:
+#         for n in state.nurse_names:
+#             for d in range(-state.prev_days, state.num_days):
+#                 # No back-to-back shifts on the same day (double shifts)
+#                 model.Add(state.work[n, d, 0] + state.work[n, d, 1] <= 1).OnlyEnforceIf(
+#                     state.hard_rules["No b2b"].flag
+#                 )  # AM + PM on same day
+#                 model.Add(state.work[n, d, 1] + state.work[n, d, 2] <= 1).OnlyEnforceIf(
+#                     state.hard_rules["No b2b"].flag
+#                 )  # PM + Night on same day
+#                 if d > 0 or (d == 0 and state.prev_days > 0):
+#                     # Night shift on day d cannot be followed by AM shift on day d+1
+#                     model.AddImplication(
+#                         state.work[n, d - 1, 2], state.work[n, d, 0].Not()
+#                     ).OnlyEnforceIf(state.hard_rules["No b2b"].flag)
+
+
 def no_back_to_back_shift_rule(model, state: ScheduleState):
-    """Ensure that nurses do not work back-to-back shifts on the same day if state.back_to_back_shift is True."""
+    """
+    Ensure that nurses do not work back-to-back shifts (same-day or overnight)
+    if state.back_to_back_shift is True.
+    Uses dynamically built rules from shift durations.
+    """
     if not state.back_to_back_shift:
-        for n in state.nurse_names:
-            for d in range(-state.prev_days, state.num_days):
-                # No back-to-back shifts on the same day (double shifts)
-                model.Add(state.work[n, d, 0] + state.work[n, d, 1] <= 1).OnlyEnforceIf(
-                    state.hard_rules["No b2b"].flag
-                )  # AM + PM on same day
-                model.Add(state.work[n, d, 1] + state.work[n, d, 2] <= 1).OnlyEnforceIf(
-                    state.hard_rules["No b2b"].flag
-                )  # PM + Night on same day
-                if d > 0 or (d == 0 and state.prev_days > 0):
-                    # Night shift on day d cannot be followed by AM shift on day d+1
-                    model.AddImplication(
-                        state.work[n, d - 1, 2], state.work[n, d, 0].Not()
+        return
+
+    # Build rules dynamically (same-day adjacency, overnight adjacency)
+    rules = build_back_to_back_rules(state.shifts)
+
+    for n in state.nurse_names:
+        for d in range(-state.prev_days, state.num_days):
+            for from_id, to_id, rtype in rules:
+                if rtype == "same_day":
+                    # Can't work two consecutive shifts on the same day
+                    model.Add(
+                        state.work[n, d, from_id] + state.work[n, d, to_id] <= 1
                     ).OnlyEnforceIf(state.hard_rules["No b2b"].flag)
+
+                elif rtype == "overnight":
+                    # Can't finish an overnight then start an early shift next day
+                    if d > 0 or (d == 0 and state.prev_days > 0):
+                        model.AddImplication(
+                            state.work[n, d - 1, from_id],
+                            state.work[n, d, to_id].Not(),
+                        ).OnlyEnforceIf(state.hard_rules["No b2b"].flag)
 
 
 # def am_coverage_rule(model, state: ScheduleState):

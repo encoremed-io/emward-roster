@@ -52,7 +52,7 @@ class Settings(BaseModel):
     minWeeklyRest: int
     weekendRest: bool
     backToBackShift: bool
-    allowDoubleShift: bool
+    # allowDoubleShift: bool
     shiftBalance: bool
     prioritySetting: str
 
@@ -69,7 +69,8 @@ class SwapCandidate(BaseModel):
     isSenior: bool
     currentHours: int
     violatesMaxHours: bool
-    message: str
+    messages: List[str] = []
+    penaltyScore: int
 
 
 class SwapCandidateFeatures(BaseModel):

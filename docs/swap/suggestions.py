@@ -30,9 +30,6 @@ Suggest replacement candidates or direct swap options for nurses who are taking 
     - `minWeeklyRest`: Minimum number of rest days per week
     - `weekendRest`: Whether to ensure that each nurse has a weekend rest
     - `backToBackShift`: Whether to disallow back-to-back shifts
-    - `allowDoubleShift`: Whether to allow double shifts
-    - `shiftBalance`: Whether to balance the number of shifts between nurses
-    - `prioritySetting`: Priority setting for the solver (e.g. "Fairness", "Fairness-leaning", "50/50", "Preference-leaning", "Preference"). Only activated when `shiftBalance` is `True`.
     - Other optional constraints may apply.
 
 - `shifts` (Array):

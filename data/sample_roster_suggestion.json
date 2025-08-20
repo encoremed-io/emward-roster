@@ -36,7 +36,6 @@
         "minWeeklyRest": 1,
         "weekendRest": false,
         "backToBackShift": false,
-        "allowDoubleShift": false,
         "shiftBalance": false,
         "prioritySetting": "preference-leaning"
     },

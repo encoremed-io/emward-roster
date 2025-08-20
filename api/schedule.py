@@ -265,48 +265,42 @@ async def generate_schedule(
         #     "metrics": metrics,
         # }
 
-        # ==== Build ID <-> Name maps from profiles_df ====
-        id_to_name = dict(zip(profiles_df["id"].astype(str), profiles_df["name"]))
+        # Normalize UUIDs to lowercase for mapping
+        id_to_name = dict(
+            zip(profiles_df["id"].astype(str).str.lower(), profiles_df["name"])
+        )
+
+        # Name → ID mapping (strip spaces, uppercase names for consistency, UUIDs also lowercase)
         name_to_id = dict(
-            zip(profiles_df["name"].str.strip().str.upper(), profiles_df["id"])
+            zip(
+                profiles_df["name"].str.strip().str.upper(),
+                profiles_df["id"].astype(str).str.lower(),
+            )
         )
 
-        # If schedule index contains IDs, map them to names
-        schedule.index = schedule.index.map(lambda x: id_to_name.get(str(x), str(x)))
-        schedule.index.name = "name"  # make sure it's called 'name'
+        # ---- schedule ----
+        sched_df = schedule.reset_index().rename(columns={"index": "id"})
+        sched_df["id"] = sched_df["id"].astype(str).str.lower()
 
-        # Reset index so 'name' becomes a column
-        sched_df = schedule.reset_index()
+        sched_df.insert(1, "name", sched_df["id"].map(id_to_name).fillna("UNKNOWN"))
 
-        # Add the ID column based on the name
-        sched_df.insert(
-            0,
-            "id",
-            sched_df["name"]
-            .str.strip()
-            .str.upper()
-            .map(name_to_id)
-            .fillna("")
-            .astype(str),
-        )
-
-        # ==== summary: keep original casing ====
+        # ---- summary ----
         sum_df = summary.reset_index()
-        if "Nurse" in sum_df.columns:
-            sum_df = sum_df.rename(columns={"Nurse": "name"})
-        elif "index" in sum_df.columns:
-            sum_df = sum_df.rename(columns={"index": "name"})
 
-        sum_df.insert(
-            0,
-            "id",
-            sum_df["name"]
-            .str.strip()
-            .str.upper()
-            .map(name_to_id)
-            .fillna("")
-            .astype(str),
-        )
+        # If "Nurse" column exists, rename it
+        if "Nurse" in sum_df.columns:
+            sum_df = sum_df.rename(columns={"Nurse": "id"})
+        elif "index" in sum_df.columns and "id" not in sum_df.columns:
+            sum_df = sum_df.rename(columns={"index": "id"})
+        elif "name" in sum_df.columns and "id" not in sum_df.columns:
+            # shift UUIDs from 'name' → 'id'
+            sum_df = sum_df.rename(columns={"name": "id"})
+
+        # Normalize IDs for mapping
+        sum_df["id"] = sum_df["id"].astype(str).str.lower()
+
+        # Add proper human name column
+        sum_df.insert(1, "name", sum_df["id"].map(id_to_name).fillna("UNKNOWN"))
 
         # ==== final response ====
         response = {
