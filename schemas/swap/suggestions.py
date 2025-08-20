@@ -53,8 +53,8 @@ class Settings(BaseModel):
     weekendRest: bool
     backToBackShift: bool
     # allowDoubleShift: bool
-    shiftBalance: bool
-    prioritySetting: str
+    # shiftBalance: bool
+    # prioritySetting: str
 
 
 class Nurse(BaseModel):

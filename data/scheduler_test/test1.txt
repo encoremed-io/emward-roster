@@ -87,7 +87,9 @@
     { 
 	    "id": "1", 
       "name": "AM", 
-      "duration": "0700-1400", 
+      "duration": "0700-1400",
+      "minNursesPerShift": 4,
+      "minSeniorsPerShift": 1,
       "staffAllocation": {
         "seniorStaffAllocation": true,
         "seniorStaffPercentage": 50,
@@ -98,19 +100,21 @@
     { 
 	    "id": "2", 
       "name": "PM", 
-      "duration": "1400-2100"
+      "duration": "1400-2100",
+      "minNursesPerShift": 4,
+      "minSeniorsPerShift": 1
     },
     { 
 	    "id": "3", 
       "name": "Night", 
-      "duration": "2100-0700"
+      "duration": "2100-0700",
+      "minNursesPerShift": 4,
+      "minSeniorsPerShift": 1
     }
   ],
   "request": {
     "startDate": "2025-07-23",
     "numDays": 14,
-    "minNursesPerShift": 4,
-    "minSeniorsPerShift": 1,
     "minWeeklyHours": 30,
     "maxWeeklyHours": 42,
     "preferredWeeklyHours": 41,
