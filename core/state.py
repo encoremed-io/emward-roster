@@ -67,10 +67,6 @@ class ScheduleState:
     """A list of integers representing the duration of each shift type."""
     start_date: date
     """The date of the first day of the scheduling period."""
-    min_nurses_per_shift: int
-    """The minimum number of nurses required per shift."""
-    min_seniors_per_shift: int
-    """The minimum number of senior nurses required per shift."""
     max_weekly_hours: int
     """The maximum number of hours a nurse can work in a week."""
     preferred_weekly_hours: int

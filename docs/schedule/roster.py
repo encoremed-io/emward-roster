@@ -43,6 +43,8 @@ The API endpoint takes the following parameters:
 
     - `name`: Name of the shift
     - `duration`: Duration of the shift
+    - `minNursesPerShift`: Minimum number of nurses per shift
+    - `minSeniorsPerShift`: Minimum number of senior nurses per shift
     - `staffAllocation`: Optional `StaffAllocations` object, which contains the following information:
         - `seniorStaffAllocation`: Whether to allocate senior staff
 
@@ -55,8 +57,6 @@ The API endpoint takes the following parameters:
     - `startDate`: Start date of the schedule
 
     - `numDays`: Number of days in the schedule
-    - `minNursesPerShift`: Minimum number of nurses per shift
-    - `minSeniorsPerShift`: Minimum number of senior nurses per shift
     - `minWeeklyHours`: Minimum weekly hours for each nurse
     - `maxWeeklyHours`: Maximum weekly hours for each nurse
     - `preferredWeeklyHours`: Preferred weekly hours for each nurse
@@ -68,7 +68,7 @@ The API endpoint takes the following parameters:
     - `allowDoubleShift`: Whether to allow double shifts
     - `shiftDetails`: List of shift details rule
         - `shiftId`: Primary key of the shift
-        
+
         - `maxWorkingShift`: Max of the working shift type continuously
         - `restDayEligible`: Number of rests day after continuously working shift type
 

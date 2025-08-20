@@ -13,11 +13,9 @@ from scheduler.builder import build_schedule_model
 from utils.validate import validate_data
 from utils.constants import *
 from exceptions.custom_errors import *
-import re
 import traceback
 from docs.schedule.roster import schedule_roster_description
 from utils.helpers.schedule_roster import standardize_profile_columns, normalize_names
-from pprint import pprint
 from utils.shift_utils import parse_duration
 
 router = APIRouter(prefix="/schedule", tags=["Roster"])
@@ -192,37 +190,6 @@ async def generate_schedule(
         dur_minutes = [h * 60 for h in shiftDurations]
 
         # Call scheduling function
-
-        # # Log the inputs for debugging
-        # logging.info("=== API inputs for build_schedule_model ===")
-        # logging.info("profiles_df.shape:         %s", profiles_df.shape)
-        # logging.info("profiles_df.columns:       %s", profiles_df.columns.tolist())
-        # logging.info("prefs_df.shape:            %s, index sample: %r",
-        #              prefs_df.shape, list(prefs_df.index)[:5])
-        # logging.info("prefs_df.columns sample:   %r", list(prefs_df.columns)[:5])
-        # logging.info("training_df.shape:         %s, index sample: %r",
-        #              training_df.shape, list(training_df.index)[:5])
-        # logging.info("training_df.columns sample:%r", list(training_df.columns)[:5])
-        # logging.info("prev_schedule_df.shape:    %s, index sample: %r",
-        #              prev_schedule_df.shape, list(prev_schedule_df.index)[:5])
-        # logging.info("startDate:                %s", request.startDate)
-        # logging.info("numDays:                  %d", request.numDays)
-        # logging.info("shiftDurations (hrs):     %r", request.shiftDurations)
-        # logging.info("shiftDurations (mins):    %r", dur_minutes)
-        # logging.info("minNursesPerShift:      %d", request.minNursesPerShift)
-        # logging.info("minSeniorsPerShift:     %d", request.minSeniorsPerShift)
-        # logging.info("maxWeeklyHours (hrs):    %d", request.maxWeeklyHours)
-        # logging.info("maxWeeklyHours (mins):   %d", request.maxWeeklyHours * 60)
-        # logging.info("preferredWeeklyHours (hrs):  %d", request.preferredWeeklyHours)
-        # logging.info("preferredWeeklyHours (mins): %d", request.preferredWeeklyHours * 60)
-        # logging.info("minAcceptableWeeklyHours (hrs):  %d", request.minAcceptableWeeklyHours)
-        # logging.info("minAcceptableWeeklyHours (mins): %d", request.minAcceptableWeeklyHours * 60)
-        # logging.info("weekendRest:              %s", request.weekendRest)
-        # logging.info("backToBackShift:        %s", request.backToBackShift)
-        # logging.info("useSlidingWindow:        %s", request.useSlidingWindow)
-        # logging.info("shiftBalance:             %s", request.shiftBalance)
-        # logging.info("fixed_assignments count:   %s", len(fixed_assignments_dict or {}))
-
         schedule, summary, violations, metrics = build_schedule_model(
             profiles_df=profiles_df,
             preferences_df=prefs_df,
@@ -231,8 +198,6 @@ async def generate_schedule(
             start_date=pd.Timestamp(request.startDate),
             num_days=request.numDays,
             shift_durations=dur_minutes,
-            min_nurses_per_shift=request.minNursesPerShift,
-            min_seniors_per_shift=request.minSeniorsPerShift,
             max_weekly_hours=request.maxWeeklyHours,
             preferred_weekly_hours=request.preferredWeeklyHours,
             pref_weekly_hours_hard=request.prefWeeklyHoursHard,
@@ -257,56 +222,34 @@ async def generate_schedule(
             # am_senior_relax_step=request.am_senior_relax_step,
         )
 
-        # Convert DataFrames to JSON-friendly format
-        # response = {
-        #     "schedule": schedule.reset_index().to_dict(orient="records"),
-        #     "summary": summary.reset_index().to_dict(orient="records"),
-        #     "violations": violations,
-        #     "metrics": metrics,
-        # }
-
-        # ==== Build ID <-> Name maps from profiles_df ====
-        id_to_name = dict(zip(profiles_df["id"].astype(str), profiles_df["name"]))
-        name_to_id = dict(
-            zip(profiles_df["name"].str.strip().str.upper(), profiles_df["id"])
+        # Normalize UUIDs to lowercase for mapping
+        id_to_name = dict(
+            zip(profiles_df["id"].astype(str).str.lower(), profiles_df["name"])
         )
 
-        # If schedule index contains IDs, map them to names
-        schedule.index = schedule.index.map(lambda x: id_to_name.get(str(x), str(x)))
-        schedule.index.name = "name"  # make sure it's called 'name'
+        # ---- schedule ----
+        sched_df = schedule.reset_index().rename(columns={"index": "id"})
+        sched_df["id"] = sched_df["id"].astype(str).str.lower()
 
-        # Reset index so 'name' becomes a column
-        sched_df = schedule.reset_index()
+        sched_df.insert(1, "name", sched_df["id"].map(id_to_name).fillna("UNKNOWN"))
 
-        # Add the ID column based on the name
-        sched_df.insert(
-            0,
-            "id",
-            sched_df["name"]
-            .str.strip()
-            .str.upper()
-            .map(name_to_id)
-            .fillna("")
-            .astype(str),
-        )
-
-        # ==== summary: keep original casing ====
+        # ---- summary ----
         sum_df = summary.reset_index()
-        if "Nurse" in sum_df.columns:
-            sum_df = sum_df.rename(columns={"Nurse": "name"})
-        elif "index" in sum_df.columns:
-            sum_df = sum_df.rename(columns={"index": "name"})
 
-        sum_df.insert(
-            0,
-            "id",
-            sum_df["name"]
-            .str.strip()
-            .str.upper()
-            .map(name_to_id)
-            .fillna("")
-            .astype(str),
-        )
+        # If "Nurse" column exists, rename it
+        if "Nurse" in sum_df.columns:
+            sum_df = sum_df.rename(columns={"Nurse": "id"})
+        elif "index" in sum_df.columns and "id" not in sum_df.columns:
+            sum_df = sum_df.rename(columns={"index": "id"})
+        elif "name" in sum_df.columns and "id" not in sum_df.columns:
+            # shift UUIDs from 'name' → 'id'
+            sum_df = sum_df.rename(columns={"name": "id"})
+
+        # Normalize IDs for mapping
+        sum_df["id"] = sum_df["id"].astype(str).str.lower()
+
+        # Add proper human name column
+        sum_df.insert(1, "name", sum_df["id"].map(id_to_name).fillna("UNKNOWN"))
 
         # ==== final response ====
         response = {

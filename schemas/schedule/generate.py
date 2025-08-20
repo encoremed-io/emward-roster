@@ -101,7 +101,9 @@ class Shifts(BaseModel):
 
     id: str
     name: str
-    duration: str
+    duration: str = Field(exclude=True)
+    minNursesPerShift: int = Field(default=MIN_NURSES_PER_SHIFT, exclude=True)
+    minSeniorsPerShift: int = Field(default=MIN_SENIORS_PER_SHIFT, exclude=True)
     staffAllocation: Optional[StaffAllocations] = Field(default=None, exclude=True)
 
 
@@ -118,8 +120,6 @@ class ScheduleRequest(BaseModel):
 
     startDate: date
     numDays: int
-    minNursesPerShift: int = Field(default=MIN_NURSES_PER_SHIFT)
-    minSeniorsPerShift: int = Field(default=MIN_SENIORS_PER_SHIFT)
     maxWeeklyHours: int = Field(default=MAX_WEEKLY_HOURS)
     preferredWeeklyHours: int = Field(default=PREFERRED_WEEKLY_HOURS)
     prefWeeklyHoursHard: bool = False

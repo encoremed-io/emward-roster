@@ -1,10 +1,13 @@
 from fastapi import APIRouter, Body
-from datetime import datetime
+from datetime import datetime, timedelta
 from docs.swap.suggestions import swap_suggestions_description
 from schemas.swap.suggestions import SwapSuggestionRequest, SwapCandidate
+from ortools.linear_solver import pywraplp
 from utils.helpers.swap_suggestions import (
     generate_warning,
     preprocess_nurse,
+    build_back_to_back_rules,
+    parse_date,
 )
 from utils.shift_utils import parse_duration
 
@@ -17,37 +20,25 @@ router = APIRouter(prefix="/swap", tags=["Suggestions"])
     summary="Suggest Swap Candidates",
 )
 def suggest_swap(data: SwapSuggestionRequest = Body(...)):
-    # Build lookup map of shiftId → hours
     shift_hours = {s.id: parse_duration(s.duration) for s in data.shifts}
-
-    max_hours = data.settings.maxWeeklyHours
-    min_seniors = data.settings.minSeniorsPerShift
-    back_to_back = data.settings.backToBackShift
-
+    shift_names = {s.id: s.name for s in data.shifts}
     results = []
 
-    # loop through the nurses who are taking leaves
     for target_entry in data.targetNurseId:
         nurseId = target_entry.nurseId
         assigned_nurse = next((n for n in data.roster if n.nurseId == nurseId), None)
 
-        # return error if nurse not found
         if not assigned_nurse:
             results.append(
                 {"originalNurse": nurseId, "error": "Nurse not found in roster."}
             )
             continue
 
-        # get nurse role
-        targetSenior = target_entry.isSenior
-
-        # loop through the target shifts
         for target_shift in target_entry.targetShift:
             date = target_shift.date
 
-            # loop through each shiftTypeId in the list
             for shiftType in target_shift.shiftIds:
-                # Nurses already assigned to this date/shift
+                # Count seniors already assigned
                 same_day_assignments = [
                     n
                     for n in data.roster
@@ -55,128 +46,182 @@ def suggest_swap(data: SwapSuggestionRequest = Body(...)):
                     if s.date == date and shiftType in s.shiftIds
                 ]
 
-                # count seniors already assigned
                 current_seniors = sum(1 for n in same_day_assignments if n.isSenior)
 
-                # require senior replacement if not enough seniors
-                must_replace_with_senior = (
-                    targetSenior and current_seniors < min_seniors
+                shift_config = next(
+                    (s for s in data.shifts if str(s.id) == str(shiftType)), None
                 )
 
-                strict, fallback = [], []
-                directSwap = None
+                # get min nurses and seniors by shifts
+                min_seniors_required = (
+                    shift_config.minSeniorsPerShift if shift_config else 0
+                )
 
-                # loop through roster
-                for nurse in data.roster:
-                    if nurse.nurseId == nurseId:
-                        continue  # skip the nurse on leave
+                # enforce per-shift minimums
+                must_replace_with_senior = current_seniors < min_seniors_required
 
-                    for s in nurse.shifts:
-                        if s.date == date:
-                            continue  # Skip if it's the same day as the target
-
-                        # nurse already working that day?
-                        if any(date == ns.date for ns in nurse.shifts):
-                            continue
-
-                        # check back-to-back restriction
-                        if not back_to_back:
-                            target_dt = datetime.strptime(date, "%Y-%m-%d")
-                            if any(
-                                abs(
-                                    (
-                                        target_dt
-                                        - datetime.strptime(ns.date, "%Y-%m-%d")
-                                    ).days
-                                )
-                                == 1
-                                for ns in nurse.shifts
-                            ):
-                                continue
-
-                        # seniority required?
-                        if must_replace_with_senior and not nurse.isSenior:
-                            continue
-
-                        # Passed checks — direct swap candidate
-                        directSwap = {
-                            "nurseId": nurse.nurseId,
-                            "swapFrom": s,
-                            "swapTo": {
-                                "date": date,
-                                "shiftTypeId": shiftType,
-                            },
-                            "note": (
-                                f"Cross-shift swap allowed ({s.shiftIds} → {shiftType})."
-                                if shiftType not in s.shiftIds
-                                else "Same-shift direct swap"
-                            ),
-                        }
-                        break
-
-                    if directSwap:
-                        break
-
-                    # check seniority again for non-direct swaps
-                    if must_replace_with_senior and not nurse.isSenior:
-                        continue
-
-                    # conflict: already working this shift
-                    if any(
-                        ns.date == date and shiftType in ns.shiftIds
-                        for ns in nurse.shifts
-                    ):
-                        continue
-
-                    # back-to-back restriction
-                    if not back_to_back:
-                        dt = datetime.strptime(date, "%Y-%m-%d")
-                        shift_dates = [ns.date for ns in nurse.shifts]
-                        if any(
-                            abs((dt - datetime.strptime(d, "%Y-%m-%d")).days) == 1
-                            for d in shift_dates
-                        ):
-                            continue
-
-                    # calculate nurse hours
-                    weekly_hours = sum(
-                        shift_hours.get(str(shiftId), 0)
-                        for ns in nurse.shifts
-                        for shiftId in ns.shiftIds
-                    )
-                    candidate_shift_hours = shift_hours.get(shiftType, 0)
-
-                    processed = preprocess_nurse(
-                        nurse, datetime.strptime(date, "%Y-%m-%d"), data.settings
-                    )
-
-                    entry = SwapCandidate(
-                        nurseId=nurse.nurseId,
-                        isSenior=nurse.isSenior,
-                        currentHours=weekly_hours,
-                        violatesMaxHours=weekly_hours + candidate_shift_hours
-                        > max_hours,
-                        message=generate_warning(processed, data.settings),
-                    )
-
-                    if entry.violatesMaxHours:
-                        fallback.append(entry)
-                    else:
-                        strict.append(entry)
-
-                candidates = strict if strict else fallback
-                filterLevel = (
-                    "strict" if strict else "fallback" if fallback else "none_available"
+                # Use solver with direct swap candidates
+                result = optimize_candidates(
+                    data,
+                    date,
+                    shiftType,
+                    shift_hours,
+                    nurseId,
+                    must_replace_with_senior,
+                    shift_names,
                 )
 
                 results.append(
                     {
                         "originalNurse": nurseId,
-                        "replacementFor": {"date": date, "shiftTypeId": shiftType},
-                        "filterLevel": filterLevel,
-                        "topCandidates": candidates,
-                        "directSwapCandidate": directSwap,
+                        "replacementFor": {"date": date, "shiftId": shiftType},
+                        "filterLevel": "optimized",
+                        "topCandidates": result["candidates"][:3],
+                        "directSwapCandidate": result["bestDirectSwap"],
                     }
                 )
 
     return {"results": results}
+
+
+def optimize_candidates(
+    data,
+    target_date,
+    shiftType,
+    shift_hours,
+    exclude_nurse,
+    must_replace_with_senior,
+    shift_names,
+):
+    solver = pywraplp.Solver.CreateSolver("SCIP")
+    if not solver:
+        raise RuntimeError("Solver not available")
+
+    # helper
+    def count_nurses_on_shift(roster, date, shift_id):
+        return sum(
+            1
+            for nurse in roster
+            for s in nurse.shifts
+            if s.date == date and shift_id in s.shiftIds
+        )
+
+    nurses = [n for n in data.roster if n.nurseId != exclude_nurse]
+    x = {n.nurseId: solver.BoolVar(n.nurseId) for n in nurses}
+
+    objective = solver.Objective()
+
+    best_direct_swap = None
+    scored = []
+
+    target_dt = datetime.strptime(target_date, "%Y-%m-%d")
+    week_start = target_dt - timedelta(days=6)
+    back_to_back_rules = build_back_to_back_rules(data.shifts)
+
+    # enforce min nurses per shift (hard constraint)
+    # current_count = count_nurses_on_shift(data.roster, target_date, shiftType)
+    # min_required = getattr(data.settings, "minNursesPerShift", 1)
+
+    # if current_count <= min_required:
+    #     raise ValueError(
+    #         f"Cannot swap: shift {shiftType} on {target_date} "
+    #         f"already at minimum coverage ({current_count} ≤ {min_required})."
+    #     )
+
+    for nurse in nurses:
+        # calculate hours in rolling 7-day window
+        weekly_hours = sum(
+            shift_hours.get(str(shiftId), 0)
+            for s in nurse.shifts
+            if week_start <= parse_date(s.date) <= target_dt
+            for shiftId in s.shiftIds
+        )
+
+        worked_days = {s.date for s in nurse.shifts}
+        weekly_rest_days = 7 - len(worked_days)
+        candidate_shift_hours = shift_hours.get(shiftType, 0)
+
+        # direct swap handling
+        direct_shift = next((s for s in nurse.shifts if s.date == target_date), None)
+        if direct_shift and shiftType in direct_shift.shiftIds:
+            # if current_count <= min_required:
+            #     continue
+
+            # if valid, record direct swap
+            swap_from_names = ", ".join(
+                shift_names.get(sid, sid) for sid in direct_shift.shiftIds
+            )
+            swap_to_name = shift_names.get(shiftType, shiftType)
+
+            best_direct_swap = {
+                "nurseId": nurse.nurseId,
+                "swapFrom": {
+                    "date": direct_shift.date,
+                    "shiftIds": direct_shift.shiftIds,
+                },
+                "swapTo": {"date": target_date, "shiftId": shiftType},
+                "note": (
+                    f"Cross-shift swap allowed ({swap_from_names} → {swap_to_name})."
+                    if shiftType not in direct_shift.shiftIds
+                    else f"Same-shift direct swap ({swap_to_name})"
+                ),
+            }
+
+            # direct swaps always lowest penalty
+            scored.append(
+                (
+                    -1,
+                    SwapCandidate(
+                        nurseId=nurse.nurseId,
+                        isSenior=nurse.isSenior,
+                        currentHours=weekly_hours,
+                        violatesMaxHours=weekly_hours > data.settings.maxWeeklyHours,
+                        messages=[best_direct_swap["note"]],
+                        penaltyScore=-1,
+                    ),
+                )
+            )
+            continue  # skip normal warning calc
+
+        # preprocess
+        processed = preprocess_nurse(nurse, target_dt, data.settings)
+
+        # run warning generator
+        warning_messages, warn_penalty = generate_warning(
+            processed,
+            data.settings,
+            weekly_hours=weekly_hours,
+            weekly_rest_days=weekly_rest_days,
+            candidate_shift_hours=candidate_shift_hours,
+            must_replace_with_senior=must_replace_with_senior,
+            back_to_back_rules=back_to_back_rules,
+        )
+
+        penalty = warn_penalty
+
+        # attach penalty to solver variable
+        objective.SetCoefficient(x[nurse.nurseId], penalty)
+
+        scored.append(
+            (
+                penalty,
+                SwapCandidate(
+                    nurseId=nurse.nurseId,
+                    isSenior=nurse.isSenior,
+                    currentHours=weekly_hours,
+                    violatesMaxHours=weekly_hours > data.settings.maxWeeklyHours,
+                    messages=warning_messages if warning_messages != "OK" else [],
+                    penaltyScore=penalty,
+                ),
+            )
+        )
+
+    # if you want solver to pick exactly one candidate:
+    solver.Add(sum(x.values()) == 1)
+    objective.SetMinimization()
+    solver.Solve()
+
+    scored.sort(key=lambda x: x[0])
+    candidates = [entry for _, entry in scored]
+
+    return {"candidates": candidates, "bestDirectSwap": best_direct_swap}

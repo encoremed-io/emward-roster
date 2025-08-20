@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime, timezone
+from schemas.schedule.generate import StaffAllocations
 
 
 def now_ts() -> int:
@@ -27,6 +28,9 @@ class ShiftEntry(BaseModel):
     id: str
     name: str
     duration: str
+    minNursesPerShift: int
+    minSeniorsPerShift: int
+    staffAllocation: Optional[StaffAllocations] = Field(default=None, exclude=True)
 
 
 class ShiftInfo(BaseModel):
@@ -42,15 +46,13 @@ class TargetNurse(BaseModel):
 
 
 class Settings(BaseModel):
-    minNursesPerShift: int
-    minSeniorsPerShift: int
     minWeeklyHours: int
     maxWeeklyHours: int
     preferredWeeklyHours: int
     minWeeklyRest: int
     weekendRest: bool
     backToBackShift: bool
-    allowDoubleShift: bool
+    # allowDoubleShift: bool
     shiftBalance: bool
     prioritySetting: str
 
@@ -67,7 +69,8 @@ class SwapCandidate(BaseModel):
     isSenior: bool
     currentHours: int
     violatesMaxHours: bool
-    message: str
+    messages: List[str] = []
+    penaltyScore: int
 
 
 class SwapCandidateFeatures(BaseModel):
