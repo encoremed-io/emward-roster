@@ -452,16 +452,15 @@ def extract_leaves_info(leave_df, date_start, nurse_ids, num_days):
 
     for _, row in leave_df.iterrows():
         nurse_id = str(row.get("id", "")).lower()
-
         if nurse_id not in leaves_by_nurse:
             continue
 
         day_idx = (pd.to_datetime(row["date"]) - pd.to_datetime(date_start)).days
         if 0 <= day_idx < num_days:
             leaves_by_nurse[nurse_id][day_idx] = {
-                "id": str(row.get("leaveid") or row.get("leaveId")),
+                "id": str(row.get("leaveid") or row.get("leaveId") or ""),
                 "type": "LEAVE",
-                "name": row.get("leavename") or row.get("leaveName"),
+                "name": (row.get("leavename") or row.get("leaveName") or "").upper(),
             }
 
     return leaves_by_nurse
