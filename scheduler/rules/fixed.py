@@ -221,6 +221,9 @@ def define_leaves_rule(model, state: ScheduleState):
     """
     Prevent nurses from being scheduled on their leave days.
     """
+    if not state.leaves_by_nurse:
+        return  # no leaves at all
+
     for n in state.nurse_names:  # should be nurse IDs (str)
         leave_days = state.leaves_by_nurse.get(n, {})
         for d in leave_days.keys():  # each leave day index
