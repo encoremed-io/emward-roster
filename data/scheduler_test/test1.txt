@@ -52,14 +52,7 @@
       "timestamp": "2025-07-10T09:00:00"
     }
   ],
-  "trainingShifts": [
-    {
-      "id": "1",
-      "nurse": "Nurse1",
-      "date": "2025-07-23",
-      "shiftId": "1"
-    }
-  ],
+  "trainingShifts": [],
   "previousSchedule": [
     {
       "id": "1",
@@ -81,6 +74,22 @@
           "shift": "Night"
         }
       ]
+    }
+  ],
+  "leaves": [
+    {
+      "id": "1",
+      "nurse": "Nurse1",
+      "date": "2025-07-23",
+      "leaveId": "1",
+      "leaveName": "AL"
+    },
+    {
+      "id": "1",
+      "nurse": "Nurse1",
+      "date": "2025-07-24",
+      "leaveId": "2",
+      "leaveName": "MC"
     }
   ],
   "shifts": [

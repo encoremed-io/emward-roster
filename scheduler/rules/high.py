@@ -56,49 +56,38 @@ def max_weekly_hours_rule(model, state: ScheduleState):
     """
     Enforce maximum weekly working hours for each nurse.
 
-    This rule ensures that nurses do not exceed the maximum allowed weekly hours. It accounts for leave
-    (MC, AL, EL days) by deducting average shift hours from the maximum. The rule can apply over a
-    sliding 7-day window or at fixed weekly boundaries.
-
-    If `state.use_sliding_window` is True, the rule checks every 7-day sliding window within the
-    scheduling period. Otherwise, it checks each complete week of days.
-
-    Maximum weekly hours can be reduced by the number of MC/AL/EL days.
+    This rule ensures that nurses do not exceed the maximum allowed weekly hours.
+    It accounts for leave days (from state.leaves_by_nurse) by deducting average
+    shift hours from the maximum. The rule can apply over a sliding 7-day window
+    or at fixed weekly boundaries.
     """
-    # convert to minutes
     max_weekly_minutes = state.max_weekly_hours * 60
     avg_minutes = statistics.mean(state.shift_durations)
+    num_weeks = (state.num_days + DAYS_PER_WEEK - 1) // DAYS_PER_WEEK
 
     for n in state.nurse_names:
-        mc = state.mc_sets[n]
-        al = state.al_sets[n]
-        el = state.el_sets[n]
-        num_weeks = (state.num_days + DAYS_PER_WEEK - 1) // DAYS_PER_WEEK
+        leave_days = set(state.leaves_by_nurse.get(n, {}).keys())
 
-        # Precompute daily-hours expressions if using sliding window
         if state.use_sliding_window:
             minutes_by_day = [
                 sum(
                     state.work[n, d, s] * int(state.shift_durations[s])
                     for s in range(state.shift_types)
                 )
-                for d in range(-state.prev_days, state.num_days)
+                for d in range(state.num_days)
             ]
 
             for d in range(DAYS_PER_WEEK - 1, state.num_days):
-                # Maximum working hours every 7 day sliding window (exp: Day 0 to Day 6, then Day 1 to Day 7, etc.)
                 window = range(d - (DAYS_PER_WEEK - 1), d + 1)
                 window_minutes = sum(minutes_by_day[i] for i in window)
-                leave_count = sum(1 for i in window if i in mc or i in al or i in el)
-                adj = (
-                    leave_count * avg_minutes
-                )  # MC/AL/EL hours deducted from max/pref/min hours
-                eff_max_minutes = max(0, max_weekly_minutes - adj)  # <= 42 - x
+                leave_count = sum(1 for i in window if i in leave_days)
+                adj = leave_count * avg_minutes
+                eff_max_minutes = max(0, max_weekly_minutes - adj)
+
                 model.Add(window_minutes <= eff_max_minutes).OnlyEnforceIf(
                     state.hard_rules["Max weekly hours"].flag
                 )
 
-        # Full-week minimum at each 7-day boundary (e.g. Day 6, then Day 13, etc.)
         else:
             for w in range(num_weeks):
                 days = range(
@@ -106,7 +95,7 @@ def max_weekly_hours_rule(model, state: ScheduleState):
                 )
 
                 if len(days) < DAYS_PER_WEEK:
-                    continue  # Skip incomplete weeks for extra days if not using sliding window
+                    continue
 
                 weekly_minutes = sum(
                     state.work[n, d, s] * int(state.shift_durations[s])
@@ -114,15 +103,13 @@ def max_weekly_hours_rule(model, state: ScheduleState):
                     for s in range(state.shift_types)
                 )
 
-                leave_count = sum(1 for i in days if i in mc or i in al or i in el)
+                leave_count = sum(1 for i in days if i in leave_days)
                 adj = leave_count * avg_minutes
                 eff_max_minutes = max(0, max_weekly_minutes - adj)
 
-                if not state.use_sliding_window:
-                    eff_max_minutes = max(0, max_weekly_minutes - adj)  # <= 42 - x
-                    model.Add(weekly_minutes <= eff_max_minutes).OnlyEnforceIf(
-                        state.hard_rules["Max weekly hours"].flag
-                    )
+                model.Add(weekly_minutes <= eff_max_minutes).OnlyEnforceIf(
+                    state.hard_rules["Max weekly hours"].flag
+                )
 
 
 def pref_min_weekly_hours_rule(model, state: ScheduleState):
@@ -134,17 +121,17 @@ def pref_min_weekly_hours_rule(model, state: ScheduleState):
     If soft, a penalty is incurred for each week that the nurse is assigned less than the preferred weekly hours.
     The penalty is proportional to the number of hours below the preferred weekly hours.
 
-    Preferred weekly hours and minimum acceptable weekly hours can be reduced by the number of MC/AL/EL days.
+    Preferred weekly hours and minimum acceptable weekly hours are reduced by the number of leave days
+    (from state.leaves_by_nurse), assuming each leave deducts one average shift’s worth of hours.
     """
     preferred_weekly_minutes = state.preferred_weekly_hours * 60
     min_acceptable_weekly_minutes = state.min_acceptable_weekly_hours * 60
     avg_minutes = statistics.mean(state.shift_durations)
 
+    num_weeks = (state.num_days + DAYS_PER_WEEK - 1) // DAYS_PER_WEEK
+
     for n in state.nurse_names:
-        mc = state.mc_sets[n]
-        al = state.al_sets[n]
-        el = state.el_sets[n]
-        num_weeks = (state.num_days + DAYS_PER_WEEK - 1) // DAYS_PER_WEEK
+        leave_days = set(state.leaves_by_nurse.get(n, {}).keys())
 
         # Full-week minimum at each 7-day boundary (e.g. Day 6, then Day 13, etc.)
         for w in range(num_weeks):
@@ -161,12 +148,13 @@ def pref_min_weekly_hours_rule(model, state: ScheduleState):
                 for s in range(state.shift_types)
             )
 
-            leave_count = sum(1 for i in days if i in mc or i in al or i in el)
+            leave_count = sum(1 for d in days if d in leave_days)
             adj = leave_count * avg_minutes
-            eff_min_minutes = max(0, min_acceptable_weekly_minutes - adj)  # >= 30 - x
-            eff_pref_minutes = max(0, preferred_weekly_minutes - adj)  # >= 40 - x
+            eff_min_minutes = max(0, min_acceptable_weekly_minutes - adj)
+            eff_pref_minutes = max(0, preferred_weekly_minutes - adj)
 
             if state.pref_weekly_hours_hard:
+                # Enforce preferred weekly hours as hard constraint
                 model.Add(weekly_minutes >= eff_pref_minutes).OnlyEnforceIf(
                     state.hard_rules["Pref weekly hours"].flag
                 )
@@ -181,6 +169,7 @@ def pref_min_weekly_hours_rule(model, state: ScheduleState):
                         state.hard_rules["Min weekly hours"].flag
                     )
 
+                    # Soft penalty if nurse does not meet preferred hours
                     state.high_priority_penalty.append(flag.Not() * PREF_HOURS_PENALTY)
 
 

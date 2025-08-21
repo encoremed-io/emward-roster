@@ -31,6 +31,7 @@ def build_schedule_model(
     preferences_df: pd.DataFrame,
     training_shifts_df: pd.DataFrame,
     prev_schedule_df: pd.DataFrame,
+    leaves_df: pd.DataFrame,
     start_date: pd.Timestamp | dt_date,
     num_days: int,
     shift_durations: List[int] = SHIFT_DURATIONS,
@@ -65,6 +66,7 @@ def build_schedule_model(
     validate_data(profiles_df, preferences_df, "profiles", "preferences", False)
     validate_data(profiles_df, training_shifts_df, "profiles", "training shifts", False)
     validate_data(profiles_df, prev_schedule_df, "profiles", "previous schedule", False)
+    validate_data(profiles_df, leaves_df, "profiles", "leaves", False)
 
     # === Model setup ===
     logger.info("📋 Building model...")
@@ -83,10 +85,6 @@ def build_schedule_model(
         training_shifts,
         training_by_nurse,
         fixed_assignments,
-        mc_sets,
-        al_sets,
-        el_sets,
-        days_with_el,
         weekend_pairs,
         shift_types,
         work,
@@ -94,14 +92,15 @@ def build_schedule_model(
         total_days,
         shift_details,
         shifts,
+        leaves_by_nurse,
     ) = setup_model(
         profiles_df,
         preferences_df,
         training_shifts_df,
         prev_schedule_df,
+        leaves_df,
         start_date,
         num_days,
-        SHIFT_LABELS,
         NO_WORK_LABELS,
         fixed_assignments,
         shift_details,
@@ -123,10 +122,10 @@ def build_schedule_model(
         double_shift_nurses=double_shift_nurses,
         shift_str_to_idx=shift_str_to_idx,
         previous_schedule=clean_prev_sched,
-        fixed_assignments=fixed_assignments,
-        mc_sets=mc_sets,
-        al_sets=al_sets,
-        el_sets=el_sets,
+        fixed_assignments={},
+        mc_sets={},
+        al_sets={},
+        el_sets={},
         weekend_pairs=weekend_pairs,
         prefs_by_nurse=prefs_by_nurse,
         training_by_nurse=training_by_nurse,
@@ -150,13 +149,14 @@ def build_schedule_model(
         shift_imbalance_penalty=shift_imbalance_penalty,
         shift_imbalance_threshold=shift_imbalance_threshold,
         hard_rules=hard_rules,
-        days_with_el=days_with_el,
+        days_with_el=set(),
         total_satisfied={},
         high_priority_penalty=[],
         low_priority_penalty=[],
         shift_details=shift_details or [],
         shifts=shifts or [],
         allow_double_shift=allow_double_shift,
+        leaves_by_nurse=leaves_by_nurse,
         # Uncomment if you want to use AM coverage constraints
         # activate_am_cov=activate_am_cov,
         # am_coverage_min_percent=am_coverage_min_percent,
@@ -171,8 +171,9 @@ def build_schedule_model(
     # Fixed rules
     cm.add_rule(previous_schedule_rules)
     cm.add_rule(handle_fixed_assignments)
-    cm.add_rule(leave_rules)
+    # cm.add_rule(leave_rules)
     cm.add_rule(training_shift_rules)
+    cm.add_rule(define_leaves_rule)
 
     # High priority rules
     cm.add_rule(double_shift_rule)  # Handle double shifts for eligible nurses

@@ -1,7 +1,7 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional
 from datetime import datetime, timezone
-from schemas.schedule.generate import StaffAllocations
+from schemas.schedule.generate import StaffAllocations, NurseLeave
 
 
 def now_ts() -> int:
@@ -57,11 +57,20 @@ class Settings(BaseModel):
     # prioritySetting: str
 
 
+class NurseLeaveSwap(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    name: str
+    date: str
+
+
 class Nurse(BaseModel):
     nurseId: str
     isSenior: bool
     isSpecialist: bool
     shifts: List[ShiftAssignment]
+    leaves: List[NurseLeaveSwap]
 
 
 class SwapCandidate(BaseModel):

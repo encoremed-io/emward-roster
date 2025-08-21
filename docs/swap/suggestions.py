@@ -80,6 +80,13 @@ Suggest replacement candidates or direct swap options for nurses who are taking 
                   "date": "2025-07-24", 
                   "shiftIds": ["2"] 
                 }
+            ],
+            "leaves": [
+                {
+                  "id": "1",
+                  "name": "AL",
+                  "date": "2025-07-23"
+                }
             ]
         }
     ]
