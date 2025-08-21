@@ -132,8 +132,6 @@ def setup_model(
         shuffled_nurse_names,
         num_days,
     )
-    print("[leaves_by_nurse]\n", leaves_by_nurse)
-    # days_with_el = get_days_with_el(el_sets)
 
     if prev_schedule_df is None or prev_schedule_df.empty:
         prev_days = 0
