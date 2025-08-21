@@ -48,34 +48,6 @@
             "title": "Title",
             "yearsExperience": 0,
             "doubleShift": false
-        },
-        {
-            "id": "781339b0-73aa-40c5-8ebd-84c285fe0b85",
-            "name": "Nurse 1",
-            "title": "",
-            "yearsExperience": 0,
-            "doubleShift": false
-        },
-        {
-            "id": "17303ed2-1f16-41b4-a56a-0250b56cdb2a",
-            "name": "Nurse 2",
-            "title": "",
-            "yearsExperience": 0,
-            "doubleShift": false
-        },
-        {
-            "id": "822143e3-e169-4b55-9926-61cc4a41cedd",
-            "name": "Nurse 4",
-            "title": "Sr.",
-            "yearsExperience": 0,
-            "doubleShift": false
-        },
-        {
-            "id": "29c37c74-22a1-4c91-b3c3-811a74aa89e2",
-            "name": "Nurse 3",
-            "title": "Sr.",
-            "yearsExperience": 0,
-            "doubleShift": false
         }
     ],
     "preferences": [],
@@ -115,7 +87,22 @@
             "minSeniorsPerShift": 0
         }
     ],
-    "leaves": [],
+    "leaves": [
+        {
+            "id": "19e3f48b-d39c-435e-b6ad-1a593ec01bf4",
+            "nurse": "Nurse1",
+            "date": "2025-07-23",
+            "leaveId": "1",
+            "leaveName": "AL"
+        },
+        {
+            "id": "19e3f48b-d39c-435e-b6ad-1a593ec01bf4",
+            "nurse": "Nurse1",
+            "date": "2025-07-24",
+            "leaveId": "2",
+            "leaveName": "MC"
+        }
+    ],
     "request": {
         "startDate": "2025-08-25",
         "numDays": 7,

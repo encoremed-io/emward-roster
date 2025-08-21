@@ -224,8 +224,10 @@ def define_leaves_rule(model, state: ScheduleState):
     if not state.leaves_by_nurse:
         return  # no leaves at all
 
-    for n in state.nurse_names:  # should be nurse IDs (str)
-        leave_days = state.leaves_by_nurse.get(n, {})
+    for n in state.nurse_names:
+        n_key = str(n).lower()  # normalize same as extract_leaves_info
+        leave_days = state.leaves_by_nurse.get(n_key, {})
+
         for d in leave_days.keys():  # each leave day index
             for s in range(state.shift_types):  # loop over all shifts that day
                 model.Add(state.work[n, d, s] == 0)

@@ -309,8 +309,6 @@ def get_training_shifts(
 
     training_shifts: Dict[str, Dict[int, int]] = {str(i): {} for i in nurse_ids}
 
-    # print("[code]", training_shifts_df)
-
     # Normalize columns
     if "id" in training_shifts_df.columns:
         training_shifts_df["id"] = training_shifts_df["id"].astype(str).str.strip()
@@ -443,27 +441,26 @@ def extract_leaves_info(leave_df, date_start, nurse_ids, num_days):
     """
     Build a dict: leaves_by_nurse[nurseId][day_idx] = full leave object
     """
-    leaves_by_nurse = {str(n): {} for n in nurse_ids}
+    nurse_ids = [str(n).lower() for n in nurse_ids]
+    leaves_by_nurse = {n: {} for n in nurse_ids}
 
     if leave_df is None or leave_df.empty:
         return leaves_by_nurse
 
-    required_cols = {"id", "date"}
-    if not required_cols.issubset(leave_df.columns):
-        # Missing required columns → nothing to extract
+    if "date" not in leave_df.columns:
         return leaves_by_nurse
 
     for _, row in leave_df.iterrows():
-        nurse_id = str(row["id"])  # use uuid/int ID
+        nurse_id = str(row.get("id", "")).lower()
         if nurse_id not in leaves_by_nurse:
             continue
 
         day_idx = (pd.to_datetime(row["date"]) - pd.to_datetime(date_start)).days
         if 0 <= day_idx < num_days:
             leaves_by_nurse[nurse_id][day_idx] = {
-                "id": str(row.get("leaveid") or row.get("leaveId")),
+                "id": str(row.get("leaveid") or row.get("leaveId") or ""),
                 "type": "LEAVE",
-                "name": row.get("leavename") or row.get("leaveName"),
+                "name": (row.get("leavename") or row.get("leaveName") or "").upper(),
             }
 
     return leaves_by_nurse
