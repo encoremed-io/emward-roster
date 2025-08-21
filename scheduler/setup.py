@@ -10,6 +10,7 @@ from utils.shift_utils import (
     make_shift_index,
     extract_prefs_info,
     extract_leave_days,
+    extract_leaves_info,
     normalize_fixed_assignments,
     make_weekend_pairs,
     get_days_with_el,
@@ -52,9 +53,9 @@ def setup_model(
     preferences_df,
     training_shifts_df,
     prev_schedule_df,
+    leaves_df,
     start_date,
     num_days,
-    shift_labels,
     no_work_labels,
     fixed_assignments=None,
     shift_details=None,
@@ -106,10 +107,6 @@ def setup_model(
         start_date
     )  # Normalize start date to a standard date format
 
-    fixed_assignments = normalize_fixed_assignments(
-        fixed_assignments, set(shuffled_nurse_names), num_days
-    )
-
     training_shifts, training_by_nurse = extract_training_shifts_info(
         training_shifts_df,
         date_start,
@@ -117,7 +114,6 @@ def setup_model(
         num_days,
         shifts,
         no_work_labels,
-        fixed_assignments,
     )
 
     shift_preferences, prefs_by_nurse = extract_prefs_info(
@@ -128,18 +124,16 @@ def setup_model(
         shifts,
         no_work_labels,
         training_by_nurse,
-        fixed_assignments,
     )
 
-    mc_sets, al_sets, el_sets = extract_leave_days(
-        preferences_df,
-        clean_prev_sched,
-        shuffled_nurse_names,
+    leaves_by_nurse = extract_leaves_info(
+        leaves_df,
         date_start,
+        shuffled_nurse_names,
         num_days,
-        fixed_assignments,
     )
-    days_with_el = get_days_with_el(el_sets)
+    print("[leaves_by_nurse]\n", leaves_by_nurse)
+    # days_with_el = get_days_with_el(el_sets)
 
     if prev_schedule_df is None or prev_schedule_df.empty:
         prev_days = 0
@@ -177,10 +171,6 @@ def setup_model(
         training_shifts,
         training_by_nurse,
         fixed_assignments,
-        mc_sets,
-        al_sets,
-        el_sets,
-        days_with_el,
         weekend_pairs,
         shift_types,
         work,
@@ -188,6 +178,7 @@ def setup_model(
         total_days,
         shift_details,
         shifts,
+        leaves_by_nurse,
     )
 
 

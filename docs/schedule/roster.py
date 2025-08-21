@@ -38,6 +38,14 @@ The API endpoint takes the following parameters:
         - `shiftId`: Shift id
         - `shift`: Name of the shift
 
+- `leaves`: List of `NurseLeave` objects, which contain the following information: (Optional)
+    - `id`: Primary key of the nurse
+
+    - `nurse`: Name of the nurse
+    - `date`: Date of the leave
+    - `leaveId`: Leave id
+    - `leaveName`: Leave name
+
 - `shifts`: List of `Shifts` objects, which contain the following information:
     - `id`: Primary key of the shift
 

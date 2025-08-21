@@ -57,6 +57,7 @@ def make_shift_index(shifts) -> Dict[str, int]:
 def get_mc_days(
     preferences_df: pd.DataFrame,
     prev_sched_df: pd.DataFrame,
+    leaves_df: pd.DataFrame,
     start_date: Union[pd.Timestamp, dt_date],
     nurse_names: List[str],
     active_days: int,
@@ -98,6 +99,7 @@ def get_mc_days(
 def get_al_days(
     preferences_df: pd.DataFrame,
     prev_sched_df: pd.DataFrame,
+    leaves_df: pd.DataFrame,
     start_date: Union[pd.Timestamp, dt_date],
     nurse_names: List[str],
     active_days: int,
@@ -304,6 +306,7 @@ def get_training_shifts(
     """
     date_start = normalise_date(start_date)
     shifts_str_to_idx = make_shift_index(shift_labels)
+
     training_shifts: Dict[str, Dict[int, int]] = {str(i): {} for i in nurse_ids}
 
     # print("[code]", training_shifts_df)
@@ -409,7 +412,13 @@ def get_el_days(fixed_assignments, nurse_names):
 
 
 def extract_leave_days(
-    preferences_df, prev_sched_df, nurse_names, start_date, num_days, fixed_assignments
+    preferences_df,
+    prev_sched_df,
+    leaves_df,
+    nurse_names,
+    start_date,
+    num_days,
+    fixed_assignments,
 ):
     """
     Extracts leave information from profiles and preferences DataFrames, considering previous schedule and fixed assignments, if any.
@@ -417,10 +426,10 @@ def extract_leave_days(
     Returns mc_sets, al_sets, el_sets
     """
     mc_days = get_mc_days(
-        preferences_df, prev_sched_df, start_date, nurse_names, num_days
+        preferences_df, prev_sched_df, leaves_df, start_date, nurse_names, num_days
     )
     al_days = get_al_days(
-        preferences_df, prev_sched_df, start_date, nurse_names, num_days
+        preferences_df, prev_sched_df, leaves_df, start_date, nurse_names, num_days
     )
 
     mc_sets = {n: mc_days.get(n, set()) for n in nurse_names}
@@ -428,6 +437,28 @@ def extract_leave_days(
     el_sets = get_el_days(fixed_assignments, nurse_names)
 
     return mc_sets, al_sets, el_sets
+
+
+def extract_leaves_info(leave_df, date_start, nurse_ids, num_days):
+    """
+    Build a dict: leaves_by_nurse[nurseId][day_idx] = full leave object
+    """
+    leaves_by_nurse = {str(n): {} for n in nurse_ids}
+
+    for _, row in leave_df.iterrows():
+        nurse_id = str(row["id"])  # use uuid/int ID
+        if nurse_id not in leaves_by_nurse:
+            continue
+
+        day_idx = (pd.to_datetime(row["date"]) - pd.to_datetime(date_start)).days
+        if 0 <= day_idx < num_days:
+            leaves_by_nurse[nurse_id][day_idx] = {
+                "id": str(row.get("leaveid") or row.get("leaveId")),
+                "type": "LEAVE",
+                "name": row.get("leavename") or row.get("leaveName"),
+            }
+
+    return leaves_by_nurse
 
 
 def get_days_with_el(el_sets):

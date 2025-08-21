@@ -3,6 +3,7 @@ from schemas.schedule.generate import (
     NursePreference,
     NurseTraining,
     PrevSchedule,
+    NurseLeave,
     ScheduleRequest,
     Shifts,
 )
@@ -33,6 +34,7 @@ async def generate_schedule(
     preferences: List[NursePreference],
     trainingShifts: List[NurseTraining],
     previousSchedule: List[PrevSchedule],
+    leaves: List[NurseLeave],
     shifts: List[Shifts],
     request: ScheduleRequest,
 ):
@@ -154,6 +156,42 @@ async def generate_schedule(
             prev_schedule_df = pd.DataFrame(index=profiles_df["id"].astype(str))
             prev_schedule_df.index.name = "id"
 
+        # Handle leaves
+        if leaves:
+            raw_leave = pd.DataFrame([l.model_dump() for l in leaves])
+
+            # Normalize nurse names if column exists
+            if "nurse" in raw_leave.columns:
+                raw_leave["nurse"] = normalize_names(raw_leave["nurse"])
+
+            # Normalize IDs if column exists
+            if "id" in raw_leave.columns:
+                raw_leave["id"] = raw_leave["id"].astype(str)
+
+            if "leaveId" not in raw_leave.columns:
+                raw_leave["leaveId"] = None
+
+            # Pivot with id as index if available, else fallback to nurse
+            if "id" in raw_leave.columns:
+
+                leaves_df = raw_leave.drop_duplicates(
+                    subset=["id", "date"], keep="first"
+                )[["id", "nurse", "date", "leaveId", "leaveName"]]
+
+                leaves_df = leaves_df.rename(columns={"nurse": "name"})
+
+            else:
+                leaves_df = raw_train.drop_duplicates(
+                    subset=["nurse", "date"], keep="first"
+                )[["nurse", "date", "leaveId", "leaveName"]].rename(
+                    columns={"nurse": "name"}
+                )
+
+        else:
+            # Empty leaves_df with same structure as prefs_df
+            leaves_df = pd.DataFrame(index=prefs_df.index)
+            leaves_df.insert(0, "name", prefs_df["name"])
+
         validate_data(
             profiles_df,
             pref_df,
@@ -166,24 +204,13 @@ async def generate_schedule(
         validate_data(
             profiles_df, prev_schedule_df, "profiles", "previous schedule", False
         )
-
-        # Handle fixed assignments
-        fixed_assignments_dict = None
-        if request.fixedAssignments:
-            # build a dict keyed by (nurse, date)
-            fixed_assignments_dict = {
-                (fa.nurse, fa.date): fa.fixed for fa in request.fixedAssignments
-            }
-            # now convert dates to day‐indices
-            fixed_idx_dict = {}
-            for (nurse, dt), shift in fixed_assignments_dict.items():
-                idx = (pd.Timestamp(dt) - pd.Timestamp(request.startDate)).days
-                if idx < 0 or idx >= request.numDays:
-                    raise HTTPException(
-                        400,
-                        f"Fixed assignment for {nurse} on {dt} is outside the scheduling window",
-                    )
-                fixed_idx_dict[(nurse, idx)] = shift
+        validate_data(
+            profiles_df,
+            leaves_df,
+            "profiles",
+            "leaves",
+            False,
+        )
 
         # Convert hours→minutes so the CP‑SAT model sees minutes everywhere
         shiftDurations = [parse_duration(s.duration) for s in shifts]
@@ -195,6 +222,7 @@ async def generate_schedule(
             preferences_df=prefs_df,
             training_shifts_df=training_df,
             prev_schedule_df=prev_schedule_df,
+            leaves_df=leaves_df,
             start_date=pd.Timestamp(request.startDate),
             num_days=request.numDays,
             shift_durations=dur_minutes,

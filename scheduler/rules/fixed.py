@@ -214,3 +214,15 @@ def previous_schedule_rules(model, state: ScheduleState):
                 raise ValueError(
                     f"Unknown entry in previous schedule '{label}' for nurse {nurse_id} on {col}"
                 )
+
+
+# define leaves
+def define_leaves_rule(model, state: ScheduleState):
+    """
+    Prevent nurses from being scheduled on their leave days.
+    """
+    for n in state.nurse_names:  # should be nurse IDs (str)
+        leave_days = state.leaves_by_nurse.get(n, {})
+        for d in leave_days.keys():  # each leave day index
+            for s in range(state.shift_types):  # loop over all shifts that day
+                model.Add(state.work[n, d, s] == 0)

@@ -21,8 +21,8 @@ router = APIRouter(prefix="/swap", tags=["Suggestions"])
     summary="Suggest Swap Candidates",
 )
 def suggest_swap(data: SwapSuggestionRequest = Body(...)):
-    shift_hours = {s.id: parse_duration(s.duration) for s in data.shifts}
-    shift_names = {s.id: s.name for s in data.shifts}
+    shift_hours = {str(s.id): parse_duration(s.duration) for s in data.shifts}
+    shift_names = {str(s.id): s.name for s in data.shifts}
     results = []
 
     for target_entry in data.targetNurseId:
@@ -111,6 +111,25 @@ def optimize_candidates(
     back_to_back_rules = build_back_to_back_rules(data.shifts)
 
     for nurse in nurses:
+        # skip if nurse has a leave on the target date
+        if any(parse_date(l.date) == target_dt for l in nurse.leaves):
+            scored.append(
+                (
+                    9999,  # very high penalty, ensures they won't be selected
+                    SwapCandidate(
+                        nurseId=nurse.nurseId,
+                        isSenior=nurse.isSenior,
+                        currentHours=0,
+                        violatesMaxHours=False,
+                        messages=[
+                            f"Nurse on leave ({[l.name for l in nurse.leaves if parse_date(l.date) == target_dt][0]})"
+                        ],
+                        penaltyScore=9999,
+                    ),
+                )
+            )
+            continue
+
         # calculate hours in rolling 7-day window
         weekly_hours = sum(
             shift_hours.get(str(shiftId), 0)
@@ -125,6 +144,7 @@ def optimize_candidates(
 
         # direct swap handling
         direct_shift = next((s for s in nurse.shifts if s.date == target_date), None)
+
         if direct_shift and shiftType in direct_shift.shiftIds:
 
             # if valid, record direct swap

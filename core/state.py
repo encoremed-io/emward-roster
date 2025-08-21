@@ -119,6 +119,12 @@ class ScheduleState:
     """A boolean indicating if double shifts are allowed."""
 
     shifts: List[Shifts] = field(default_factory=list)
+
+    leaves_by_nurse: Dict[str, Dict[int, str]] = field(default_factory=dict)
+    """A dictionary mapping each nurse (ID) to a dict of {day_index: leave_type}.
+    Example: {"1": {0: "Annual Leave"}, "2": {3: "MC"}}
+    """
+
     # Uncomment if you want to use AM coverage constraints
     # activate_am_cov: bool
     # """A boolean indicating if the morning coverage constraint is active."""

@@ -44,6 +44,16 @@ class NursePreference(BaseModel):
     timestamp: dt.datetime
 
 
+class NurseLeave(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    nurse: str
+    date: date
+    leaveId: str
+    leaveName: str
+
+
 class NurseTraining(BaseModel):
     model_config = ConfigDict(extra="allow")
 
