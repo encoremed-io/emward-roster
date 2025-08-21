@@ -1,0 +1,128 @@
+{
+    "profiles": [
+        {
+            "id": "19e3f48b-d39c-435e-b6ad-1a593ec01bf4",
+            "name": "Shah nurse---",
+            "title": "Title",
+            "yearsExperience": 0,
+            "doubleShift": false
+        },
+        {
+            "id": "4b2bcd0f-9cab-4219-b3fc-29debe6a684e",
+            "name": "Andy",
+            "title": "Title",
+            "yearsExperience": 0,
+            "doubleShift": false
+        },
+        {
+            "id": "38f2df8d-87b9-47c7-a3e1-2b021f2e7d9c",
+            "name": "Shah nurse UPDATED",
+            "title": "Title",
+            "yearsExperience": 0,
+            "doubleShift": false
+        },
+        {
+            "id": "1a2c9be7-35ef-4158-904d-282e5eed9eb6",
+            "name": "afif123",
+            "title": "Title",
+            "yearsExperience": 0,
+            "doubleShift": false
+        },
+        {
+            "id": "1d448a0c-de87-4676-9ac9-532fea6388da",
+            "name": "Cantarella",
+            "title": "Title",
+            "yearsExperience": 0,
+            "doubleShift": false
+        },
+        {
+            "id": "1f18c1ef-48e0-4a30-bb2f-69859abbeef3",
+            "name": "Camellya",
+            "title": "Title",
+            "yearsExperience": 0,
+            "doubleShift": false
+        },
+        {
+            "id": "eaeeaf5f-689d-4baf-97a1-8b0e1318d303",
+            "name": "Muhammad Afif",
+            "title": "Title",
+            "yearsExperience": 0,
+            "doubleShift": false
+        },
+        {
+            "id": "781339b0-73aa-40c5-8ebd-84c285fe0b85",
+            "name": "Nurse 1",
+            "title": "",
+            "yearsExperience": 0,
+            "doubleShift": false
+        },
+        {
+            "id": "17303ed2-1f16-41b4-a56a-0250b56cdb2a",
+            "name": "Nurse 2",
+            "title": "",
+            "yearsExperience": 0,
+            "doubleShift": false
+        },
+        {
+            "id": "822143e3-e169-4b55-9926-61cc4a41cedd",
+            "name": "Nurse 4",
+            "title": "Sr.",
+            "yearsExperience": 0,
+            "doubleShift": false
+        },
+        {
+            "id": "29c37c74-22a1-4c91-b3c3-811a74aa89e2",
+            "name": "Nurse 3",
+            "title": "Sr.",
+            "yearsExperience": 0,
+            "doubleShift": false
+        }
+    ],
+    "preferences": [],
+    "trainingShifts": [],
+    "previousSchedule": [],
+    "shifts": [
+        {
+            "id": "7c03cef1-3497-4297-a9cd-c2b62f63bc27",
+            "name": "Test",
+            "duration": "0015-1930",
+            "staffAllocation": {},
+            "minNursesPerShift": 1,
+            "minSeniorsPerShift": 0
+        },
+        {
+            "id": "405c37e3-30c1-440e-a704-6e3e0b5ce992",
+            "name": "Morning",
+            "duration": "0917-1200",
+            "staffAllocation": {},
+            "minNursesPerShift": 1,
+            "minSeniorsPerShift": 0
+        },
+        {
+            "id": "476a7137-fea7-4d42-b221-7a466c492c32",
+            "name": "Noon1",
+            "duration": "1028-0915",
+            "staffAllocation": {},
+            "minNursesPerShift": 1,
+            "minSeniorsPerShift": 0
+        },
+        {
+            "id": "540f1d0a-eddc-497a-bee1-61c100b44169",
+            "name": "Afternoon222",
+            "duration": "1542-0320",
+            "staffAllocation": {},
+            "minNursesPerShift": 1,
+            "minSeniorsPerShift": 0
+        }
+    ],
+    "leaves": [],
+    "request": {
+        "startDate": "2025-08-25",
+        "numDays": 7,
+        "minNursesPerShift": 1,
+        "minSeniorsPerShift": 0,
+        "backToBackShift": true,
+        "fixedAssignments": [],
+        "shiftDetails": []
+    }
+}

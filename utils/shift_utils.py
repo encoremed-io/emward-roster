@@ -445,6 +445,14 @@ def extract_leaves_info(leave_df, date_start, nurse_ids, num_days):
     """
     leaves_by_nurse = {str(n): {} for n in nurse_ids}
 
+    if leave_df is None or leave_df.empty:
+        return leaves_by_nurse
+
+    required_cols = {"id", "date"}
+    if not required_cols.issubset(leave_df.columns):
+        # Missing required columns → nothing to extract
+        return leaves_by_nurse
+
     for _, row in leave_df.iterrows():
         nurse_id = str(row["id"])  # use uuid/int ID
         if nurse_id not in leaves_by_nurse:
