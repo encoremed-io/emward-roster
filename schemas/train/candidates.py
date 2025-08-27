@@ -14,7 +14,7 @@ class CandidatesPreferences(BaseModel):
 class CandidatesTrainingRecord(BaseModel):
     nurseId: str  # Unique identifier for the nurse
     isSenior: bool  # If the nurse is a senior
-    isSpecialist: bool  # If the nurse is a specialist
+    isSpecialist: bool = False  # If the nurse is a specialist
     preferences: CandidatesPreferences  # Nurse preferences
     shiftsThisWeek: int  # How many shifts they've already worked this week
     recentNightShift: bool  # If they worked a night shift recently
