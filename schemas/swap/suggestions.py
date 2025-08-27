@@ -41,7 +41,7 @@ class ShiftInfo(BaseModel):
 class TargetNurse(BaseModel):
     nurseId: str
     isSenior: bool
-    isSpecialist: bool
+    isSpecialist: bool = False
     targetShift: List[ShiftInfo]
 
 
@@ -68,7 +68,7 @@ class NurseLeaveSwap(BaseModel):
 class Nurse(BaseModel):
     nurseId: str
     isSenior: bool
-    isSpecialist: bool
+    isSpecialist: bool = False
     shifts: List[ShiftAssignment]
     leaves: List[NurseLeaveSwap]
 
