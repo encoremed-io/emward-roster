@@ -68,28 +68,28 @@ def generate_warning(
     # warn if over max hours
     if candidate_total > max_hours:
         messages.append(
-            f"{nurse.nurseId} would exceed max weekly hours ({candidate_total} > {max_hours})."
+            f"This staff would exceed max weekly hours ({candidate_total} > {max_hours})."
         )
         penalty += (candidate_total - max_hours) * penalties["over_max_hours"]
 
     # warn if under min hours
     if candidate_total < min_hours:
         messages.append(
-            f"{nurse.nurseId} would be below min weekly hours ({candidate_total} < {min_hours})."
+            f"This staff would be below min weekly hours ({candidate_total} < {min_hours})."
         )
         penalty += (min_hours - candidate_total) * penalties["under_min_hours"]
 
     # warn if under preferred
     if candidate_total < preferred_hours:
         messages.append(
-            f"{nurse.nurseId} would be below preferred weekly hours ({candidate_total} < {preferred_hours})."
+            f"This staff would be below preferred weekly hours ({candidate_total} < {preferred_hours})."
         )
         penalty += (preferred_hours - candidate_total) * penalties["preferred_hours"]
 
     # rest day warning
     if weekly_rest_days < min_rest:
         messages.append(
-            f"{nurse.nurseId} has only {weekly_rest_days} rest days, needs at least {min_rest}."
+            f"This staff has only {weekly_rest_days} rest days, needs at least {min_rest}."
         )
         penalty += (min_rest - weekly_rest_days) * penalties["insufficient_rest"]
 
