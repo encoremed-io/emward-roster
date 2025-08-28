@@ -145,9 +145,12 @@ def optimize_candidates(
         # direct swap handling
         direct_shift = next((s for s in nurse.shifts if s.date == target_date), None)
 
+        # Case 1: already working the SAME shift → skip
         if direct_shift and shiftType in direct_shift.shiftIds:
+            continue
 
-            # if valid, record direct swap
+        # Case 2: working on the same day, but a DIFFERENT shift → valid cross-shift swap
+        if direct_shift and shiftType not in direct_shift.shiftIds:
             swap_from_names = ", ".join(
                 shift_names.get(sid, sid) for sid in direct_shift.shiftIds
             )
@@ -160,11 +163,7 @@ def optimize_candidates(
                     "shiftIds": direct_shift.shiftIds,
                 },
                 "swapTo": {"date": target_date, "shiftId": shiftType},
-                "note": (
-                    f"Cross-shift swap allowed ({swap_from_names} → {swap_to_name})."
-                    if shiftType not in direct_shift.shiftIds
-                    else f"Same-shift direct swap ({swap_to_name})"
-                ),
+                "note": f"Cross-shift swap allowed ({swap_from_names} → {swap_to_name})",
             }
 
             # direct swaps always lowest penalty
@@ -181,7 +180,7 @@ def optimize_candidates(
                     ),
                 )
             )
-            continue  # skip normal warning calc
+            continue  # skip normal warning calc  # skip normal warning calc
 
         # preprocess
         processed = preprocess_nurse(nurse, target_dt, data.settings)
