@@ -50,40 +50,42 @@ def preference_rule(model, state: ScheduleState):
 
 def preference_rule_ts(model, state: ScheduleState):
     """
-    Add constraints to the model to enforce the preference satisfaction of nurses, taking into account timestamps.
+    Add constraints to enforce nurse preferences with timestamps.
+    Nurses can express multiple preferred shifts per day.
 
-    The soft constraint is that a nurse should work their preferred shift on each day, with earlier timestamps given priority.
-    A penalty is incurred if a nurse does not work their preferred shift.
+    - If a nurse gets one of their requested shifts → satisfaction, no penalty.
+    - If they are scheduled on a shift they did NOT request → heavy penalty.
+    - Earlier timestamps still get higher priority among competing nurses.
 
-    The total number of satisfied preferences is also calculated for each nurse.
-
-    Preferences are prioritized on a first-come, first-serve basis based on the timestamp.
-    Tied timestamps have the same rank. Penalty is calculated as:
-        penalty = PREF_MISS_PENALTY * (max_rank - rank + 1)
+    Penalty = pref_miss_penalty * (max_rank - rank + 1)   # for missed preferences
+    Extra penalty = pref_miss_penalty * 20                # for being placed on a non-preferred shift
     """
     from collections import defaultdict
     from itertools import groupby
 
     # 1) bucket all requests by (day, shift)
     slot_reqs: Dict[Tuple[int, int], List[Tuple[str, pd.Timestamp]]] = defaultdict(list)
-    for n in state.nurse_names:
-        for day, entry in state.prefs_by_nurse[n].items():
-            shift_idx, ts = entry  # timestamp is guaranteed not None
-            slot_reqs[(day, shift_idx)].append((n, ts))
+    requested_slots_by_nurse: Dict[str, set] = {n: set() for n in state.nurse_names}
 
-    # 2) prepare per‐nurse list for aggregation
+    for n in state.nurse_names:
+        for day, entries in state.prefs_by_nurse.get(n, {}).items():
+            if isinstance(entries, tuple):  # backward compat
+                entries = [entries]
+            for shift_idx, ts in entries:
+                slot_reqs[(day, shift_idx)].append((n, ts))
+                requested_slots_by_nurse[n].add((day, shift_idx))
+
     sats_by_nurse: Dict[str, List[Any]] = {n: [] for n in state.nurse_names}
 
-    # 3) for each slot, apply dense ranking and assign penalties
+    # 2) rank preferences within each (day, shift)
     for (day, shift), reqs in slot_reqs.items():
-        # Sort by timestamp
-        reqs.sort(key=lambda x: x[1])  # ascending
+        reqs.sort(key=lambda x: x[1])  # earlier = higher priority
 
-        # Dense ranking by timestamp
+        # Dense ranking
         ranks: Dict[str, int] = {}
         grouped = groupby(reqs, key=lambda x: x[1])
-        for rank, (_, group) in enumerate(grouped):
-            for nurse, _ in group:
+        for rank, group in enumerate(grouped):
+            for nurse, _ in group[1]:
                 ranks[nurse] = rank
 
         max_rank = max(ranks.values())
@@ -97,10 +99,21 @@ def preference_rule_ts(model, state: ScheduleState):
             penalty = state.pref_miss_penalty * (max_rank - rank + 1)
             state.low_priority_penalty.append(sat.Not() * penalty)
             sats_by_nurse[nurse].append(sat)
-            # import logging
-            # logging.debug(f"Penalty assigned → Nurse={nurse}, Day={day}, Shift={shift}, Rank={rank}, Penalty={penalty}")
 
-    # 4) total up per‐nurse satisfied prefs
+    # 3) Penalize non-preferred shifts heavily
+    for n in state.nurse_names:
+        for d in range(state.num_days):
+            for s in range(state.shift_types):
+                if (d, s) not in requested_slots_by_nurse[n]:
+                    not_pref = model.NewBoolVar(f"not_pref_{n}_{d}_{s}")
+                    model.Add(state.work[n, d, s] == 1).OnlyEnforceIf(not_pref)
+                    model.Add(state.work[n, d, s] == 0).OnlyEnforceIf(not_pref.Not())
+                    # Heavy penalty if assigned to a non-requested shift
+                    state.low_priority_penalty.append(
+                        not_pref * state.pref_miss_penalty * 20
+                    )
+
+    # 4) Track total satisfied prefs per nurse
     for nurse, sat_list in sats_by_nurse.items():
         total = model.NewIntVar(0, len(sat_list), f"total_sat_{nurse}")
         model.Add(total == sum(sat_list))
