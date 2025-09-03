@@ -234,7 +234,7 @@ def adjust_low_priority_params(doAdjustment: bool, option: str):
                 shift_imbalance_penalty = 1
                 shift_imbalance_threshold = 10
             case "PREFERENCE":
-                pref_miss_penalty = 10
+                pref_miss_penalty = 50
                 fairness_gap_penalty = 0
                 fairness_gap_threshold = 100
                 shift_imbalance_penalty = 0
