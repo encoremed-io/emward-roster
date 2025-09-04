@@ -7,7 +7,7 @@ def get_senior_set(profiles_df):
     return {
         str(row["id"]).strip().upper()
         for _, row in profiles_df.iterrows()
-        if row.get("title", "").upper() == "SENIOR"
+        if "SENIOR" in str(row.get("title", "")).upper()
         or row.get("years of experience", 0) >= 3
     }
 
