@@ -37,7 +37,7 @@ class SolverResult:
         self.fairness_gap = fairness_gap
 
 
-def configure_solver(timeout: float = 180.0, seed: int = 42) -> cp_model.CpSolver:
+def configure_solver(timeout: float = 600.0, seed: int = 42) -> cp_model.CpSolver:
     """Configure the CP solver."""
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = timeout
