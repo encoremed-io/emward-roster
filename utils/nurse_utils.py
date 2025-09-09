@@ -19,6 +19,16 @@ def get_nurse_names(profiles_df: pd.DataFrame) -> list[str]:
     return nurse_names
 
 
+def get_nurse_name_by_id(profiles_df: pd.DataFrame, nurse_id: str) -> str | None:
+    """Return the nurse's name by their ID (case-insensitive match)."""
+    match = profiles_df.loc[
+        profiles_df["id"].astype(str).str.upper() == nurse_id.strip().upper()
+    ]
+    if not match.empty:
+        return str(match.iloc[0]["name"]).strip()
+    return None
+
+
 def get_doubleShift_nurses(profiles_df: pd.DataFrame) -> list[str]:
     """Get set of nurses who can work double shifts."""
     return [

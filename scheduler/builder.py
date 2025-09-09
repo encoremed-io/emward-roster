@@ -117,6 +117,7 @@ def build_schedule_model(
 
     state = ScheduleState(
         work=work,
+        profiles_df=profiles_df,
         nurse_names=nurse_names,
         senior_names=senior_names,
         double_shift_nurses=double_shift_nurses,

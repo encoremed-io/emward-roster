@@ -18,6 +18,7 @@ class ScheduleState:
     """A dictionary with keys `(nurse_name, day, shift_type)` and values a
     boolean variable indicating if the nurse is assigned to that shift.
     """
+    profiles_df: pd.DataFrame
     nurse_names: List[str]
     """A list of all nurse names."""
     senior_names: Set[str]
