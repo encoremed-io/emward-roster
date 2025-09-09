@@ -5,6 +5,7 @@ from utils.nurse_utils import (
     get_nurse_names,
     shuffle_order,
     get_doubleShift_nurses,
+    get_nurse_name_by_id,
 )
 from utils.shift_utils import (
     make_shift_index,

@@ -6,6 +6,9 @@ from utils.constants import NO_WORK_LABELS, DAYS_PER_WEEK
 import statistics
 from typing import List
 import logging
+from utils.nurse_utils import (
+    get_nurse_name_by_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +144,7 @@ def extract_schedule_and_summary(
                     metrics["Preference Met"] += 1
                 else:
                     prefs_unmet.append(
-                        f"{dates[d].strftime('%a %Y-%m-%d')} (wanted {state.shifts[idx]})"
+                        f"{dates[d].strftime('%a %Y-%m-%d')} (wanted {state.shifts[idx].name})"
                     )
 
         # ---- summary row ----
@@ -215,10 +218,14 @@ def extract_schedule_and_summary(
         summary.append(summary_row)
 
         if double_shift_days:
-            violations["Double Shifts"].append(f"{n}: {'; '.join(double_shift_days)}")
+            violations["Double Shifts"].append(
+                f"{get_nurse_name_by_id(state.profiles_df,n)}: {'; '.join(double_shift_days)}"
+            )
 
         if prefs_unmet:
-            metrics["Preference Unmet"].append(f"{n}: {'; '.join(prefs_unmet)}")
+            metrics["Preference Unmet"].append(
+                f"{get_nurse_name_by_id(state.profiles_df,n)}: {'; '.join(prefs_unmet)}"
+            )
 
     # unchanged: hard rule check
     for rule_name, rule in state.hard_rules.items():
