@@ -18,6 +18,8 @@ import traceback
 from docs.schedule.roster import schedule_roster_description
 from utils.helpers.schedule_roster import standardize_profile_columns, normalize_names
 from utils.shift_utils import parse_duration
+from utils.logger import logger
+from pprint import pformat
 
 router = APIRouter(prefix="/schedule", tags=["Roster"])
 
@@ -39,6 +41,23 @@ async def generate_schedule(
     request: ScheduleRequest,
 ):
     try:
+
+        # Log all raw params to file
+        logger.info("------------------------------START------------------------------")
+        logger.info("generate_schedule called with params")
+        logger.info("Profiles:\n%s", pformat([p.model_dump() for p in profiles]))
+        logger.info("Preferences:\n%s", pformat([p.model_dump() for p in preferences]))
+        logger.info(
+            "TrainingShifts:\n%s", pformat([t.model_dump() for t in trainingShifts])
+        )
+        logger.info(
+            "PreviousSchedule:\n%s", pformat([s.model_dump() for s in previousSchedule])
+        )
+        logger.info("Leaves:\n%s", pformat([l.model_dump() for l in leaves]))
+        logger.info("Shifts:\n%s", pformat([s.model_dump() for s in shifts]))
+        logger.info("Request:\n%s", pformat(request.model_dump()))
+        logger.info("------------------------------END------------------------------")
+
         # Convert array inputs to raw DataFrame
         raw = pd.DataFrame([p.model_dump() for p in profiles])
         # Standardize it to exactly Name/Title/Years of experience
