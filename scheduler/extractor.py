@@ -132,6 +132,7 @@ def extract_schedule_and_summary(
                 shift_counts[p] += 1
 
             raw = state.prefs_by_nurse[n].get(d)
+
             if raw is not None:
                 if (n, d) in state.fixed_assignments and state.fixed_assignments[
                     (n, d)
