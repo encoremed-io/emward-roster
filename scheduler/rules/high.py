@@ -9,6 +9,7 @@ from utils.helpers.swap_suggestions import (
     build_back_to_back_rules,
 )
 
+logger = logging.getLogger(__name__)
 """
 This module contains the high priority rules for the nurse scheduling problem.
 """
@@ -115,37 +116,46 @@ def max_weekly_hours_rule(model, state: ScheduleState):
 def pref_min_weekly_hours_rule(model, state: ScheduleState):
     """
     Ensure that nurses work at least the minimum acceptable weekly hours per complete week.
-
-    This constraint is soft if pref_weekly_hours_hard is False, and hard otherwise.
-
-    If soft, a penalty is incurred for each week that the nurse is assigned less than the preferred weekly hours.
-    The penalty is proportional to the number of hours below the preferred weekly hours.
-
-    Preferred weekly hours and minimum acceptable weekly hours are reduced by the number of leave days
-    (from state.leaves_by_nurse), assuming each leave deducts one average shift’s worth of hours.
+    If pref_weekly_hours_hard is False, apply a penalty instead of a hard constraint.
     """
+
     preferred_weekly_minutes = state.preferred_weekly_hours * 60
     min_acceptable_weekly_minutes = state.min_acceptable_weekly_hours * 60
     avg_minutes = statistics.mean(state.shift_durations)
 
     num_weeks = (state.num_days + DAYS_PER_WEEK - 1) // DAYS_PER_WEEK
 
+    # --- capacity sanity check ---
+    total_shift_minutes = state.num_days * sum(state.shift_durations)
+    total_required = len(state.nurse_names) * min_acceptable_weekly_minutes
+    if total_required > total_shift_minutes:
+        # Warn: impossible to satisfy min weekly hours
+        logger.warning(
+            f"⚠️ Not enough capacity: required={total_required}, available={total_shift_minutes}. "
+            "Min weekly hours constraint will be relaxed."
+        )
+
     for n in state.nurse_names:
         leave_days = set(state.leaves_by_nurse.get(n, {}).keys())
 
-        # Full-week minimum at each 7-day boundary (e.g. Day 6, then Day 13, etc.)
         for w in range(num_weeks):
             days = range(
                 w * DAYS_PER_WEEK, min((w + 1) * DAYS_PER_WEEK, state.num_days)
             )
 
             if len(days) < DAYS_PER_WEEK:
-                continue  # Skip incomplete weeks for extra days
+                continue  # skip incomplete week
 
-            weekly_minutes = sum(
-                state.work[n, d, s] * int(state.shift_durations[s])
-                for d in days
-                for s in range(state.shift_types)
+            weekly_minutes = model.NewIntVar(
+                0, sum(state.shift_durations) * len(days), f"weekly_minutes_{n}_{w}"
+            )
+            model.Add(
+                weekly_minutes
+                == sum(
+                    state.work[n, d, s] * int(state.shift_durations[s])
+                    for d in days
+                    for s in range(state.shift_types)
+                )
             )
 
             leave_count = sum(1 for d in days if d in leave_days)
@@ -154,10 +164,11 @@ def pref_min_weekly_hours_rule(model, state: ScheduleState):
             eff_pref_minutes = max(0, preferred_weekly_minutes - adj)
 
             if state.pref_weekly_hours_hard:
-                # Enforce preferred weekly hours as hard constraint
-                model.Add(weekly_minutes >= eff_pref_minutes).OnlyEnforceIf(
-                    state.hard_rules["Pref weekly hours"].flag
-                )
+                # Only enforce if capacity allows it
+                if total_required <= total_shift_minutes:
+                    model.Add(weekly_minutes >= eff_pref_minutes).OnlyEnforceIf(
+                        state.hard_rules["Pref weekly hours"].flag
+                    )
             else:
                 if eff_pref_minutes > eff_min_minutes:
                     flag = model.NewBoolVar(f"pref_{n}_w{w}")
@@ -165,12 +176,20 @@ def pref_min_weekly_hours_rule(model, state: ScheduleState):
                     model.Add(weekly_minutes < eff_pref_minutes).OnlyEnforceIf(
                         flag.Not()
                     )
-                    model.Add(weekly_minutes >= eff_min_minutes).OnlyEnforceIf(
-                        state.hard_rules["Min weekly hours"].flag
-                    )
 
-                    # Soft penalty if nurse does not meet preferred hours
-                    state.high_priority_penalty.append(flag.Not() * PREF_HOURS_PENALTY)
+                    # Always enforce *minimum* as a hard rule (if possible)
+                    if total_required <= total_shift_minutes:
+                        model.Add(weekly_minutes >= eff_min_minutes).OnlyEnforceIf(
+                            state.hard_rules["Min weekly hours"].flag
+                        )
+
+                    # Soft penalty variable
+                    penalty = model.NewIntVar(
+                        0, PREF_HOURS_PENALTY, f"penalty_pref_{n}_w{w}"
+                    )
+                    model.Add(penalty == PREF_HOURS_PENALTY).OnlyEnforceIf(flag.Not())
+                    model.Add(penalty == 0).OnlyEnforceIf(flag)
+                    state.high_priority_penalty.append(penalty)
 
 
 def min_staffing_per_shift_rule(model, state: ScheduleState):

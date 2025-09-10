@@ -41,22 +41,26 @@ async def generate_schedule(
     request: ScheduleRequest,
 ):
     try:
+        # Log payload
+        payload = {
+            "event": "generate_schedule",
+            "profiles": [p.model_dump() for p in profiles],
+            "preferences": [p.model_dump() for p in preferences],
+            "trainingShifts": [t.model_dump() for t in trainingShifts],
+            "previousSchedule": [s.model_dump() for s in previousSchedule],
+            "leaves": [l.model_dump() for l in leaves],
+            "shifts": [
+                s.model_dump(exclude_unset=False, exclude_defaults=False, by_alias=True)
+                for s in shifts
+            ],
+            "request": request.model_dump(),
+        }
 
-        # Log all raw params to file
-        logger.info("------------------------------START------------------------------")
-        logger.info("generate_schedule called with params")
-        logger.info("Profiles:\n%s", pformat([p.model_dump() for p in profiles]))
-        logger.info("Preferences:\n%s", pformat([p.model_dump() for p in preferences]))
-        logger.info(
-            "TrainingShifts:\n%s", pformat([t.model_dump() for t in trainingShifts])
-        )
-        logger.info(
-            "PreviousSchedule:\n%s", pformat([s.model_dump() for s in previousSchedule])
-        )
-        logger.info("Leaves:\n%s", pformat([l.model_dump() for l in leaves]))
-        logger.info("Shifts:\n%s", pformat([s.model_dump() for s in shifts]))
-        logger.info("Request:\n%s", pformat(request.model_dump()))
-        logger.info("------------------------------END------------------------------")
+        # Log as JSON (machine-readable)
+        logger.info(json.dumps(payload, indent=2, default=str))
+
+        # Or, if you prefer pretty but still structured logs
+        logger.info("Schedule Payload:\n%s", pformat(payload))
 
         # Convert array inputs to raw DataFrame
         raw = pd.DataFrame([p.model_dump() for p in profiles])
