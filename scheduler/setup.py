@@ -209,8 +209,8 @@ def adjust_low_priority_params(doAdjustment: bool, option: str):
     else:
         match (str(option).strip().upper()):
             case "FAIRNESS":
-                pref_miss_penalty = 1
-                fairness_gap_penalty = 10
+                pref_miss_penalty = 10
+                fairness_gap_penalty = 2
                 fairness_gap_threshold = 0
                 shift_imbalance_penalty = 10
                 shift_imbalance_threshold = 1

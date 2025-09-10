@@ -50,119 +50,114 @@ def preference_rule(model, state: ScheduleState):
 
 def preference_rule_ts(model, state: ScheduleState):
     """
-    Add constraints to enforce nurse preferences with timestamps.
-    Nurses can express multiple preferred shifts per day.
-
-    - If a nurse gets one of their requested shifts → satisfaction, no penalty.
-    - If they are scheduled on a shift they did NOT request → heavy penalty.
-    - Earlier timestamps still get higher priority among competing nurses.
-
-    Penalty = pref_miss_penalty * (max_rank - rank + 1)   # for missed preferences
-    Extra penalty = pref_miss_penalty * 20                # for being placed on a non-preferred shift
+    Hybrid preference rule with dynamic scaling:
+    - Strong penalty for missed preferences, scaled by number of prefs.
+    - No blanket penalty for all non-preferences (keeps solver fast).
+    - Soft constraint: each nurse should get at least 1 preference, but it's not hard.
     """
+
     from collections import defaultdict
-    from itertools import groupby
 
-    # 1) bucket all requests by (day, shift)
-    slot_reqs: Dict[Tuple[int, int], List[Tuple[str, pd.Timestamp]]] = defaultdict(list)
-    requested_slots_by_nurse: Dict[str, set] = {n: set() for n in state.nurse_names}
+    slot_reqs = defaultdict(list)
+    requested_slots_by_nurse = {n: set() for n in state.nurse_names}
 
+    # Collect requests
     for n in state.nurse_names:
         for day, entries in state.prefs_by_nurse.get(n, {}).items():
-            if isinstance(entries, tuple):  # backward compat
+            if isinstance(entries, tuple):
                 entries = [entries]
             for shift_idx, ts in entries:
                 slot_reqs[(day, shift_idx)].append((n, ts))
                 requested_slots_by_nurse[n].add((day, shift_idx))
 
-    sats_by_nurse: Dict[str, List[Any]] = {n: [] for n in state.nurse_names}
+    sats_by_nurse = {n: [] for n in state.nurse_names}
 
-    # 2) rank preferences within each (day, shift)
+    # Preferences with ranking
     for (day, shift), reqs in slot_reqs.items():
-        reqs.sort(key=lambda x: x[1])  # earlier = higher priority
-
-        # Dense ranking
-        ranks: Dict[str, int] = {}
-        grouped = groupby(reqs, key=lambda x: x[1])
-        for rank, group in enumerate(grouped):
-            for nurse, _ in group[1]:
-                ranks[nurse] = rank
-
-        max_rank = max(ranks.values())
+        reqs.sort(key=lambda x: x[1])  # earlier timestamp = higher priority
+        ranks = {n: i for i, (n, _) in enumerate(reqs)}
+        max_rank = max(ranks.values()) if ranks else 0
 
         for nurse, ts in reqs:
-            sat = model.NewBoolVar(f"pref_sat_{nurse}_{day}_{shift}")
-            model.Add(state.work[nurse, day, shift] == 1).OnlyEnforceIf(sat)
-            model.Add(state.work[nurse, day, shift] == 0).OnlyEnforceIf(sat.Not())
-
+            sat = state.work[nurse, day, shift]
             rank = ranks[nurse]
-            penalty = state.pref_miss_penalty * (max_rank - rank + 1)
-            state.low_priority_penalty.append(sat.Not() * penalty)
+
+            # dynamic penalty: stronger if nurse has more prefs overall
+            num_prefs = len(state.prefs_by_nurse.get(nurse, {}))
+            penalty = (
+                state.pref_miss_penalty
+                * (max_rank - rank + 1)
+                * max(1, num_prefs)
+                * 100
+            )
+
+            state.low_priority_penalty.append((1 - sat) * penalty)
             sats_by_nurse[nurse].append(sat)
 
-    # 3) Penalize non-preferred shifts heavily
-    for n in state.nurse_names:
-        for d in range(state.num_days):
-            for s in range(state.shift_types):
-                if (d, s) not in requested_slots_by_nurse[n]:
-                    not_pref = model.NewBoolVar(f"not_pref_{n}_{d}_{s}")
-                    model.Add(state.work[n, d, s] == 1).OnlyEnforceIf(not_pref)
-                    model.Add(state.work[n, d, s] == 0).OnlyEnforceIf(not_pref.Not())
-                    # Heavy penalty if assigned to a non-requested shift
-                    state.low_priority_penalty.append(
-                        not_pref * state.pref_miss_penalty * 20
-                    )
-
-    # 4) Track total satisfied prefs per nurse
+    # Track total satisfied + soft floor (scaled by number of prefs)
     for nurse, sat_list in sats_by_nurse.items():
-        total = model.NewIntVar(0, len(sat_list), f"total_sat_{nurse}")
-        model.Add(total == sum(sat_list))
-        state.total_satisfied[nurse] = total
+        if sat_list:
+            total = model.NewIntVar(0, len(sat_list), f"total_sat_{nurse}")
+            model.Add(total == sum(sat_list))
+            state.total_satisfied[nurse] = total
+
+            # Soft floor: penalize heavily if nurse gets 0 prefs satisfied
+            has_pref = model.NewBoolVar(f"has_pref_{nurse}")
+            model.Add(total >= 1).OnlyEnforceIf(has_pref)
+            model.Add(total == 0).OnlyEnforceIf(has_pref.Not())
+
+            # Penalty grows with number of prefs
+            state.low_priority_penalty.append(has_pref.Not() * len(sat_list) * 500)
 
 
 def fairness_gap_rule(model, state: ScheduleState):
     """
     Fairness gap soft constraint.
 
-    For each nurse, calculate the percentage of satisfied preferences (out of the total number of preferences).
-
-    Then, calculate the difference between the maximum and minimum percentages, and use this as a measure of the fairness gap.
-
-    If the fairness gap is greater than or equal to the threshold, start penalising the model based on the distance from the threshold.
+    For each nurse, calculate the percentage of satisfied preferences
+    (out of total preferences). prefs are stored as a dict:
+    {pref_index: (shift_id, timestamp)} where pref_index = day index.
     """
-    # Fairness gap
+
     pct_sat = {}
+
     for n, prefs in state.prefs_by_nurse.items():
         count = len(prefs)
         if count > 0:
+            satisfied_vars = []
+            for d, (s, _) in prefs.items():
+                # d = day index (pref key), s = shift index
+                satisfied_vars.append(state.work[n, d, s])
+
+            total_sat = model.NewIntVar(0, count, f"total_sat_{n}")
+            model.Add(total_sat == sum(satisfied_vars))
+
+            # percentage satisfied = (total_sat / count) * 100
             p = model.NewIntVar(0, 100, f"pct_sat_{n}")
+            model.Add(p * count == total_sat * 100)
             pct_sat[n] = p
-            model.Add(p * count == state.total_satisfied[n] * 100)
         else:
             pct_sat[n] = None
 
     valid_pcts = [p for p in pct_sat.values() if p is not None]
     if not valid_pcts:
         return
-    else:
-        min_pct = model.NewIntVar(0, 100, "min_pct")
-        max_pct = model.NewIntVar(0, 100, "max_pct")
-        model.AddMinEquality(min_pct, valid_pcts)
-        model.AddMaxEquality(max_pct, valid_pcts)
 
-        gap_pct = model.NewIntVar(0, 100, "gap_pct")
-        model.Add(gap_pct == max_pct - min_pct)
+    min_pct = model.NewIntVar(0, 100, "min_pct")
+    max_pct = model.NewIntVar(0, 100, "max_pct")
+    model.AddMinEquality(min_pct, valid_pcts)
+    model.AddMaxEquality(max_pct, valid_pcts)
 
-        state.gap_pct = (
-            gap_pct  # Only store gap_pct if we have valid percentages, else remain None
-        )
-        diff = model.NewIntVar(-100, 100, f"diff_{n}")
-        model.Add(diff == gap_pct - state.fairness_gap_threshold)
+    gap_pct = model.NewIntVar(0, 100, "gap_pct")
+    model.Add(gap_pct == max_pct - min_pct)
+    state.gap_pct = gap_pct
 
-        # Start penalise fairness when gap_pct >= 60 based on distance from 60
-        over_gap = model.NewIntVar(0, 100, "over_gap")
-        model.AddMaxEquality(over_gap, [diff, model.NewConstant(0)])
-        state.low_priority_penalty.append(over_gap * state.fairness_gap_penalty)
+    diff = model.NewIntVar(-100, 100, "diff_gap")
+    model.Add(diff == gap_pct - state.fairness_gap_threshold)
+
+    over_gap = model.NewIntVar(0, 100, "over_gap")
+    model.AddMaxEquality(over_gap, [diff, model.NewConstant(0)])
+    state.low_priority_penalty.append(over_gap * state.fairness_gap_penalty)
 
 
 def shift_balance_rule(model, state: ScheduleState):
