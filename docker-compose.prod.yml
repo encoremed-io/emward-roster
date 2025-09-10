@@ -10,7 +10,7 @@ services:
         --worker-class uvicorn.workers.UvicornWorker
         --workers 4
         --bind 0.0.0.0:8000
-        --timeout 180
+        --timeout 650
         --graceful-timeout 30
         --max-requests 2000
         --max-requests-jitter 200
