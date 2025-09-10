@@ -178,7 +178,7 @@ def get_shift_preferences(
     }
 
     for id, row in preferences_df.drop(columns=["name"], errors="ignore").iterrows():
-        nid = str(id).strip()
+        nid = str(id).strip().upper()
 
         if nid not in shift_prefs:
             continue
@@ -254,6 +254,7 @@ def extract_prefs_info(
     shift_preferences = get_shift_preferences(
         preferences_df, date_start, nurse_names, num_days, shift_labels, no_work_labels
     )
+
     prefs_by_nurse = {n: shift_preferences.get(n, {}) for n in nurse_names}
     filter_fixed_assignments_from_prefs(
         shift_preferences, prefs_by_nurse, no_work_labels, fixed_assignments
