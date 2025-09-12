@@ -7,7 +7,7 @@ from schemas.schedule.generate import (
     ScheduleRequest,
     Shifts,
 )
-from typing import List
+from typing import List, Optional
 import pandas as pd
 from fastapi import APIRouter, HTTPException
 from scheduler.builder import build_schedule_model
@@ -32,7 +32,6 @@ router = APIRouter(prefix="/schedule", tags=["Roster"])
     summary="Generate Roster",
 )
 async def generate_schedule(
-    wardId: str,
     profiles: List[NurseProfile],
     preferences: List[NursePreference],
     trainingShifts: List[NurseTraining],
@@ -40,6 +39,7 @@ async def generate_schedule(
     leaves: List[NurseLeave],
     shifts: List[Shifts],
     request: ScheduleRequest,
+    wardId: Optional[str] = None,
 ):
     try:
         # Log payload
