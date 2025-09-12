@@ -111,10 +111,10 @@ class Shifts(BaseModel):
 
     id: str
     name: str
-    duration: str = Field(exclude=True)
-    minNursesPerShift: int = Field(default=MIN_NURSES_PER_SHIFT, exclude=True)
-    minSeniorsPerShift: int = Field(default=MIN_SENIORS_PER_SHIFT, exclude=True)
-    staffAllocation: Optional[StaffAllocations] = Field(default=None, exclude=True)
+    duration: str = Field(exclude=False)
+    minNursesPerShift: int = Field(default=MIN_NURSES_PER_SHIFT, exclude=False)
+    minSeniorsPerShift: int = Field(default=MIN_SENIORS_PER_SHIFT, exclude=False)
+    staffAllocation: Optional[StaffAllocations] = Field(default=None, exclude=False)
 
 
 class ShiftDetails(BaseModel):
