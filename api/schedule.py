@@ -32,6 +32,7 @@ router = APIRouter(prefix="/schedule", tags=["Roster"])
     summary="Generate Roster",
 )
 async def generate_schedule(
+    wardId: str,
     profiles: List[NurseProfile],
     preferences: List[NursePreference],
     trainingShifts: List[NurseTraining],
@@ -44,6 +45,7 @@ async def generate_schedule(
         # Log payload
         payload = {
             "event": "generate_schedule",
+            "wardId": wardId,
             "profiles": [p.model_dump() for p in profiles],
             "preferences": [p.model_dump() for p in preferences],
             "trainingShifts": [t.model_dump() for t in trainingShifts],
@@ -56,11 +58,8 @@ async def generate_schedule(
             "request": request.model_dump(),
         }
 
-        # Log as JSON (machine-readable)
-        logger.info(json.dumps(payload, indent=2, default=str))
-
-        # Or, if you prefer pretty but still structured logs
-        logger.info("Schedule Payload:\n%s", pformat(payload))
+        # Log only valid JSON (pretty-printed)
+        logger.info(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
 
         # Convert array inputs to raw DataFrame
         raw = pd.DataFrame([p.model_dump() for p in profiles])
