@@ -4,6 +4,7 @@ Generate a schedule based on the given nurse profiles, shift preferences, and ot
 ### Request Body
 
 The API endpoint takes the following parameters:
+- `wardId`: The ward id for this request
 
 - `profiles`: List of `NurseProfile` objects, which contain the following information:
     - `id`: Primary key of the nurse

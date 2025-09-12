@@ -433,11 +433,14 @@ def no_back_to_back_shift_rule(model, state: ScheduleState):
 # staff allocation rule
 def staff_allocation_rule(model, state: ScheduleState):
     """
-    Enforce senior staff percentage allocation per shift.
-    - Strict: require at least base percentage seniors.
-    - Soft fallback: allow lower percentage with penalty.
-    """
+    Enforce senior staff percentage allocation per shift with gradual fallback.
 
+    - Try base percentage first.
+    - If not possible, allow multiple lower percentages in steps of
+      seniorStaffAllocationRefinementValue, but never below 50 %.
+    - Add a penalty for each additional step of fallback so the solver
+      prefers higher senior coverage.
+    """
     if not state.shifts:
         logging.info("No shifts configured with staffAllocation.")
         return
@@ -451,8 +454,15 @@ def staff_allocation_rule(model, state: ScheduleState):
             continue
 
         base_percent = alloc.seniorStaffPercentage or 0
-        fallback_step = alloc.seniorStaffAllocationRefinementValue or 0
-        fallback_percent = max(0, base_percent - fallback_step)
+        step = alloc.seniorStaffAllocationRefinementValue or 0
+        min_percent = 50  # hard floor
+
+        # Build descending list of allowed percentages, e.g. 100, 95, 90 … ≥50
+        levels = []
+        p = base_percent
+        while p >= min_percent:
+            levels.append(p)
+            p -= step if step > 0 else base_percent  # avoid infinite loop if step=0
 
         s = state.shift_str_to_idx[shift.id]
 
@@ -460,38 +470,34 @@ def staff_allocation_rule(model, state: ScheduleState):
             total_nurses = sum(state.work[n, d, s] for n in state.nurse_names)
             total_seniors = sum(state.work[n, d, s] for n in state.senior_names)
 
-            # ----- Strict requirement (base %) -----
-            base_ok = model.NewBoolVar(f"base_senior_ok_d{d}_s{shift.id}")
-            model.Add(total_seniors * 100 >= base_percent * total_nurses).OnlyEnforceIf(
-                base_ok
-            )
-            model.Add(total_seniors * 100 < base_percent * total_nurses).OnlyEnforceIf(
-                base_ok.Not()
-            )
+            level_ok = []
+            for pct in levels:
+                ok = model.NewBoolVar(f"senior_ok_{pct}_d{d}_s{shift.id}")
+                model.Add(total_seniors * 100 >= pct * total_nurses).OnlyEnforceIf(ok)
+                model.Add(total_seniors * 100 < pct * total_nurses).OnlyEnforceIf(
+                    ok.Not()
+                )
+                level_ok.append(ok)
 
-            # ----- Fallback requirement (reduced %) -----
-            fallback_ok = model.NewBoolVar(f"fallback_senior_ok_d{d}_s{shift.id}")
-            model.Add(
-                total_seniors * 100 >= fallback_percent * total_nurses
-            ).OnlyEnforceIf(fallback_ok)
-            model.Add(
-                total_seniors * 100 < fallback_percent * total_nurses
-            ).OnlyEnforceIf(fallback_ok.Not())
-
-            # ----- Hard rule: must satisfy at least fallback (or base if possible) -----
-            model.AddBoolOr([base_ok, fallback_ok]).OnlyEnforceIf(
+            # Require exactly one level to be true
+            model.AddBoolOr(level_ok).OnlyEnforceIf(
+                state.hard_rules["staff_allocation_not_satisfied"].flag
+            )
+            model.Add(sum(level_ok) == 1).OnlyEnforceIf(
                 state.hard_rules["staff_allocation_not_satisfied"].flag
             )
 
-            # ----- Soft penalty: prefer base over fallback -----
-            if fallback_step > 0:
+            # Penalties: 0 for base, step for 1st fallback, 2*step for 2nd …
+            for i, ok in enumerate(level_ok):
+                if i == 0:
+                    continue  # base level, no penalty
                 penalty_flag = model.NewBoolVar(
-                    f"penalty_fallback_used_d{d}_s{shift.id}"
+                    f"penalty_fallback_{levels[i]}_d{d}_s{shift.id}"
                 )
-                model.AddBoolAnd([base_ok.Not(), fallback_ok]).OnlyEnforceIf(
-                    penalty_flag
-                )
-                state.high_priority_penalty.append(penalty_flag * fallback_step)
+                model.AddBoolAnd(
+                    [ok] + [level_ok[j].Not() for j in range(i)]
+                ).OnlyEnforceIf(penalty_flag)
+                state.high_priority_penalty.append(penalty_flag * (step * i))
 
 
 # shift details rule (ICU)
