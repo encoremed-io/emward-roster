@@ -193,23 +193,35 @@ def pref_min_weekly_hours_rule(model, state: ScheduleState):
 
 
 def min_staffing_per_shift_rule(model, state: ScheduleState):
-    """Ensure that each shift meets its minNursesPerShift and minSeniorsPerShift requirements."""
+    """Prefer (but do not force) each shift to meet minNursesPerShift and minSeniorsPerShift."""
+    BIG_PENALTY = 1000  # tune weight
+
     for d in range(-state.prev_days, state.num_days):
         for s, shift in enumerate(state.shifts):
             min_nurses = getattr(shift, "minNursesPerShift", 0)
             min_seniors = getattr(shift, "minSeniorsPerShift", 0)
 
-            # Minimum nurses (any role)
+            # ---- Minimum nurses (soft) ----
             if min_nurses > 0:
+                shortage_n = model.NewIntVar(
+                    0, min_nurses, f"shortage_nurses_d{d}_s{s}"
+                )
                 model.Add(
-                    sum(state.work[n, d, s] for n in state.nurse_names) >= min_nurses
-                ).OnlyEnforceIf(state.hard_rules["Min nurses"].flag)
+                    sum(state.work[n, d, s] for n in state.nurse_names) + shortage_n
+                    >= min_nurses
+                )
+                state.high_priority_penalty.append(shortage_n * BIG_PENALTY)
 
-            # Minimum senior nurses
+            # ---- Minimum senior nurses (soft) ----
             if min_seniors > 0:
+                shortage_s = model.NewIntVar(
+                    0, min_seniors, f"shortage_seniors_d{d}_s{s}"
+                )
                 model.Add(
-                    sum(state.work[n, d, s] for n in state.senior_names) >= min_seniors
-                ).OnlyEnforceIf(state.hard_rules["Min seniors"].flag)
+                    sum(state.work[n, d, s] for n in state.senior_names) + shortage_s
+                    >= min_seniors
+                )
+                state.high_priority_penalty.append(shortage_s * BIG_PENALTY)
 
 
 def min_rest_per_week_rule(model, state: ScheduleState):
@@ -480,12 +492,10 @@ def staff_allocation_rule(model, state: ScheduleState):
                 level_ok.append(ok)
 
             # Require exactly one level to be true
-            model.AddBoolOr(level_ok).OnlyEnforceIf(
-                state.hard_rules["staff_allocation_not_satisfied"].flag
-            )
-            model.Add(sum(level_ok) == 1).OnlyEnforceIf(
-                state.hard_rules["staff_allocation_not_satisfied"].flag
-            )
+            if len(state.nurse_names) > 0:
+                model.Add(sum(level_ok) == 1).OnlyEnforceIf(
+                    state.hard_rules["staff_allocation_not_satisfied"].flag
+                )
 
             # Penalties: 0 for base, step for 1st fallback, 2*step for 2nd …
             for i, ok in enumerate(level_ok):
