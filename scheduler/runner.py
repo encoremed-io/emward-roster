@@ -2,7 +2,7 @@ import pandas as pd
 from typing import Tuple
 from ortools.sat.python import cp_model
 from core.state import ScheduleState
-from .solver import SolverResult, run_phase1, run_phase2
+from .solver import SolverResult, run_phase1, run_phase2, run_pref_upper_bound
 from .extractor import extract_schedule_and_summary, get_total_prefs_met
 import logging
 
@@ -33,6 +33,11 @@ def solve_schedule(
     # Run Phase 1
     p1 = run_phase1(model, state)
     best_result = p1
+
+    ub = run_pref_upper_bound(model, state, p1)
+    logger.info(
+        f"Preference upper bound = {ub} | Current PREFERENCE run gave {get_total_prefs_met(state, p1)}"
+    )
 
     # Only run phase 2 if low priority penalty exists, which means shifts preferences or shift imbalance exist
     if state.low_priority_penalty:
