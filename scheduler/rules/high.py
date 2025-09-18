@@ -193,35 +193,27 @@ def pref_min_weekly_hours_rule(model, state: ScheduleState):
 
 
 def min_staffing_per_shift_rule(model, state: ScheduleState):
-    """Prefer (but do not force) each shift to meet minNursesPerShift and minSeniorsPerShift."""
-    BIG_PENALTY = 1000  # tune weight
-
+    """
+    Enforce that every shift strictly meets its required minimum numbers of
+    total nurses and senior nurses. If any minimum cannot be met, the solver
+    will declare the model infeasible.
+    """
     for d in range(-state.prev_days, state.num_days):
         for s, shift in enumerate(state.shifts):
             min_nurses = getattr(shift, "minNursesPerShift", 0)
             min_seniors = getattr(shift, "minSeniorsPerShift", 0)
 
-            # ---- Minimum nurses (soft) ----
+            # ---- Hard requirement: minimum total nurses ----
             if min_nurses > 0:
-                shortage_n = model.NewIntVar(
-                    0, min_nurses, f"shortage_nurses_d{d}_s{s}"
-                )
                 model.Add(
-                    sum(state.work[n, d, s] for n in state.nurse_names) + shortage_n
-                    >= min_nurses
+                    sum(state.work[n, d, s] for n in state.nurse_names) >= min_nurses
                 )
-                state.high_priority_penalty.append(shortage_n * BIG_PENALTY)
 
-            # ---- Minimum senior nurses (soft) ----
+            # ---- Hard requirement: minimum senior nurses ----
             if min_seniors > 0:
-                shortage_s = model.NewIntVar(
-                    0, min_seniors, f"shortage_seniors_d{d}_s{s}"
-                )
                 model.Add(
-                    sum(state.work[n, d, s] for n in state.senior_names) + shortage_s
-                    >= min_seniors
+                    sum(state.work[n, d, s] for n in state.senior_names) >= min_seniors
                 )
-                state.high_priority_penalty.append(shortage_s * BIG_PENALTY)
 
 
 def min_rest_per_week_rule(model, state: ScheduleState):
