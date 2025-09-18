@@ -114,6 +114,8 @@ def build_schedule_model(
         shift_imbalance_penalty,
         shift_imbalance_threshold,
     ) = adjust_low_priority_params(shift_balance, priority_setting)
+    print("pref_miss_penalty at rule entry:", pref_miss_penalty)
+    print("fairness_gap_penalty at rule entry:", fairness_gap_penalty)
 
     state = ScheduleState(
         work=work,
@@ -158,6 +160,7 @@ def build_schedule_model(
         shifts=shifts or [],
         allow_double_shift=allow_double_shift,
         leaves_by_nurse=leaves_by_nurse,
+        pref_sat_vars=[],
         # Uncomment if you want to use AM coverage constraints
         # activate_am_cov=activate_am_cov,
         # am_coverage_min_percent=am_coverage_min_percent,

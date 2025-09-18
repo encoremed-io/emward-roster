@@ -35,18 +35,25 @@ def extract_schedule_and_summary(
 ):
     """
     Extract a schedule and summary from a solver result.
-
-    Args:
-        state (ScheduleState): The state of the scheduling problem.
-        result (SolverResult): The result of the solver.
-        og_nurse_order (list[str]): The original order of the nurse names.
-
-    Returns:
-        tuple: A tuple of (schedule_df, summary_df, violations, metrics)
+    Computes global Preference Met / Unmet counts automatically.
     """
+    from datetime import timedelta
+    import statistics
+    import pandas as pd
+    from utils.constants import NO_WORK_LABELS, DAYS_PER_WEEK
+    from utils.nurse_utils import get_nurse_name_by_id
+    import logging
+
+    logger = logging.getLogger(__name__)
+
     dates = [state.start_date + timedelta(days=i) for i in range(state.num_days)]
     headers = [d.strftime("%a %Y-%m-%d") for d in dates]
     num_weeks = (state.num_days + 6) // 7
+
+    # --- compute total possible preferences (upper bound) ---
+    total_possible_prefs = sum(
+        len(state.prefs_by_nurse.get(n, {})) for n in state.nurse_names
+    )
 
     schedule = {}
     summary = []
@@ -55,11 +62,12 @@ def extract_schedule_and_summary(
         "Low Hours Nurses": [] if not state.pref_weekly_hours_hard else [],
     }
     metrics = {}
-    has_prefs = bool(any(state.prefs_by_nurse.values()))
+    has_prefs = total_possible_prefs > 0
     if has_prefs:
         metrics = {
             "Preference Met": 0,
-            "Preference Unmet": [],
+            "Preference Unmet": [],  # detailed list
+            "Preference Unmet Count": 0,  # ✅ new aggregate
             "Fairness Gap": (
                 result.fairness_gap if result.fairness_gap is not None else "N/A"
             ),
@@ -69,7 +77,7 @@ def extract_schedule_and_summary(
         row = []
         minutes_per_week = [0] * num_weeks
         shift_counts = [0, 0, 0, 0]  # AM, PM, Night, REST
-        training_counts = [0, 0, 0, 0]  # AM, PM, Night, FULL
+        training_counts = [0, 0, 0, 0]
         double_shift_days = []
         prefs_met = 0
         prefs_unmet = []
@@ -84,23 +92,18 @@ def extract_schedule_and_summary(
             ]
             leave_entry = leaves_for_nurse.get(d)
 
-            # -------------------------
-            # Normalize output format
-            # -------------------------
+            # ---- Determine shift displayed ----
             if isinstance(leave_entry, dict):
-                shift = leave_entry  # AL/MC/EL object kept intact
-
+                shift = leave_entry
             elif d in state.training_by_nurse.get(n, {}):
-                # Training leave
                 shift = {"id": None, "type": "LEAVE", "name": "TR"}
-
             else:
                 if len(picked) == 0:
                     shift = {"id": None, "type": "REST", "name": "REST"}
                     shift_counts[3] += 1
                 elif len(picked) == 1:
                     s = picked[0]
-                    shift_obj = state.shifts[s]  # Shifts object
+                    shift_obj = state.shifts[s]
                     shift = {
                         "id": str(shift_obj.id),
                         "type": "SHIFT",
@@ -120,25 +123,23 @@ def extract_schedule_and_summary(
                     ]
                     for s in picked:
                         shift_counts[s] += 1
-
                     double_shift_days.append(dates[d].strftime("%a %Y-%m-%d"))
 
             row.append(shift)
 
-            # ---- unchanged: weekly hours calc ----
+            # ---- Weekly hours ----
             week_idx = d // DAYS_PER_WEEK
             for p in picked:
                 minutes_per_week[week_idx] += int(state.shift_durations[p])
                 shift_counts[p] += 1
 
+            # ---- Preference check ----
             raw = state.prefs_by_nurse[n].get(d)
-
             if raw is not None:
                 if (n, d) in state.fixed_assignments and state.fixed_assignments[
                     (n, d)
                 ].upper() in NO_WORK_LABELS:
                     continue
-
                 idx = raw[0] if isinstance(raw, tuple) else raw
                 if len(picked) == 1 and picked[0] == idx:
                     prefs_met += 1
@@ -148,7 +149,6 @@ def extract_schedule_and_summary(
                         f"{dates[d].strftime('%a %Y-%m-%d')} (wanted {state.shifts[idx].name})"
                     )
 
-        # ---- summary row ----
         summary_row = {
             "Nurse": n,
             "AL": sum(
@@ -181,54 +181,29 @@ def extract_schedule_and_summary(
             "PM": shift_counts[1],
             "Night": shift_counts[2],
             "Double Shifts": len(double_shift_days),
+            "Prefs_Met": prefs_met,
+            "Prefs_Unmet": len(prefs_unmet),
+            "Unmet_Details": "; ".join(prefs_unmet),
         }
-
-        # ---- weekly AL credit hours ----
-        if not state.pref_weekly_hours_hard:
-            preferred_weekly_minutes = state.preferred_weekly_hours * 60
-            avg_minutes = statistics.mean(state.shift_durations)
-            for w in range(num_weeks):
-                days = range(
-                    w * DAYS_PER_WEEK, min((w + 1) * DAYS_PER_WEEK, state.num_days)
-                )
-                if len(days) < DAYS_PER_WEEK:
-                    continue
-
-                al_this_week = sum(
-                    1
-                    for d in days
-                    if leaves_for_nurse.get(d, {}).get("name") == "AL"  # type: ignore
-                )
-
-                credit_hrs = round(
-                    (minutes_per_week[w] / 60) + ((al_this_week * avg_minutes) / 60), 1
-                )
-                actual_hrs = round(minutes_per_week[w] / 60, 1)
-
-                summary_row[f"Hours_Week{w+1}_Real"] = actual_hrs
-                summary_row[f"Hours_Week{w+1}_InclAL"] = credit_hrs
-
-        summary_row.update(
-            {
-                "Prefs_Met": prefs_met,
-                "Prefs_Unmet": len(prefs_unmet),
-                "Unmet_Details": "; ".join(prefs_unmet),
-            }
-        )
         schedule[n] = row
         summary.append(summary_row)
 
         if double_shift_days:
             violations["Double Shifts"].append(
-                f"{get_nurse_name_by_id(state.profiles_df,n)}: {'; '.join(double_shift_days)}"
+                f"{get_nurse_name_by_id(state.profiles_df, n)}: {'; '.join(double_shift_days)}"
             )
-
         if prefs_unmet:
             metrics["Preference Unmet"].append(
-                f"{get_nurse_name_by_id(state.profiles_df,n)}: {'; '.join(prefs_unmet)}"
+                f"{get_nurse_name_by_id(state.profiles_df, n)}: {'; '.join(prefs_unmet)}"
             )
 
-    # unchanged: hard rule check
+    # ✅ compute global unmet count automatically
+    if has_prefs:
+        metrics["Preference Unmet Count"] = (
+            total_possible_prefs - metrics["Preference Met"]
+        )
+
+    # ---- Hard rule check ----
     for rule_name, rule in state.hard_rules.items():
         try:
             if result.solver.BooleanValue(rule.flag):

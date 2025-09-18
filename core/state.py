@@ -126,6 +126,8 @@ class ScheduleState:
     Example: {"1": {0: "Annual Leave"}, "2": {3: "MC"}}
     """
 
+    pref_sat_vars: List[cp_model.IntVar] = field(default_factory=list)
+
     # Uncomment if you want to use AM coverage constraints
     # activate_am_cov: bool
     # """A boolean indicating if the morning coverage constraint is active."""

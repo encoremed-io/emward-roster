@@ -61,6 +61,10 @@ def preference_rule_ts(model, state: ScheduleState):
     slot_reqs = defaultdict(list)
     requested_slots_by_nurse = {n: set() for n in state.nurse_names}
 
+    # ✅ Ensure container exists to collect all preference-satisfaction BoolVars
+    if not hasattr(state, "pref_sat_vars"):
+        state.pref_sat_vars = []
+
     # Collect requests
     for n in state.nurse_names:
         for day, entries in state.prefs_by_nurse.get(n, {}).items():
@@ -81,6 +85,9 @@ def preference_rule_ts(model, state: ScheduleState):
         for nurse, ts in reqs:
             sat = state.work[nurse, day, shift]
             rank = ranks[nurse]
+
+            # ✅ Collect for diagnostics / stronger objectives
+            state.pref_sat_vars.append(sat)
 
             # dynamic penalty: stronger if nurse has more prefs overall
             num_prefs = len(state.prefs_by_nurse.get(nurse, {}))

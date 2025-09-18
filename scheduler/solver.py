@@ -139,48 +139,47 @@ def run_phase1(model, state) -> SolverResult:
 
 def run_phase2(model, state, p1: SolverResult) -> SolverResult:
     """
-    Run Phase 2 of the solver.
-
-    In Phase 2, we aim to maximize the preferences and shift balance given the
-    best total penalty found in Phase 1. The fairness gap is also taken into
-    account if it was calculated in Phase 1.
-
-    The solver is configured to use the cached values from Phase 1 as hints. The
-    model size is also printed for debugging purposes.
-
-    Returns a SolverResult object containing the solver, status, cached values,
-    high priority penalty, low priority penalty, and fairness gap.
+    Phase 2: Minimize low-priority penalties (preferences/fairness/imbalance)
+    while keeping the high-priority cost fixed at the Phase-1 optimum.
     """
-    # Phase 2: Maximize preferences and shift balance
-    logger.info(
-        "🚀 Phase 2: maximizing preferences with (optional) shift distribution balance..."
-    )
+    logger.info("🚀 Phase 2: optimizing low-priority penalties...")
 
+    # Keep all hard rules enforced
     model.Add(sum(r.flag for r in state.hard_rules.values()) == len(state.hard_rules))
-    model.Add(sum(state.high_priority_penalty) <= round(p1.high_penalty))
-    if p1.fairness_gap is not None:
-        model.Add(state.gap_pct <= round(p1.fairness_gap))
 
-    # Switch objective to minimise low priority penalties
-    model.Minimize(sum(state.low_priority_penalty))
+    # Pin high-priority cost to the optimum found in Phase 1
+    high_cost = sum(state.high_priority_penalty) if state.high_priority_penalty else 0
+    model.Add(high_cost == round(p1.high_penalty))
 
-    # debug: print model size
+    # Only bind fairness if fairness penalties are active
+    if getattr(state, "fairness_gap_penalty", 0) and p1.fairness_gap is not None:
+        model.Add(state.gap_pct <= int(p1.fairness_gap))
+
+    # Objective: minimize low-priority penalties (preferences, fairness, etc.)
+    low_cost = sum(state.low_priority_penalty) if state.low_priority_penalty else 0
+    model.Minimize(low_cost)
+
+    # Debug info
     num_constraints, num_bool_vars = get_model_size(model)
     logger.info(f"→ #constraints_p2 = {num_constraints},  #bool_vars = {num_bool_vars}")
 
-    # 4. Re-solve with cached values from Phase 1 as hints
+    # Re-solve with Phase 1 solution as a hint
     solver = configure_solver()
     for (n, d, s), val in p1.cached_values.items():
         model.AddHint(state.work[n, d, s], val)
 
     status = solver.Solve(model)
-    high_penalty = solver.Value(sum(state.high_priority_penalty))
-    low_penalty = solver.ObjectiveValue()
-    fairness_gap = solver.Value(state.gap_pct) if state.gap_pct is not None else None
+    high_penalty = solver.Value(high_cost) if state.high_priority_penalty else 0
+    low_penalty = solver.ObjectiveValue() if state.low_priority_penalty else 0
+    fairness_gap = (
+        solver.Value(state.gap_pct)
+        if getattr(state, "gap_pct", None) is not None
+        else None
+    )
 
-    logger.info(f"⏱ Solve time: {solver.WallTime():.2f} seconds")
+    logger.info(f"⏱ Solve time: {solver.WallTime():.2f} s")
     logger.info(f"High Priority Penalty Phase 2: {high_penalty}")
-    logger.info(f"Low Priority Penalty Phase 2: {low_penalty}")
+    logger.info(f"Low  Priority Penalty Phase 2: {low_penalty}")
 
     cached = {
         (n, d, s): solver.Value(state.work[n, d, s])
@@ -190,3 +189,29 @@ def run_phase2(model, state, p1: SolverResult) -> SolverResult:
     }
 
     return SolverResult(solver, status, cached, high_penalty, low_penalty, fairness_gap)
+
+
+def run_pref_upper_bound(model, state, p1: SolverResult) -> int:
+    """Maximize the total number of satisfied preferences under the Phase-1 high-cost optimum."""
+    if not getattr(state, "pref_sat_vars", None):
+        logger.info("No preference vars found; upper bound is 0.")
+        return 0
+
+    # Keep all hard rules ON and pin high-priority cost to phase-1 optimum
+    model.Add(sum(r.flag for r in state.hard_rules.values()) == len(state.hard_rules))
+    high_cost = sum(state.high_priority_penalty) if state.high_priority_penalty else 0
+    model.Add(high_cost == round(p1.high_penalty))
+
+    # Objective: maximize satisfied preferences count (pure count, not weighted)
+    sat_count = cp_model.LinearExpr.Sum(state.pref_sat_vars)
+    model.Maximize(sat_count)
+
+    solver = configure_solver()
+    status = solver.Solve(model)
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        logger.info("Upper-bound run infeasible.")
+        return 0
+
+    ub = int(solver.ObjectiveValue())
+    logger.info(f"🔎 Preference upper bound (max sat prefs under hard rules): {ub}")
+    return ub
