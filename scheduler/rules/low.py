@@ -169,21 +169,12 @@ def fairness_gap_rule(model, state: ScheduleState):
 
 def shift_balance_rule(model, state: ScheduleState):
     """
-    Enforce shift balance for each nurse across all shift types.
-
-    This rule ensures that the distribution of shifts among various types is balanced for each nurse.
-    It calculates the minimum and maximum number of shifts a nurse works across all shift types and
-    computes the gap between them. If the gap exceeds a defined threshold, a penalty is applied.
-
-    Args:
-        model: The constraint programming model.
-        state: The current state of the schedule, including nurse names, number of days, shift types,
-               and parameters for penalties and thresholds.
-
-    The penalty is proportional to the excess gap beyond the specified threshold.
+    Hybrid shift balance rule:
+    - Hard constraint: prevent extreme imbalance (distribution gap cannot exceed a max cap).
+    - Soft penalty: still encourage tighter balance when gap is larger than a preferred threshold.
     """
+
     if state.shift_balance:
-        # Precompute counts just once
         counts = {}
         for n in state.nurse_names:
             for s in range(state.shift_types):
@@ -191,7 +182,6 @@ def shift_balance_rule(model, state: ScheduleState):
                 model.Add(C == sum(state.work[n, d, s] for d in range(state.num_days)))
                 counts[(n, s)] = C
 
-        # For each nurse, build min/max/gap
         for n in state.nurse_names:
             c_vars = [counts[(n, s)] for s in range(state.shift_types)]
             minC = model.NewIntVar(0, state.num_days, f"min_count_{n}")
@@ -203,6 +193,15 @@ def shift_balance_rule(model, state: ScheduleState):
             distribution_gap = model.NewIntVar(0, state.num_days, f"gap_{n}")
             model.Add(distribution_gap == maxC - minC)
 
+            # ---------------- HARD CAP ----------------
+            # Define a maximum allowed imbalance (e.g., 3)
+            hard_cap = getattr(
+                state, "shift_imbalance_hard_cap", state.shift_imbalance_threshold + 1
+            )
+            model.Add(distribution_gap <= hard_cap)
+
+            # ---------------- SOFT PENALTY ----------------
+            # Apply penalty if gap exceeds the softer threshold
             diff = model.NewIntVar(
                 -(state.num_days + state.shift_imbalance_threshold),
                 state.num_days + state.shift_imbalance_threshold,
@@ -210,7 +209,6 @@ def shift_balance_rule(model, state: ScheduleState):
             )
             model.Add(diff == distribution_gap - state.shift_imbalance_threshold)
 
-            # soft penalise when distribution_gap >= 2 based on distance from 2
             over_gap = model.NewIntVar(
                 0, state.num_days + state.shift_imbalance_threshold, f"over_gap_{n}"
             )
