@@ -36,13 +36,13 @@ def extract_schedule_and_summary(
     """
     Extract a schedule and summary from a solver result.
     Computes global Preference Met / Unmet counts automatically.
+    Dynamically handles any number of shift types from state.shifts.
     """
     from datetime import timedelta
-    import statistics
     import pandas as pd
+    import logging
     from utils.constants import NO_WORK_LABELS, DAYS_PER_WEEK
     from utils.nurse_utils import get_nurse_name_by_id
-    import logging
 
     logger = logging.getLogger(__name__)
 
@@ -73,11 +73,19 @@ def extract_schedule_and_summary(
             ),
         }
 
+    # Build dynamic shift name map
+    shift_names = [getattr(s, "name", str(s)) for s in state.shifts]
+
     for n in state.nurse_names:
         row = []
         minutes_per_week = [0] * num_weeks
-        shift_counts = [0, 0, 0, 0]  # AM, PM, Night, REST
-        training_counts = [0, 0, 0, 0]
+
+        # ✅ dynamic shift counters
+        shift_counts = {name: 0 for name in shift_names}
+        shift_counts["REST"] = 0
+        training_counts = {name: 0 for name in shift_names}
+        training_counts["TR"] = 0
+
         double_shift_days = []
         prefs_met = 0
         prefs_unmet = []
@@ -97,32 +105,34 @@ def extract_schedule_and_summary(
                 shift = leave_entry
             elif d in state.training_by_nurse.get(n, {}):
                 shift = {"id": None, "type": "LEAVE", "name": "TR"}
+                training_counts["TR"] += 1
             else:
                 if len(picked) == 0:
                     shift = {"id": None, "type": "REST", "name": "REST"}
-                    shift_counts[3] += 1
+                    shift_counts["REST"] += 1
                 elif len(picked) == 1:
                     s = picked[0]
                     shift_obj = state.shifts[s]
+                    shift_name = getattr(shift_obj, "name", str(shift_obj))
                     shift = {
                         "id": str(shift_obj.id),
                         "type": "SHIFT",
-                        "name": getattr(shift_obj, "name", str(shift_obj)),
+                        "name": shift_name,
                     }
-                    shift_counts[s] += 1
+                    shift_counts[shift_name] += 1
                 else:
-                    shift = [
-                        {
-                            "id": str(state.shifts[s].id),
-                            "type": "SHIFT",
-                            "name": getattr(
-                                state.shifts[s], "name", str(state.shifts[s])
-                            ),
-                        }
-                        for s in sorted(picked)
-                    ]
-                    for s in picked:
-                        shift_counts[s] += 1
+                    shift = []
+                    for s in sorted(picked):
+                        shift_obj = state.shifts[s]
+                        shift_name = getattr(shift_obj, "name", str(shift_obj))
+                        shift.append(
+                            {
+                                "id": str(shift_obj.id),
+                                "type": "SHIFT",
+                                "name": shift_name,
+                            }
+                        )
+                        shift_counts[shift_name] += 1
                     double_shift_days.append(dates[d].strftime("%a %Y-%m-%d"))
 
             row.append(shift)
@@ -131,7 +141,8 @@ def extract_schedule_and_summary(
             week_idx = d // DAYS_PER_WEEK
             for p in picked:
                 minutes_per_week[week_idx] += int(state.shift_durations[p])
-                shift_counts[p] += 1
+                shift_name = getattr(state.shifts[p], "name", str(state.shifts[p]))
+                shift_counts[shift_name] += 1  # ✅ dynamic instead of index
 
             # ---- Preference check ----
             raw = state.prefs_by_nurse[n].get(d)
@@ -149,6 +160,7 @@ def extract_schedule_and_summary(
                         f"{dates[d].strftime('%a %Y-%m-%d')} (wanted {state.shifts[idx].name})"
                     )
 
+        # ---- Build summary row dynamically ----
         summary_row = {
             "Nurse": n,
             "AL": sum(
@@ -172,19 +184,20 @@ def extract_schedule_and_summary(
                 and t.get("name") == "EL"
                 and 0 <= d < state.num_days
             ),
-            "AM (Training)": training_counts[0],
-            "PM (Training)": training_counts[1],
-            "Night (Training)": training_counts[2],
-            "TR (Full Day Training)": training_counts[3],
-            "Rest": shift_counts[3],
-            "AM": shift_counts[0],
-            "PM": shift_counts[1],
-            "Night": shift_counts[2],
             "Double Shifts": len(double_shift_days),
             "Prefs_Met": prefs_met,
             "Prefs_Unmet": len(prefs_unmet),
             "Unmet_Details": "; ".join(prefs_unmet),
         }
+
+        # add training counts (temporary hidden)
+        # for tname, count in training_counts.items():
+        #     summary_row[f"{tname} (Training)"] = count
+
+        # add dynamic shift counts
+        for sname, count in shift_counts.items():
+            summary_row[sname] = count
+
         schedule[n] = row
         summary.append(summary_row)
 
