@@ -276,32 +276,29 @@ def weekend_rest_rule(model, state: ScheduleState):
 
 def no_back_to_back_shift_rule(model, state: ScheduleState):
     """
-    Ensure that nurses do not work back-to-back shifts (same-day or overnight)
-    if state.back_to_back_shift is True.
-    Uses dynamically built rules from shift durations.
+    Enforce minimum rest period between consecutive shifts
+    when back_to_back_shift is False.
     """
-    if not state.back_to_back_shift:
-        return
+    if state.back_to_back_shift:
+        return  # Allow everything if toggle is True
 
-    # Build rules dynamically (same-day adjacency, overnight adjacency)
-    rules = build_back_to_back_rules(state.shifts)
+    # Default rest = 10h unless state overrides
+    min_rest = getattr(state, "min_rest_minutes", 600)  # set 10h rest minimum
+    rules = build_back_to_back_rules(state.shifts, min_rest)
 
     for n in state.nurse_names:
         for d in range(-state.prev_days, state.num_days):
-            for from_id, to_id, rtype in rules:
-                if rtype == "same_day":
-                    # Can't work two consecutive shifts on the same day
-                    model.Add(
-                        state.work[n, d, from_id] + state.work[n, d, to_id] <= 1
+            for from_id, to_id, _ in rules:
+                if d > 0 or (d == 0 and state.prev_days > 0):
+                    model.AddImplication(
+                        state.work[n, d - 1, from_id],
+                        state.work[n, d, to_id].Not(),
                     ).OnlyEnforceIf(state.hard_rules["No b2b"].flag)
 
-                elif rtype == "overnight":
-                    # Can't finish an overnight then start an early shift next day
-                    if d > 0 or (d == 0 and state.prev_days > 0):
-                        model.AddImplication(
-                            state.work[n, d - 1, from_id],
-                            state.work[n, d, to_id].Not(),
-                        ).OnlyEnforceIf(state.hard_rules["No b2b"].flag)
+                # Same-day check
+                model.Add(
+                    state.work[n, d, from_id] + state.work[n, d, to_id] <= 1
+                ).OnlyEnforceIf(state.hard_rules["No b2b"].flag)
 
 
 # def am_coverage_rule(model, state: ScheduleState):
