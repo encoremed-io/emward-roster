@@ -50,8 +50,8 @@ class Settings(BaseModel):
     maxWeeklyHours: int
     preferredWeeklyHours: int
     minWeeklyRest: int
-    weekendRest: bool
-    backToBackShift: bool
+    weekendRest: bool = False
+    backToBackShift: bool = False
     # allowDoubleShift: bool
     # shiftBalance: bool
     # prioritySetting: str

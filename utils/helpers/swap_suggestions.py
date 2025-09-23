@@ -174,10 +174,16 @@ def extract_preference_features(pref_data: dict) -> dict:
 
 
 # build dynamic back to back rules with durations
-def build_back_to_back_rules(shifts):
+def build_back_to_back_rules(shifts, min_rest_minutes: int = 600):
     """
-    Build rules dynamically from shift durations.
-    Rules are (sid1, sid2, type).
+    Build dynamic no-back-to-back rules based on minimum rest requirement.
+
+    Args:
+        shifts: list of shift objects with .id, .name, .duration ("HHMM-HHMM")
+        min_rest_minutes: minimum required rest period (default 600 = 10 hours)
+
+    Returns:
+        rules: list of (sid1, sid2) pairs where sid1 cannot be followed by sid2
     """
     rules = []
     parsed = []
@@ -185,18 +191,15 @@ def build_back_to_back_rules(shifts):
     shift_ids = [s.id for s in shifts]
     id_to_index = {sid: idx for idx, sid in enumerate(shift_ids)}
 
-    # preprocess
+    # preprocess: parse durations
     for s in shifts:
-        start_str, end_str = s.duration.split(
-            "-"
-        )  # split duration format of (0700-1400)
-        start = parse_time(start_str)
+        start_str, end_str = s.duration.split("-")  # e.g. "0700-1400"
+        start = parse_time(start_str)  # → minutes since midnight
         end = parse_time(end_str)
-        # overnight shift (end < start)
-        overnight = end <= start
+        overnight = end <= start  # ends after midnight
         parsed.append(
             {
-                "id": id_to_index[s.id],  # shift index
+                "id": id_to_index[s.id],
                 "start": start,
                 "end": end,
                 "overnight": overnight,
@@ -204,22 +207,25 @@ def build_back_to_back_rules(shifts):
             }
         )
 
-    # same-day adjacency
+    # compare every pair of shifts
     for a in parsed:
         for b in parsed:
             if a["id"] == b["id"]:
                 continue
-            # if shift A ends exactly when shift B starts → consecutive
-            if not a["overnight"] and a["end"] == b["start"]:
-                rules.append((a["id"], b["id"], "same_day"))
 
-    # overnight adjacency
-    for a in parsed:
-        if a["overnight"]:
-            # overnight shifts should not be followed by any shift starting in the morning
-            for b in parsed:
-                if not b["overnight"] and b["start"] < 12 * 60:  # morning-ish threshold
-                    rules.append((a["id"], b["id"], "overnight"))
+            # ---- Same-day rest check ----
+            if not a["overnight"]:
+                rest_gap = b["start"] - a["end"]
+                if 0 <= rest_gap < min_rest_minutes:
+                    rules.append((a["id"], b["id"], "insufficient_rest"))
+
+            # ---- Overnight rest check ----
+            if a["overnight"]:
+                # Treat overnight end as next-day end
+                overnight_end = a["end"] + 24 * 60
+                rest_gap = b["start"] + 24 * 60 - overnight_end
+                if 0 <= rest_gap < min_rest_minutes:
+                    rules.append((a["id"], b["id"], "insufficient_rest"))
 
     return rules
 
