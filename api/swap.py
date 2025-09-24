@@ -156,6 +156,13 @@ def optimize_candidates(
             )
             swap_to_name = shift_names.get(shiftType, shiftType)
 
+            swap_from_id = (
+                direct_shift.shiftIds[0]
+                if len(direct_shift.shiftIds) == 1
+                else ",".join(str(sid) for sid in direct_shift.shiftIds)
+            )
+            swap_to_id = str(shiftType)
+
             best_direct_swap = {
                 "nurseId": nurse.nurseId,
                 "swapFrom": {
@@ -164,6 +171,7 @@ def optimize_candidates(
                 },
                 "swapTo": {"date": target_date, "shiftId": shiftType},
                 "note": f"Cross-shift swap allowed ({swap_from_names} → {swap_to_name})",
+                "swap": {"from": swap_from_id, "to": swap_to_id},
             }
 
             # direct swaps always lowest penalty
@@ -177,6 +185,7 @@ def optimize_candidates(
                         violatesMaxHours=weekly_hours > data.settings.maxWeeklyHours,
                         messages=[best_direct_swap["note"]],
                         penaltyScore=-1,
+                        swap={"from": swap_from_id, "to": swap_to_id},
                     ),
                 )
             )
@@ -214,7 +223,7 @@ def optimize_candidates(
 
         # attach penalty to solver variable
         objective.SetCoefficient(x[nurse.nurseId], penalty)
-
+        swap_to_id = str(shiftType)
         scored.append(
             (
                 penalty,
@@ -225,6 +234,7 @@ def optimize_candidates(
                     violatesMaxHours=weekly_hours > data.settings.maxWeeklyHours,
                     messages=warning_messages if warning_messages != "OK" else [],
                     penaltyScore=penalty,
+                    swap={"from": "", "to": swap_to_id},
                 ),
             )
         )

@@ -80,6 +80,7 @@ class SwapCandidate(BaseModel):
     violatesMaxHours: bool
     messages: List[str] = []
     penaltyScore: int
+    swap: Optional[dict] = None
 
 
 class SwapCandidateFeatures(BaseModel):
