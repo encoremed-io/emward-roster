@@ -149,13 +149,41 @@ def optimize_candidates(
 
         # Case 2: cross-shift same-day swap
         if direct_shift and shiftType not in direct_shift.shiftIds:
-            swap_from_id = (
-                direct_shift.shiftIds[0]
+            swap_from_ids = (
+                [direct_shift.shiftIds[0]]
                 if len(direct_shift.shiftIds) == 1
-                else ",".join(str(sid) for sid in direct_shift.shiftIds)
+                else direct_shift.shiftIds
             )
-            swap_to_id = str(shiftType)
-            note = f"Cross-shift swap allowed ({swap_from_id} → {swap_to_id})"
+            swap_from_names = ", ".join(
+                shift_names.get(str(sid), str(sid)) for sid in swap_from_ids
+            )
+            swap_to_name = shift_names.get(str(shiftType), str(shiftType))
+
+            note = f"Cross-shift swap allowed ({swap_from_names} → {swap_to_name})"
+
+            # run warnings here too
+            processed = preprocess_nurse(nurse, target_dt, data.settings)
+            last_weekend, last_weekend_day = None, None
+            for s in nurse.shifts:
+                s_date = parse_date(s.date)
+                is_wknd, day_idx = is_weekend(s.date)
+                if is_wknd and s_date < target_dt:
+                    if not last_weekend or s_date > last_weekend:
+                        last_weekend, last_weekend_day = s_date, day_idx
+
+            warning_messages, _ = generate_warning(
+                processed,
+                data.settings,
+                weekly_hours=weekly_hours,
+                weekly_rest_days=weekly_rest_days,
+                candidate_shift_hours=candidate_shift_hours,
+                must_replace_with_senior=must_replace_with_senior,
+                back_to_back_rules=back_to_back_rules,
+                target_date=target_dt,
+                worked_weekends=(last_weekend, last_weekend_day),
+            )
+
+            messages = [note] + normalize_messages(warning_messages)
 
             best_direct_swap = {
                 "nurseId": nurse.nurseId,
@@ -165,7 +193,10 @@ def optimize_candidates(
                 },
                 "swapTo": {"date": target_date, "shiftId": shiftType},
                 "note": note,
-                "swap": {"from": swap_from_id, "to": swap_to_id},
+                "swap": {
+                    "from": swap_from_names,
+                    "to": swap_to_name,
+                },
             }
 
             scored.append(
@@ -176,9 +207,9 @@ def optimize_candidates(
                         isSenior=nurse.isSenior,
                         currentHours=weekly_hours,
                         violatesMaxHours=weekly_hours > data.settings.maxWeeklyHours,
-                        messages=[note] + normalize_messages(warning_messages),
+                        messages=messages,
                         penaltyScore=-1,
-                        swap={"from": swap_from_id, "to": swap_to_id},
+                        swap={"from": swap_from_names, "to": swap_to_name},
                     ),
                 )
             )
@@ -221,7 +252,7 @@ def optimize_candidates(
 
         penalty = warn_penalty
         objective.SetCoefficient(x[nurse.nurseId], penalty)
-        swap_to_id = str(shiftType)
+        swap_to_name = shift_names.get(str(shiftType), str(shiftType))
         messages = normalize_messages(warning_messages)
 
         scored.append(
@@ -234,7 +265,7 @@ def optimize_candidates(
                     violatesMaxHours=weekly_hours > data.settings.maxWeeklyHours,
                     messages=messages,
                     penaltyScore=penalty,
-                    swap={"from": "", "to": swap_to_id},
+                    swap={"from": "", "to": swap_to_name},
                 ),
             )
         )
