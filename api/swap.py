@@ -102,7 +102,6 @@ def optimize_candidates(
     x = {n.nurseId: solver.BoolVar(n.nurseId) for n in nurses}
 
     objective = solver.Objective()
-
     best_direct_swap = None
     scored = []
 
@@ -113,18 +112,18 @@ def optimize_candidates(
     for nurse in nurses:
         # skip if nurse has a leave on the target date
         if any(parse_date(l.date) == target_dt for l in nurse.leaves):
+            msg = f"Nurse on leave ({[l.name for l in nurse.leaves if parse_date(l.date) == target_dt][0]})"
             scored.append(
                 (
-                    9999,  # very high penalty, ensures they won't be selected
+                    9999,
                     SwapCandidate(
                         nurseId=nurse.nurseId,
                         isSenior=nurse.isSenior,
                         currentHours=0,
                         violatesMaxHours=False,
-                        messages=[
-                            f"Nurse on leave ({[l.name for l in nurse.leaves if parse_date(l.date) == target_dt][0]})"
-                        ],
+                        messages=[msg],
                         penaltyScore=9999,
+                        swap={"from": "", "to": str(shiftType)},
                     ),
                 )
             )
@@ -137,31 +136,26 @@ def optimize_candidates(
             if week_start <= parse_date(s.date) <= target_dt
             for shiftId in s.shiftIds
         )
-
         worked_days = {s.date for s in nurse.shifts}
-        weekly_rest_days = 7 - len(worked_days)
+        weekly_rest_days = max(0, 7 - len(worked_days))
         candidate_shift_hours = shift_hours.get(shiftType, 0)
 
         # direct swap handling
         direct_shift = next((s for s in nurse.shifts if s.date == target_date), None)
 
-        # Case 1: already working the SAME shift → skip
+        # Case 1: already working SAME shift → skip
         if direct_shift and shiftType in direct_shift.shiftIds:
             continue
 
-        # Case 2: working on the same day, but a DIFFERENT shift → valid cross-shift swap
+        # Case 2: cross-shift same-day swap
         if direct_shift and shiftType not in direct_shift.shiftIds:
-            swap_from_names = ", ".join(
-                shift_names.get(sid, sid) for sid in direct_shift.shiftIds
-            )
-            swap_to_name = shift_names.get(shiftType, shiftType)
-
             swap_from_id = (
                 direct_shift.shiftIds[0]
                 if len(direct_shift.shiftIds) == 1
                 else ",".join(str(sid) for sid in direct_shift.shiftIds)
             )
             swap_to_id = str(shiftType)
+            note = f"Cross-shift swap allowed ({swap_from_id} → {swap_to_id})"
 
             best_direct_swap = {
                 "nurseId": nurse.nurseId,
@@ -170,11 +164,17 @@ def optimize_candidates(
                     "shiftIds": direct_shift.shiftIds,
                 },
                 "swapTo": {"date": target_date, "shiftId": shiftType},
-                "note": f"Cross-shift swap allowed ({swap_from_names} → {swap_to_name})",
+                "note": note,
                 "swap": {"from": swap_from_id, "to": swap_to_id},
             }
 
-            # direct swaps always lowest penalty
+            metrics_summary = (
+                f"Weekly hours: {weekly_hours} (limit {data.settings.maxWeeklyHours}), "
+                f"Rest days: {weekly_rest_days}, "
+                f"Senior required: {'Yes' if must_replace_with_senior else 'No'}, "
+                f"Penalty: -1 (direct swap preferred)"
+            )
+
             scored.append(
                 (
                     -1,
@@ -183,30 +183,27 @@ def optimize_candidates(
                         isSenior=nurse.isSenior,
                         currentHours=weekly_hours,
                         violatesMaxHours=weekly_hours > data.settings.maxWeeklyHours,
-                        messages=[best_direct_swap["note"]],
+                        messages=[note] + normalize_messages(warning_messages),
                         penaltyScore=-1,
                         swap={"from": swap_from_id, "to": swap_to_id},
                     ),
                 )
             )
-            continue  # skip normal warning calc  # skip normal warning calc
+            continue
 
         # preprocess
         processed = preprocess_nurse(nurse, target_dt, data.settings)
 
-        # Find the most recent past weekend shift before the target date
-        last_weekend = None
-        last_weekend_day = None
-
+        # last weekend worked
+        last_weekend, last_weekend_day = None, None
         for s in nurse.shifts:
             s_date = parse_date(s.date)
             is_wknd, day_idx = is_weekend(s.date)
             if is_wknd and s_date < target_dt:
                 if not last_weekend or s_date > last_weekend:
-                    last_weekend = s_date
-                    last_weekend_day = day_idx
+                    last_weekend, last_weekend_day = s_date, day_idx
 
-        # run warning generator
+        # run warnings
         warning_messages, warn_penalty = generate_warning(
             processed,
             data.settings,
@@ -219,11 +216,27 @@ def optimize_candidates(
             worked_weekends=(last_weekend, last_weekend_day),
         )
 
-        penalty = warn_penalty
+        # normalize messages - always list
+        if warning_messages == "OK":
+            messages = []
+        elif isinstance(warning_messages, str):
+            messages = [warning_messages]
+        elif isinstance(warning_messages, list):
+            messages = warning_messages
+        else:
+            messages = []
 
-        # attach penalty to solver variable
+        penalty = warn_penalty
         objective.SetCoefficient(x[nurse.nurseId], penalty)
         swap_to_id = str(shiftType)
+        messages = normalize_messages(warning_messages)
+        metrics_summary = (
+            f"Weekly hours: {weekly_hours} (limit {data.settings.maxWeeklyHours}), "
+            f"Rest days: {weekly_rest_days}, "
+            f"Senior required: {'Yes' if must_replace_with_senior else 'No'}, "
+            f"Penalty: {penalty}"
+        )
+
         scored.append(
             (
                 penalty,
@@ -232,14 +245,13 @@ def optimize_candidates(
                     isSenior=nurse.isSenior,
                     currentHours=weekly_hours,
                     violatesMaxHours=weekly_hours > data.settings.maxWeeklyHours,
-                    messages=warning_messages if warning_messages != "OK" else [],
+                    messages=messages,
                     penaltyScore=penalty,
                     swap={"from": "", "to": swap_to_id},
                 ),
             )
         )
 
-    # if you want solver to pick exactly one candidate:
     solver.Add(sum(x.values()) == 1)
     objective.SetMinimization()
     solver.Solve()
@@ -248,3 +260,13 @@ def optimize_candidates(
     candidates = [entry for _, entry in scored]
 
     return {"candidates": candidates, "bestDirectSwap": best_direct_swap}
+
+
+def normalize_messages(warning_messages) -> list[str]:
+    if warning_messages == "OK" or warning_messages is None:
+        return []
+    if isinstance(warning_messages, str):
+        return [warning_messages]
+    if isinstance(warning_messages, list):
+        return [str(m) for m in warning_messages]
+    return []
