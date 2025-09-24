@@ -168,13 +168,6 @@ def optimize_candidates(
                 "swap": {"from": swap_from_id, "to": swap_to_id},
             }
 
-            metrics_summary = (
-                f"Weekly hours: {weekly_hours} (limit {data.settings.maxWeeklyHours}), "
-                f"Rest days: {weekly_rest_days}, "
-                f"Senior required: {'Yes' if must_replace_with_senior else 'No'}, "
-                f"Penalty: -1 (direct swap preferred)"
-            )
-
             scored.append(
                 (
                     -1,
@@ -230,12 +223,6 @@ def optimize_candidates(
         objective.SetCoefficient(x[nurse.nurseId], penalty)
         swap_to_id = str(shiftType)
         messages = normalize_messages(warning_messages)
-        metrics_summary = (
-            f"Weekly hours: {weekly_hours} (limit {data.settings.maxWeeklyHours}), "
-            f"Rest days: {weekly_rest_days}, "
-            f"Senior required: {'Yes' if must_replace_with_senior else 'No'}, "
-            f"Penalty: {penalty}"
-        )
 
         scored.append(
             (
