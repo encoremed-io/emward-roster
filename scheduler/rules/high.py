@@ -239,19 +239,50 @@ def min_rest_per_week_rule(model, state: ScheduleState):
             )
 
 
+# strict weekend rest rule
+# def weekend_rest_rule(model, state: ScheduleState):
+#     """Ensure that nurses who work on a weekend must rest on the corresponding days the following weekend only if state.weekend_rest is True."""
+#     if state.weekend_rest:
+#         for n in state.nurse_names:
+#             for d1, d2 in state.weekend_pairs:
+#                 # skip any pair outside the built horizon
+#                 if (n, d1, 0) not in state.work or (n, d2, 0) not in state.work:
+#                     continue
+#                 model.Add(
+#                     sum(state.work[n, d1, s] for s in range(state.shift_types))
+#                     + sum(state.work[n, d2, s] for s in range(state.shift_types))
+#                     <= 1
+#                 )
+
+
+# softer weekend rest rule
 def weekend_rest_rule(model, state: ScheduleState):
-    """Ensure that nurses who work on a weekend must rest on the corresponding days the following weekend only if state.weekend_rest is True."""
-    if state.weekend_rest:
-        for n in state.nurse_names:
-            for d1, d2 in state.weekend_pairs:
-                # skip any pair outside the built horizon
-                if (n, d1, 0) not in state.work or (n, d2, 0) not in state.work:
-                    continue
-                model.Add(
-                    sum(state.work[n, d1, s] for s in range(state.shift_types))
-                    + sum(state.work[n, d2, s] for s in range(state.shift_types))
-                    <= 1
-                )
+    """
+    Prefer that nurses who work one weekend do not work on the paired weekend.
+    Enforced as a soft constraint (penalty) when state.weekend_rest is True.
+    """
+
+    if not state.weekend_rest:
+        return
+
+    for n in state.nurse_names:
+        for d1, d2 in state.weekend_pairs:
+            # skip pairs outside horizon
+            if (n, d1, 0) not in state.work or (n, d2, 0) not in state.work:
+                continue
+
+            # total assignments across both weekends
+            total = sum(state.work[n, d1, s] for s in range(state.shift_types)) + sum(
+                state.work[n, d2, s] for s in range(state.shift_types)
+            )
+
+            # violation indicator: 1 if nurse works both weekends
+            viol = model.NewBoolVar(f"weekend_conflict_{n}_{d1}_{d2}")
+            model.Add(total <= 1).OnlyEnforceIf(viol.Not())
+            model.Add(total >= 2).OnlyEnforceIf(viol)
+
+            # add penalty to discourage this
+            state.high_priority_penalty.append(viol * 1000)
 
 
 # old b2b rule
