@@ -159,6 +159,13 @@ def optimize_candidates(
             )
             swap_to_name = shift_names.get(str(shiftType), str(shiftType))
 
+            swap_from_id = (
+                direct_shift.shiftIds[0]
+                if len(direct_shift.shiftIds) == 1
+                else ",".join(str(sid) for sid in direct_shift.shiftIds)
+            )
+            swap_to_id = str(shiftType)
+
             note = f"Cross-shift swap allowed ({swap_from_names} → {swap_to_name})"
 
             # run warnings here too
@@ -194,8 +201,8 @@ def optimize_candidates(
                 "swapTo": {"date": target_date, "shiftId": shiftType},
                 "note": note,
                 "swap": {
-                    "from": swap_from_names,
-                    "to": swap_to_name,
+                    "from": swap_from_id,
+                    "to": swap_to_id,
                 },
             }
 
@@ -209,7 +216,7 @@ def optimize_candidates(
                         violatesMaxHours=weekly_hours > data.settings.maxWeeklyHours,
                         messages=messages,
                         penaltyScore=-1,
-                        swap={"from": swap_from_names, "to": swap_to_name},
+                        swap={"from": swap_from_id, "to": swap_to_id},
                     ),
                 )
             )
@@ -253,6 +260,7 @@ def optimize_candidates(
         penalty = warn_penalty
         objective.SetCoefficient(x[nurse.nurseId], penalty)
         swap_to_name = shift_names.get(str(shiftType), str(shiftType))
+        swap_to_id = str(shiftType)
         messages = normalize_messages(warning_messages)
 
         scored.append(
@@ -265,7 +273,7 @@ def optimize_candidates(
                     violatesMaxHours=weekly_hours > data.settings.maxWeeklyHours,
                     messages=messages,
                     penaltyScore=penalty,
-                    swap={"from": "", "to": swap_to_name},
+                    swap={"from": "", "to": swap_to_id},
                 ),
             )
         )
