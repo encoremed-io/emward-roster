@@ -633,9 +633,53 @@ def shift_details_rule(model, state: ScheduleState):
 
 
 # nurses who can work double shifts
+from ortools.sat.python import cp_model
+
+
+def double_shift_rule(model, state: ScheduleState):
+    """Force at least one double shift when allow_double_shift=True."""
+
+    double_vars = []
+
+    for nurse_name in state.nurse_names:
+        for d in range(-state.prev_days, state.num_days):
+            # total shifts for this nurse on this day
+            total_shifts = sum(
+                state.work[nurse_name, d, s] for s in range(state.shift_types)
+            )
+
+            if not state.allow_double_shift:
+                # Strict: max 1 shift per day
+                model.Add(total_shifts <= 1)
+                continue
+
+            # Eligible nurses → allow 2, others → max 1
+            if nurse_name in state.double_shift_nurses:
+                model.Add(total_shifts <= 2)
+            else:
+                model.Add(total_shifts <= 1)
+
+            # Track double-shift usage
+            if nurse_name in state.double_shift_nurses:
+                double_shift_today = model.NewBoolVar(f"{nurse_name}_double_{d}")
+                model.Add(total_shifts == 2).OnlyEnforceIf(double_shift_today)
+                model.Add(total_shifts != 2).OnlyEnforceIf(double_shift_today.Not())
+                double_vars.append(double_shift_today)
+
+                # Optional: block AM shift next day if double today
+                if d + 1 < state.num_days:
+                    model.Add(state.work[nurse_name, d + 1, 0] == 0).OnlyEnforceIf(
+                        double_shift_today
+                    )
+
+    # 🔥 Force at least one double shift to be assigned if allowed
+    if state.allow_double_shift and double_vars:
+        model.Add(sum(double_vars) >= 1)
+
+
 # def double_shift_rule(model, state: ScheduleState):
 #     """Only restrict double shifts for nurses who are not eligible."""
-
+#     print("[DOUBLE]", state.double_shift_nurses)
 #     for nurse_name in state.nurse_names:
 #         for d in range(-state.prev_days, state.num_days):
 #             total_shifts = sum(
@@ -664,32 +708,28 @@ def shift_details_rule(model, state: ScheduleState):
 #                 )
 
 
-def double_shift_rule(model, state: ScheduleState):
-    """Only restrict double shifts for nurses who are not eligible."""
+# def double_shift_rule(model, state: ScheduleState):
+#     """Allow or disallow double shifts on the same date, and reward eligible ones."""
+#     print("[DOUBLE]", state.allow_double_shift)
+#     for nurse_name in state.nurse_names:
+#         for d in range(-state.prev_days, state.num_days):
+#             total_shifts = sum(
+#                 state.work[nurse_name, d, s] for s in range(state.shift_types)
+#             )
 
-    for nurse_name in state.nurse_names:
-        for d in range(-state.prev_days, state.num_days):
-            total_shifts = sum(
-                state.work[nurse_name, d, s] for s in range(state.shift_types)
-            )
+#             if not state.allow_double_shift:
+#                 # Hard cap: max 1 shift per day
+#                 model.Add(total_shifts <= 1)
+#                 continue
 
-            if not state.allow_double_shift:
-                # Enforce max 1 shift per day when double shifts are not allowed
-                model.Add(total_shifts <= 1)
-                continue  # Skip extra double-shift logic
+#             # General cap: allow up to 2
+#             model.Add(total_shifts <= 2)
 
-            if nurse_name in state.double_shift_nurses:
-                model.Add(total_shifts <= 2)
-            else:
-                model.Add(total_shifts <= 1)
+#             # Special case: eligible nurses
+#             if nurse_name in state.double_shift_nurses:
+#                 double_today = model.NewBoolVar(f"{nurse_name}_double_{d}")
+#                 model.Add(total_shifts == 2).OnlyEnforceIf(double_today)
+#                 model.Add(total_shifts != 2).OnlyEnforceIf(double_today.Not())
 
-            # Apply: if 2 shifts today → no AM tomorrow
-            if d + 1 < state.num_days:
-                double_shift_today = model.NewBoolVar(f"{nurse_name}_double_{d}")
-                model.Add(total_shifts >= 2).OnlyEnforceIf(double_shift_today)
-                model.Add(total_shifts < 2).OnlyEnforceIf(double_shift_today.Not())
-
-                # Block AM shift next day if double shift today
-                model.Add(state.work[nurse_name, d + 1, 0] == 0).OnlyEnforceIf(
-                    double_shift_today
-                )
+#                 # Encourage double shifts (negative penalty → reward)
+#                 state.low_priority_penalty.append(-5 * double_today)
