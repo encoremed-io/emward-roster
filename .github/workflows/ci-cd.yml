@@ -58,6 +58,8 @@ jobs:
           driver: docker-container
           install: true
           # driver-opts: image=moby/buildkit:buildx-stable-1
+          driver-opts: image=ghcr.io/moby/buildkit:buildx-stable-1
+
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
