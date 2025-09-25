@@ -633,9 +633,6 @@ def shift_details_rule(model, state: ScheduleState):
 
 
 # nurses who can work double shifts
-from ortools.sat.python import cp_model
-
-
 def double_shift_rule(model, state: ScheduleState):
     """Force at least one double shift when allow_double_shift=True."""
 
@@ -672,14 +669,13 @@ def double_shift_rule(model, state: ScheduleState):
                         double_shift_today
                     )
 
-    # 🔥 Force at least one double shift to be assigned if allowed
+    # Force at least one double shift to be assigned if allowed
     if state.allow_double_shift and double_vars:
         model.Add(sum(double_vars) >= 1)
 
 
 # def double_shift_rule(model, state: ScheduleState):
 #     """Only restrict double shifts for nurses who are not eligible."""
-#     print("[DOUBLE]", state.double_shift_nurses)
 #     for nurse_name in state.nurse_names:
 #         for d in range(-state.prev_days, state.num_days):
 #             total_shifts = sum(
