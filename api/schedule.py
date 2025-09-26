@@ -280,34 +280,74 @@ async def generate_schedule(
         # ---- schedule ----
         sched_df = schedule.reset_index().rename(columns={"index": "id"})
         sched_df["id"] = sched_df["id"].astype(str).str.lower()
-
         sched_df.insert(1, "name", sched_df["id"].map(id_to_name).fillna("UNKNOWN"))
+
+        # Build JSON-safe schedule (allow multiple shifts/leaves per nurse/day)
+        final_schedule = []
+        for _, row in sched_df.iterrows():
+            nurse_entry = {"id": row["id"], "name": row["name"]}
+            day_shifts = {}
+
+            for col, val in row.items():
+                if col in ["id", "name"]:
+                    continue
+
+                # normalize date column
+                if isinstance(col, pd.Timestamp):
+                    day = col.strftime("%a %Y-%m-%d")
+                else:
+                    day = str(col)
+
+                # Handle empty values safely
+                if val is None:
+                    day_shifts.setdefault(day, [])
+                    continue
+                if isinstance(val, (list, tuple)) and len(val) == 0:
+                    day_shifts.setdefault(day, [])
+                    continue
+                if not isinstance(val, (list, tuple)) and pd.isna(val):
+                    day_shifts.setdefault(day, [])
+                    continue
+
+                # Always wrap into list
+                values = val if isinstance(val, (list, tuple)) else [val]
+
+                for v in values:
+                    if isinstance(v, dict):
+                        # Already structured (LEAVE, REST, etc.)
+                        day_shifts.setdefault(day, []).append(v)
+                    else:
+                        # Assume shift ID
+                        shift_name = next(
+                            (s.name for s in shifts if str(s.id) == str(v)),
+                            str(v),
+                        )
+                        day_shifts.setdefault(day, []).append(
+                            {"id": str(v), "type": "SHIFT", "name": shift_name}
+                        )
+
+            nurse_entry.update(day_shifts)
+            final_schedule.append(nurse_entry)
 
         # ---- summary ----
         sum_df = summary.reset_index()
-
-        # If "Nurse" column exists, rename it
         if "Nurse" in sum_df.columns:
             sum_df = sum_df.rename(columns={"Nurse": "id"})
         elif "index" in sum_df.columns and "id" not in sum_df.columns:
             sum_df = sum_df.rename(columns={"index": "id"})
         elif "name" in sum_df.columns and "id" not in sum_df.columns:
-            # shift UUIDs from 'name' → 'id'
             sum_df = sum_df.rename(columns={"name": "id"})
-
-        # Normalize IDs for mapping
         sum_df["id"] = sum_df["id"].astype(str).str.lower()
-
-        # Add proper human name column
         sum_df.insert(1, "name", sum_df["id"].map(id_to_name).fillna("UNKNOWN"))
 
         # ==== final response ====
         response = {
-            "schedule": sched_df.to_dict(orient="records"),
+            "schedule": final_schedule,
             "summary": sum_df.to_dict(orient="records"),
             "violations": violations,
             "metrics": metrics,
         }
+
         return response
 
     except tuple(CUSTOM_ERRORS) as e:
